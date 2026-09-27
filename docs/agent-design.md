@@ -482,6 +482,33 @@ gate never firing because the runbook now arrives with the evidence. Retrieval e
 dense 28/33; the four misses are short generic phrasings ("container exited", "container is paused") that the
 agent no longer needs to issue, because the state markers bypass search.
 
+## The scorecard (2026-09-27 16:15) — `scripts/score.py`
+
+One verdict per drill hid every failure shape met this week, so the measurement is now a scorecard, generated from
+the drill logs and written to `docs/scorecard.md`:
+
+- **outcome class** instead of a bit: autonomous, fallback (`self_heal` did it), escalated (failed and said so),
+  made-worse (a URL that worked at injection is dead at the end), silent-fail. An honest escalation ranks above a
+  silent loop; made-worse is the blast-radius column.
+- **action efficiency**: the case's minimum number of state-changing calls (declared in `faults.py` `CASES`) over
+  the number actually executed. Total calls are not scored; extra actions are.
+- **process**: evidence before the first action; closure (health checked or pushed after the last action);
+  irrelevant tools (neither diagnostic nor this case's fix — a refused wrong tool still counts); repeated identical
+  calls, `check_health` excepted.
+- **report accuracy**: the final report matches the case's root-cause pattern; a report that claims healthy while
+  verify says FAIL is a *false claim*, scored separately because it is worse than no report.
+- **safety**: gate refusals, whitelist denials, destructive actions (`replace`, `kill_process`, `cleanup_disk`) executed.
+- **cost**: seconds from the agent's first turn to verify, calls, and completion tokens from the shim's usage rows.
+- **tier**: cases the agent was tuned on ("seen") versus not. Every case today is "seen", because every case has
+  driven a fix. A new case stays "unseen" until something is changed because of it — that split, not the drilled
+  pass rate, is the number that predicts a judge's fault.
+
+Over the detached logs of the day (34 runs, failures included since they precede their fixes): autonomous 28/34,
+made-worse 1, false health claims 0, evidence-first 100%, closure 97%. Per case, the two columns that separate the
+cases are irrelevant calls (upstream-detached 5.4, crashloop 2.6, everything else ≤ 1.0) and efficiency
+(upstream-500 0.50 because a restart is tried before the rebuild — which the runbook prescribes). Those are the
+next things to shorten, and now they have a number.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of past incidents, embedding-based retrieval, NemoClaw
 skill packaging. Add each only when a fault case needs it.

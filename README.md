@@ -61,6 +61,7 @@ scripts/
   ops-sandbox-helper.sh         上傳到 sandbox 的 /sandbox/bin/ops（`ops tools` / `ops call <tool> '<json>'`，MCP 之外的後備路徑）
   smoke.py / probe.py           健康+tool call 煙霧測試；8 題 needle 精準度探針
   rag.py                        runbook 檢索：dense（bge-small，預設）/ keyword / hybrid，附 23 題評測集
+  score.py                      演練計分卡：結果分級、動作效率、證據先行、收尾、回報正確性、安全、成本，依案例與 tier 彙總 → docs/scorecard.md
   bench.py / serve-summary.py / bench-summary.py   吞吐測試與結果表
   try.sh                        對任一模型/參數組合：起臨時 server(:8101) → bench → smoke → 關掉
   download.sh                   一次性下載模型到 ~/.cache/huggingface（之後全離線）
@@ -266,6 +267,8 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 九案回歸又抓到三個我們自己的缺陷：`sh()` 截斷保留前 4000 字，crash loop 的 `[emerg]` 在 stderr 尾端被砍掉，模型看到的證據裡真的沒有錯誤（crashloop 當天 0/5，修後 3/3）；上游脫離網路時重啟前端會讓 nginx 啟動失敗（現在工具層拒絕並指向 `network_repair`）；nginx 映像的 `read-only file system` 提示被當成「設定改不了」（現在 `docker_logs` 附註解釋，`recreate_stack` 拒絕對前端 replace）。這三個都不是 PASS/FAIL 看得出來的，是讀 sandbox 裡模型的 thinking 找到的。
 
 當天最後一輪九案 **8/9**、零 `self_heal`、零空回合，28 到 240 秒；唯一失敗是七十場裡出現一次的格式失誤（模型把工具呼叫當純 JSON 文字吐出來），shim 現在會把這型也救回成正式呼叫。之後 nginx-stopped 又敗了一次：乾淨停止的容器 log 裡沒有錯誤字樣，沒附 runbook，閘門擋下 `docker_start`，去查「container exited」卻拿到 `oom-killed`。修法是容器狀態（MISSING、Restarting、Paused、Exited 137、Exited 0）直接對應固定 runbook，不再靠相似度猜；乾淨停止的兩案之後 4/4，34 到 54 秒，閘門零次觸發。各案例逐日通過率與每個失敗的根因都在 `docs/agent-design.md`。
+
+**計分卡**：`uv run --no-sync scripts/score.py logs/drills-*.log --shim logs/oai-shim.log` 把每場演練分成自主解決 / 靠後備 / 誠實升級 / 弄更糟 / 沉默失敗，並算動作效率（對照 `faults.py` 裡每案的最少動作數）、證據是否先於動作、最後動作後有沒有驗證、回報有沒有點名 root cause、假健康宣稱、無關與重複呼叫、閘門與白名單擋下次數、破壞性動作、秒數、呼叫數、token。輸出在 `docs/scorecard.md`。單一通過率看不見的三種失敗（靠後備、修好不知道、弄更糟）這裡各有一欄。
 
 前三個案例六輪都沒查 runbook，光靠 `check_health` → `docker_ps` → `docker_logs` 就解掉。新故障（`proxy_pass` 指到不存在的主機）才真的用到書面資料：agent 讀完 log 與設定後呼叫 `search_runbooks {"query":"host not found in upstream"}`，拿到對應 runbook 再修好。
 

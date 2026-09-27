@@ -74,17 +74,29 @@ def review(action, args, trace, runbook_seen):
     try:
         from openai import OpenAI
         client = OpenAI(base_url=f"{BASE}/v1", api_key="none", timeout=120)
-        r = client.chat.completions.create(
-            model=MODEL, temperature=0, max_tokens=900,
-            messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
-            extra_body={"chat_template_kwargs": {"enable_thinking": True}})
-        text = (r.choices[0].message.content or "").strip()
-        m = re.search(r"\b(APPROVE|REJECT)\b", text, re.I)
-        if not m:
-            verdict, reason = "REJECT", f"reviewer gave no verdict: {text[:300]!r}"
-        else:
-            verdict = m.group(1).upper()
-            reason = text[m.end():].strip().lstrip(":.-— \n")[:600] or "(no reason given)"
+        verdict = reason = None
+        # First pass with thinking. The model sometimes leaves everything in the reasoning channel and returns empty
+        # content; then the verdict is read from the end of the reasoning, and failing that a second pass runs
+        # without thinking, which yields a short direct answer.
+        for thinking in (True, False):
+            r = client.chat.completions.create(
+                model=MODEL, temperature=0, max_tokens=900,
+                messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
+                extra_body={"chat_template_kwargs": {"enable_thinking": thinking}})
+            msg = r.choices[0].message
+            text = (msg.content or "").strip()
+            m = re.search(r"\b(APPROVE|REJECT)\b", text, re.I)
+            if not m and thinking:
+                thought = getattr(msg, "reasoning_content", None) or (msg.model_extra or {}).get("reasoning_content") or ""
+                found = list(re.finditer(r"\b(APPROVE|REJECT)\b", thought, re.I))
+                if found:
+                    m, text = found[-1], thought
+            if m:
+                verdict = m.group(1).upper()
+                reason = text[m.end():].strip().lstrip(":.-— \n")[:600] or "(no reason given)"
+                break
+        if not verdict:
+            verdict, reason = "REJECT", "reviewer gave no verdict in two passes; destructive action withheld"
     except Exception as e:                      # fail closed
         verdict, reason = "REJECT", f"reviewer unavailable ({type(e).__name__}: {str(e)[:120]}); destructive action withheld"
     _log(dict(action=action, args=args, verdict=verdict, reason=reason, ms=int(1000 * (time.time() - t0)),

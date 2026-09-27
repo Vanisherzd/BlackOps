@@ -105,6 +105,28 @@ def salvage_calls(text, tools):
     return calls
 
 
+def json_text_calls(content, tools):
+    """A tool call written as plain JSON text — `{"name": "ops__check_health", "arguments": {}}` — instead of the
+    template's XML. Seen once in seventy drills; the turn ended with that text as the answer and nothing executed."""
+    names = {(t.get("function") or t).get("name") for t in tools or []}
+    text = (content or "").strip()
+    if not text.startswith(("{", "[")) or not names:
+        return []
+    try:
+        obj = json.loads(text)
+    except ValueError:
+        return []
+    items = obj if isinstance(obj, list) else [obj]
+    calls = []
+    for it in items:
+        if not (isinstance(it, dict) and it.get("name") in names):
+            return []
+        args = it.get("arguments", it.get("parameters", {}))
+        calls.append({"id": f"call_salvaged_{len(calls)}", "type": "function",
+                      "function": {"name": it["name"], "arguments": args if isinstance(args, str) else json.dumps(args or {})}})
+    return calls
+
+
 def stream_with_salvage(resp, tools):
     """Yield upstream SSE lines as they arrive; decide about salvage only at the end.
 
@@ -137,9 +159,12 @@ def stream_with_salvage(resp, tools):
             held.append(ln)            # from the first finish_reason onward: usage chunk, [DONE]
             continue
         yield ln
-    calls = [] if (saw_calls or "".join(content).strip()) else salvage_calls("".join(reasoning), tools)
+    text = "".join(content)
+    calls = []
+    if not saw_calls:
+        calls = salvage_calls("".join(reasoning), tools) if not text.strip() else json_text_calls(text, tools)
     if calls:
-        log(salvaged=[c["function"]["name"] for c in calls], via="stream")
+        log(salvaged=[c["function"]["name"] for c in calls], via="stream", kind="json-text" if text.strip() else "thinking")
         yield b"data: " + json.dumps(dict(ident, object="chat.completion.chunk", choices=[{
             "index": 0, "finish_reason": None,
             "delta": {"role": "assistant", "content": None,
@@ -166,9 +191,10 @@ def salvage_json(payload, tools):
         return payload
     for ch in d.get("choices") or []:
         m = ch.get("message") or {}
-        if m.get("tool_calls") or (m.get("content") or "").strip():
+        if m.get("tool_calls"):
             continue
-        calls = salvage_calls(m.get("reasoning_content") or "", tools)
+        calls = (json_text_calls(m.get("content"), tools) if (m.get("content") or "").strip()
+                 else salvage_calls(m.get("reasoning_content") or "", tools))
         if calls:
             m["tool_calls"], ch["finish_reason"] = calls, "tool_calls"
             log(salvaged=[c["function"]["name"] for c in calls], via="json")

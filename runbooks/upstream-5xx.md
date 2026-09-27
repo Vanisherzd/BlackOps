@@ -1,7 +1,8 @@
 # Upstream answers with a 5xx of its own (500/503), container is Up
 Symptoms: `/` returns 200, `/api/` returns 500 or 503 (not 502, not 504). `ops__docker_ps` shows `edge-victim-app` Up.
-`ops__docker_logs {"name": "edge-victim-app"}` shows it serving `500` itself. The front end is fine; the upstream is
-misconfigured or broken inside.
+`ops__docker_logs {"name": "edge-victim-app"}` shows it serving `500` itself: access-log lines like
+`"GET / HTTP/1.0" 500 177 "-" "Python-urllib/3.12"` with no error line before them. The service itself answers HTTP 500
+to requests while the container is up. The front end is fine; the upstream is misconfigured or broken inside.
 Steps: 1) `ops__docker_logs` of the upstream to confirm the 500 comes from it, not from nginx.
 2) `ops__docker_restart {"name": "edge-victim-app"}` and re-check `/api/`.
 3) If it still returns 5xx after a restart, the fault lives in the container's own writable layer (a config it

@@ -42,10 +42,34 @@ SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|
 _incident = {"runbook_seen": False, "refusals": 0}
 
 
+ACCESS_5XX_RE = re.compile(r'"(?:GET|POST|HEAD) [^"]*" (5\d\d) ')
+
+
 def symptom_query(text):
-    """The lines that look like a complaint, or None when the output carries no symptom worth matching on."""
+    """The lines that look like a complaint, or None when the output carries no symptom worth matching on.
+
+    An nginx access-log line (`"GET / HTTP/1.0" 500 177 "-" "curl"`) is a symptom, but as embedding input it is mostly
+    noise: quotes, sizes, user agents. Say what it means instead, in the words the runbook uses.
+    """
     lines = [l.strip() for l in (text or "").splitlines() if SYMPTOM_RE.search(l)]
-    return " ".join(lines[-4:])[:400] or None
+    if not lines:
+        return None
+    codes = sorted({m.group(1) for l in lines for m in [ACCESS_5XX_RE.search(l)] if m})
+    plain = [l for l in lines if not ACCESS_5XX_RE.search(l)]
+    query = " ".join(plain[-4:])[:400]
+    if codes:
+        query = f"the service itself answers HTTP {' '.join(codes)} to requests, container is up. " + query
+    return query.strip() or None
+
+
+def with_health(result):
+    """Append the health check to an action's result. The agent that fixed the stack and kept digging for five
+    minutes had not run check_health after acting; now the answer arrives with the action."""
+    health = {k: http_status(u) for k, u in HEALTH.items()}
+    if all(v == 200 for v in health.values()):
+        _incident.update(runbook_seen=False, refusals=0)
+        return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
+    return f"{result}\nhealth now: {json.dumps(health)} -> still failing; keep going."
 
 
 def attach_runbook(result, query):
@@ -260,7 +284,7 @@ def run_tool(name, args, dry_run):
             return f"DRY-RUN: would run docker {name.split('_')[1]} {args['name']}"
         out = sh(f"docker {name.split('_')[1]} -t 5 {args['name']}" if name == "docker_restart" else f"docker start {args['name']}")
         time.sleep(2)
-        return out + "\n" + docker_ps()
+        return with_health(out + "\n" + docker_ps())
     if name == "read_config":
         return (CONF_DIR / "default.conf").read_text()
     if name == "write_config":
@@ -270,7 +294,7 @@ def run_tool(name, args, dry_run):
         if dry_run:
             return "DRY-RUN: would write default.conf"
         (CONF_DIR / "default.conf").write_text(content)
-        return "written; restart edge-victim to apply"
+        return "written, but not applied: nginx only reads it on start. Call docker_restart {\"name\": \"edge-victim\"} now."
     if name == "search_runbooks":
         _incident["runbook_seen"] = True
         return search_runbooks(args["query"])
@@ -323,7 +347,7 @@ def run_tool(name, args, dry_run):
             sh(f"docker rm -f {args['name']}")       # stateless by definition (SPECS); the config is a host file
         out = [faults.ensure(t) for t in targets]
         time.sleep(2)
-        return "\n".join(out) + "\n" + docker_ps()
+        return with_health("\n".join(out) + "\n" + docker_ps())
     if name == "network_repair":
         import faults
         if dry_run:
@@ -334,7 +358,8 @@ def run_tool(name, args, dry_run):
             joined = faults.NET in sh(f"docker inspect {c} --format '{{{{json .NetworkSettings.Networks}}}}'")
             out.append(f"{c}: already on {faults.NET}" if joined
                        else f"{c}: " + (sh(f"docker network connect {faults.NET} {c}") or f"attached to {faults.NET}"))
-        return "\n".join(out)
+        time.sleep(1)
+        return with_health("\n".join(out))
     if name == "cleanup_disk":
         now, victims, skipped = time.time(), [], 0
         open_files = held_open()

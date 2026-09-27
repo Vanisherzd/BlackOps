@@ -183,6 +183,7 @@ EVAL = [                                            # symptom -> the runbook an 
     ("both containers up but nginx times out connecting to upstream", "upstream-detached.md"),
     ("the backend fell off the docker network", "upstream-detached.md"),
     ("container is paused", "upstream-504.md"),
+    ("the service itself answers HTTP 500 to requests, container is up", "upstream-5xx.md"),
 ]
 
 

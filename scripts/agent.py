@@ -39,7 +39,18 @@ MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", 
             "kill_process"}
 SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
                         r"not found|exit(ed)? \(?\d|restarting|paused|oom|killed|no space|\b50[0-9]\b", re.I)
-_incident = {"runbook_seen": False, "refusals": 0}
+_incident = {"runbook_seen": False, "refusals": 0, "trace": []}
+DESTRUCTIVE = {"kill_process", "cleanup_disk"}          # plus recreate_stack with replace=true; see reviewed()
+
+
+def reviewed(name, args):
+    """Second-agent approval for an irreversible action. Returns None to proceed, or the refusal text."""
+    import reviewer
+    ok, reason = reviewer.review(name, args, _incident["trace"], _incident["runbook_seen"])
+    if ok:
+        return None
+    return (f"review-rejected: the change reviewer did not approve {name}. Reason: {reason}\n"
+            "Choose a less invasive action, gather the evidence the reviewer asked for, or escalate.")
 
 
 ACCESS_5XX_RE = re.compile(r'"(?:GET|POST|HEAD) [^"]*" (5\d\d) ')
@@ -67,7 +78,7 @@ def with_health(result):
     minutes had not run check_health after acting; now the answer arrives with the action."""
     health = {k: http_status(u) for k, u in HEALTH.items()}
     if all(v == 200 for v in health.values()):
-        _incident.update(runbook_seen=False, refusals=0)
+        _incident.update(runbook_seen=False, refusals=0, trace=[])
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
     state = docker_ps()
     hint = ""
@@ -241,6 +252,18 @@ def search_runbooks(query):
 
 
 def run_tool(name, args, dry_run):
+    """Dispatch one tool call and record it in the incident trace (the reviewer's evidence)."""
+    result = _run_tool(name, args, dry_run)
+    try:
+        shown = {k: (v if len(str(v)) < 80 else str(v)[:77] + "...") for k, v in (args or {}).items()} if isinstance(args, dict) else str(args)[:80]
+        _incident["trace"].append(dict(tool=name, args=json.dumps(shown, ensure_ascii=False), result=str(result)[:300].replace("\n", " ")))
+        del _incident["trace"][:-30]
+    except Exception:
+        pass
+    return result
+
+
+def _run_tool(name, args, dry_run):
     if isinstance(args, str):            # some clients send arguments as a JSON string
         try:
             args = json.loads(args or "{}")
@@ -293,7 +316,7 @@ def run_tool(name, args, dry_run):
     if name == "check_health":
         health = {k: http_status(u) for k, u in HEALTH.items()}
         if all(v == 200 for v in health.values()):
-            _incident.update(runbook_seen=False, refusals=0)   # incident over; the next one starts without credit
+            _incident.update(runbook_seen=False, refusals=0, trace=[])   # incident over; the next one starts clean
         return json.dumps(health)
     if name == "docker_ps":
         out = docker_ps()
@@ -403,6 +426,10 @@ def run_tool(name, args, dry_run):
         if dry_run:
             return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
         if args.get("replace"):
+            refusal = reviewed(name, {"name": args["name"], "replace": True})
+            if refusal:
+                return refusal
+        if args.get("replace"):
             sh(f"docker rm -f {args['name']}")       # stateless by definition (SPECS); the config is a host file
         out = [faults.ensure(t) for t in targets]
         time.sleep(2)
@@ -433,6 +460,9 @@ def run_tool(name, args, dry_run):
         freed = sum(n for _, n in victims)
         if dry_run:
             return f"DRY-RUN: would delete {len(victims)} project log file(s), {freed / 1e6:.1f} MB"
+        refusal = reviewed(name, {"files": len(victims), "mb": round(freed / 1e6, 1)})
+        if refusal:
+            return refusal
         for f, _ in victims:
             try:
                 os.remove(f)
@@ -457,6 +487,9 @@ def run_tool(name, args, dry_run):
             return f"denied: pid {pid} is part of the platform ({cmd[:120]})"
         if dry_run:
             return f"DRY-RUN: would signal {pid} ({cmd[:80]})"
+        refusal = reviewed(name, {"pid": pid, "cmd": cmd[:80], "force": bool(args.get("force"))})
+        if refusal:
+            return refusal
         sig = "-9" if args.get("force") else "-15"
         sh(f"kill {sig} {pid}")
         for _ in range(6):                       # SIGTERM is a request; give the process a moment to honour it

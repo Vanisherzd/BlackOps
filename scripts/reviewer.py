@@ -75,22 +75,18 @@ def review(action, args, trace, runbook_seen):
         from openai import OpenAI
         client = OpenAI(base_url=f"{BASE}/v1", api_key="none", timeout=120)
         verdict = reason = None
-        # First pass with thinking. The model sometimes leaves everything in the reasoning channel and returns empty
-        # content; then the verdict is read from the end of the reasoning, and failing that a second pass runs
-        # without thinking, which yields a short direct answer.
+        # First pass with thinking and room to finish it. If the answer never reaches the content channel (the
+        # model can leave everything in its reasoning and stop), a second pass runs without thinking, which gives a
+        # short direct verdict. The reasoning itself is never mined for a verdict: it contains phrases like
+        # "APPROVE or REJECT based on..." that once read as a decision.
         for thinking in (True, False):
             r = client.chat.completions.create(
-                model=MODEL, temperature=0, max_tokens=900,
+                model=MODEL, temperature=0, max_tokens=3000 if thinking else 600,
                 messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
                 extra_body={"chat_template_kwargs": {"enable_thinking": thinking}})
             msg = r.choices[0].message
             text = (msg.content or "").strip()
             m = re.search(r"\b(APPROVE|REJECT)\b", text, re.I)
-            if not m and thinking:
-                thought = getattr(msg, "reasoning_content", None) or (msg.model_extra or {}).get("reasoning_content") or ""
-                found = list(re.finditer(r"\b(APPROVE|REJECT)\b", thought, re.I))
-                if found:
-                    m, text = found[-1], thought
             if m:
                 verdict = m.group(1).upper()
                 reason = text[m.end():].strip().lstrip(":.-— \n")[:600] or "(no reason given)"

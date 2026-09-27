@@ -453,6 +453,35 @@ truncation fix, upstream-paused 4/4, upstream-detached 5/7 overall and 4/4 since
 upstream-500 4/5 overall and 4/4 since the access-log rewrite. Every failure traced to a defect in the tools, the
 harness, or the shim; none was fixed by changing a prompt.
 
+## A clean stop is a symptom too (2026-09-27 16:05)
+
+`nginx-stopped`, the simplest case of all, failed twice inside an hour. The container exits with code 0 and its log
+ends in `worker process exited with code 0` notices: nothing matched, nothing was attached, and the gate refused the
+`docker_start` the agent rightly reached for first. Sent to search, it asked for "container exited" and got
+`oom-killed` both times (the runbook with the loudest "Exited" in it), then ran out of output tokens. The two
+clean-stop cases had been paying this tax all day — one refusal and one search, 20-40 s — and this time the search
+went wrong.
+
+The first fix pushed a hand-written query through the retriever, and the retriever returned `container-crashloop`
+for it: the query mentioned starting again, and that runbook talks about starting again. So the second fix stopped
+retrieving for this class altogether. A container state is a fact with a known procedure; the five markers
+`docker_ps` can show now attach a fixed runbook by name — MISSING, Restarting, Paused, `Exited (137)`, `Exited (0)` —
+and `docker_logs` does the same when the log holds no complaint and the container is not running, saying in words
+that it is a clean stop with nothing to fix inside. Free-form log text still goes through retrieval, which is what
+retrieval is for.
+
+| Case | Result | Seconds | Calls | Refusals |
+| --- | --- | --- | --- | --- |
+| nginx-stopped | PASS | 39 | 4 | 0 |
+| upstream-down | PASS | 54 | 6 | 0 |
+| nginx-stopped | PASS | 34 | 4 | 0 |
+| upstream-down | PASS | 39 | 4 | 0 |
+
+Four for four, on the shortest path there is (`check_health`, `docker_ps`, `docker_logs`, `docker_start`), with the
+gate never firing because the runbook now arrives with the evidence. Retrieval eval on the 33-query set stays at
+dense 28/33; the four misses are short generic phrasings ("container exited", "container is paused") that the
+agent no longer needs to issue, because the state markers bypass search.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of past incidents, embedding-based retrieval, NemoClaw
 skill packaging. Add each only when a fault case needs it.

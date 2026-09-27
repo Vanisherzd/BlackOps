@@ -263,7 +263,9 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 
 四個新案例第一輪暴露兩種失敗：修好了卻不知道（`upstream-detached` 修完繼續挖到 token 燒完）、症狀是 access log 的 `500` 行而檢索讀不懂（`upstream-500` FAIL）。修法都在工具層：所有動作工具的結果直接附上健康檢查與「已解決，回報並停止」；access-log 的 5xx 改寫成 runbook 用語再檢索。重跑 4/4 PASS，`upstream-500` 從 FAIL 變 41 秒 6 次呼叫。
 
-九案回歸又抓到三個我們自己的缺陷：`sh()` 截斷保留前 4000 字，crash loop 的 `[emerg]` 在 stderr 尾端被砍掉，模型看到的證據裡真的沒有錯誤（crashloop 當天 0/5，修後 3/3）；上游脫離網路時重啟前端會讓 nginx 啟動失敗（現在工具層拒絕並指向 `network_repair`）；nginx 映像的 `read-only file system` 提示被當成「設定改不了」（現在 `docker_logs` 附註解釋，`recreate_stack` 拒絕對前端 replace）。這三個都不是 PASS/FAIL 看得出來的，是讀 sandbox 裡模型的 thinking 找到的。細節在 `docs/agent-design.md`。
+九案回歸又抓到三個我們自己的缺陷：`sh()` 截斷保留前 4000 字，crash loop 的 `[emerg]` 在 stderr 尾端被砍掉，模型看到的證據裡真的沒有錯誤（crashloop 當天 0/5，修後 3/3）；上游脫離網路時重啟前端會讓 nginx 啟動失敗（現在工具層拒絕並指向 `network_repair`）；nginx 映像的 `read-only file system` 提示被當成「設定改不了」（現在 `docker_logs` 附註解釋，`recreate_stack` 拒絕對前端 replace）。這三個都不是 PASS/FAIL 看得出來的，是讀 sandbox 裡模型的 thinking 找到的。
+
+當天最後一輪九案 **8/9**、零 `self_heal`、零空回合，28 到 240 秒；唯一失敗是七十場裡出現一次的格式失誤（模型把工具呼叫當純 JSON 文字吐出來），shim 現在會把這型也救回成正式呼叫。各案例逐日通過率與每個失敗的根因都在 `docs/agent-design.md`。
 
 前三個案例六輪都沒查 runbook，光靠 `check_health` → `docker_ps` → `docker_logs` 就解掉。新故障（`proxy_pass` 指到不存在的主機）才真的用到書面資料：agent 讀完 log 與設定後呼叫 `search_runbooks {"query":"host not found in upstream"}`，拿到對應 runbook 再修好。
 

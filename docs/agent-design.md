@@ -423,6 +423,36 @@ None of these would have been visible from a PASS/FAIL column. The transcript in
 (`/sandbox/.openclaw/agents/main/sessions/*.jsonl`) holds the model's thinking per turn; reading it is how each of
 the three was found in minutes after hours of watching verdicts.
 
+## Final regression of the day (2026-09-27 15:35)
+
+Nine cases, one run each, with every fix above in place: **8/9**, no `self_heal`, no empty or timed-out turn.
+
+| Case | Result | Seconds | Calls | Path |
+| --- | --- | --- | --- | --- |
+| nginx-stopped | FAIL | 101 | 0 | the model wrote `{"name":"ops__check_health","arguments":{}}` as plain text; nothing ran |
+| bad-config | PASS | 57 | 6 | logs -> read -> write -> restart |
+| upstream-down | PASS | 46 | 5 | logs -> runbook -> start |
+| bad-upstream-name | PASS | 44 | 6 | logs -> read -> write -> restart |
+| container-removed | PASS | 28 | 3 | `docker_ps` (MISSING) -> `recreate_stack` |
+| crashloop | PASS | 87 | 7 | logs -> read -> write -> restart |
+| upstream-paused | PASS | 30 | 3 | `docker_ps` (Paused) -> restart |
+| upstream-detached | PASS | 240 | 13 | probing, then `network_repair` |
+| upstream-500 | PASS | 54 | 7 | restart, still 500 -> `recreate_stack` replace |
+
+The one failure is a fourth shape, and a rare one: once in seventy drill sessions (1 of 1,362 assistant text parts)
+the model emitted its tool call as a JSON object in plain text instead of the chat template's XML block. The parser
+saw prose, no tool ran, and the turn ended with that text as the answer. The shim now recognises a content-only turn
+whose text is a JSON object naming a tool the request offered, and injects the matching `tool_calls` delta after the
+streamed content; unknown names and JSON-shaped prose pass through untouched. Same category as the thinking-channel
+recovery: the model's intent was unambiguous, the format slipped, the layer that already translates between OpenClaw
+and TensorRT-LLM is where that belongs.
+
+Over the day, per case: nginx-stopped 6/7, bad-config 9/10, upstream-down 7/7, bad-upstream-name 5/5,
+container-removed 6/6 (after `docker_ps` learned to say MISSING), crashloop 4/9 overall but 4/4 since the log
+truncation fix, upstream-paused 4/4, upstream-detached 5/7 overall and 4/4 since the restart precondition,
+upstream-500 4/5 overall and 4/4 since the access-log rewrite. Every failure traced to a defect in the tools, the
+harness, or the shim; none was fixed by changing a prompt.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of past incidents, embedding-based retrieval, NemoClaw
 skill packaging. Add each only when a fault case needs it.

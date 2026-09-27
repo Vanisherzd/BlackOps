@@ -342,6 +342,53 @@ change, so not ours to trim).
 | Disk: 47.8 GB docker build cache, 52.9 GB unused images, 11 GB partial `Qwen3.6-35B-A3B-NVFP4` download | 110 GB free -> ~220 GB | deleting shared lab data is the operator's call, never the agent's | waiting on a decision |
 | Watchdog for `oai_shim.py` / `ops_api.py` | survives a crash during a demo | a background supervisor, which is adjacent to the no-autostart rule | ask first |
 
+## Four more fault cases (2026-09-27)
+
+Each injection was probed by hand before it became a case, because the harness must be able to undo it whatever
+order the drills run in. `faults.py reset` now unpauses, resets the restart policy, reconnects the network, and
+rebuilds the upstream when `/api/` still fails after a restart.
+
+| Case | What it teaches | First run | After the fixes below |
+| --- | --- | --- | --- |
+| `crashloop` (`restart=always` + rejected config) | restarting is the wrong move; only the config fix ends the loop | PASS 234 s, 13 calls | PASS 256 s, 10 calls |
+| `upstream-paused` (`docker pause`) | 504 is not 502: alive but frozen; `docker restart` does unpause | PASS 35 s, 4 calls | – |
+| `upstream-detached` (`network disconnect`) | both Up, nothing in either log but a connect timeout on the front end | fixed, then died with `stopReason=length` | PASS 201 s, 16 calls |
+| `upstream-500` (config written inside the upstream's own layer) | `docker restart` keeps the writable layer; only a rebuild clears it | **FAIL**, `stopReason=length` | PASS 41 s, 6 calls |
+
+Two failure shapes came out of the first run, both fixed in the tool layer rather than the prompt:
+
+**Acted, and could not tell.** On `upstream-detached` the agent ran `network_repair`, which repaired the stack, never
+called `check_health` again, and kept probing for five minutes until it exhausted its output budget. Every mutating
+tool now appends the health check to its own result — `health now: {...} -> both URLs healthy. The incident is
+resolved: report root cause, actions, final health and stop.` or `-> still failing; keep going.` — and `write_config`
+says plainly that nothing is applied until the restart. The re-run stopped right after the repair.
+
+**A symptom the retriever could not read.** On `upstream-500` the only evidence was nginx access-log lines ending in
+`500`. As embedding input those are quotes, byte counts and user agents; they retrieved `upstream-504` and
+`upstream-name-resolution`, never `upstream-5xx`, and the agent looped on `docker_logs` until it ran out of tokens.
+`symptom_query` now rewrites an access-log 5xx into "the service itself answers HTTP 500 to requests, container is
+up", and the runbook quotes the log line it will be matched against. From FAIL to a six-call pass.
+
+Retrieval on the grown set: 11 runbooks, 29 queries — dense **27/29**, hybrid 23/29, keyword 19/29. The two misses are
+three-word paraphrases ("container is paused", "the backend fell off the docker network") where the correct runbook
+sits second or third; the queries the agent actually issues — the `docker_ps` markers and the log lines — all hit.
+One near-tie matters: the detached log line retrieves `upstream-504` at 0.829 and `upstream-detached` at 0.827, so
+the 504 runbook gained a step 6 that hands over to `network_repair` when both containers are Up and a restart did not
+help. That is the step the re-run followed.
+
+`recreate_stack` gained `replace: true` for the upstream-500 shape, and it demands an explicit container name: it
+destroys that container and builds it again from `faults.SPECS`. Both containers are stateless by definition, the
+front end's config is a host file, so nothing is lost — but a tool that deletes something should never do it to a
+default.
+
+Also learned the hard way: a drill loop started over ssh kept running on the Spark after the session dropped, and
+the laptop-side log silently lost the last two results. `scripts/drill-all.sh` runs drills detached on the Spark and
+writes to `logs/drills-<timestamp>.log`; watch the file, not the ssh session.
+
+What is still slow: `crashloop` and `upstream-detached` take 3-4 minutes because the model explores (`disk_usage`,
+`docker_exec` probes, a no-op `recreate_stack`) before it reads the one log line that names the fault. The gate and
+the pushes guarantee it cannot act blind; they do not stop it from looking at irrelevant things first.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of past incidents, embedding-based retrieval, NemoClaw
 skill packaging. Add each only when a fault case needs it.

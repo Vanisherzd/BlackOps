@@ -261,6 +261,8 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 
 最新一輪五案**5/5 PASS、零空回合、零 `self_heal`**，26 到 111 秒。五次都成立「沒有任何動作在看到 runbook 前執行」：閘門擋下三次，agent 每次都改去查 runbook。前一輪（閘門之前）7/7 但有一次靠 `self_heal` 救回，就是這個機制要解決的問題。
 
+四個新案例第一輪暴露兩種失敗：修好了卻不知道（`upstream-detached` 修完繼續挖到 token 燒完）、症狀是 access log 的 `500` 行而檢索讀不懂（`upstream-500` FAIL）。修法都在工具層：所有動作工具的結果直接附上健康檢查與「已解決，回報並停止」；access-log 的 5xx 改寫成 runbook 用語再檢索。重跑 4/4 PASS，`upstream-500` 從 FAIL 變 41 秒 6 次呼叫。細節在 `docs/agent-design.md`。
+
 前三個案例六輪都沒查 runbook，光靠 `check_health` → `docker_ps` → `docker_logs` 就解掉。新故障（`proxy_pass` 指到不存在的主機）才真的用到書面資料：agent 讀完 log 與設定後呼叫 `search_runbooks {"query":"host not found in upstream"}`，拿到對應 runbook 再修好。
 
 調整工具介面之前，同樣三個案例需要 prompt 直接寫出 `/sandbox/bin/ops call self_heal '{}'` 才會過，各花 2 到 3 分鐘。原因與修法見 `docs/agent-design.md` 的「Tool surface tuning」。

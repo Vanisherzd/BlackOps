@@ -330,4 +330,8 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | `docs/agent-design.md` | Agent 迴圈設計、工具白名單、兩條 drill 路徑與結果 |
 | `docs/hackathon-runbook.md` | 當天流程、離線 bundle、Jetson 對照 |
 
-Repo 副本：GitHub `Vanisherzd/dgx-spark-edge-agent`（private）、lab Spark `hsnl@192.168.2.60:~/edge-agent`（可直接 push）、筆電 `~/Desktop/HSNL/edge-agent`。lab VPN 下筆電連不到 GitHub，推 GitHub 從 Spark 端執行。
+Repo 副本：GitHub `Vanisherzd/dgx-spark-edge-agent`（private）、lab Spark `hsnl@192.168.2.60:~/edge-agent`（可直接 push）、筆電 `~/Desktop/HSNL/edge-agent`。lab VPN 下筆電連不到 GitHub，推 GitHub 從 Spark 端執行，token 從筆電經 stdin 傳過去，且要先把 Spark 上既有的 credential helper 清掉（那台曾用別人的帳號 `s102345` 推送而被 403）：
+
+```bash
+T=$(gh auth token); printf '%s' "$T" | ssh hsnl@192.168.2.60 'read -r T; cd ~/edge-agent && git -c credential.helper= -c credential.helper="!f() { echo username=Vanisherzd; echo password=$T; }; f" push origin main'
+```

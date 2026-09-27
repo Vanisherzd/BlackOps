@@ -178,6 +178,11 @@ EVAL = [                                            # symptom -> the runbook an 
     ("the machine ran out of RAM and something was terminated", "oom-killed.md"),
     ("the gateway waits forever for the backend", "upstream-504.md"),
     ("the front end vanished from the container list", "container-missing.md"),
+    ("api returns 500 but the upstream container is up", "upstream-5xx.md"),
+    ("restart did not help, the upstream still answers 500", "upstream-5xx.md"),
+    ("both containers up but nginx times out connecting to upstream", "upstream-detached.md"),
+    ("the backend fell off the docker network", "upstream-detached.md"),
+    ("container is paused", "upstream-504.md"),
 ]
 
 

@@ -38,7 +38,7 @@ UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / jour
 MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
             "kill_process"}
 SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
-                        r"not found|exit(ed)? \(?\d|oom|killed|no space", re.I)
+                        r"not found|exit(ed)? \(?\d|restarting|paused|oom|killed|no space|\b50[0-9]\b", re.I)
 _incident = {"runbook_seen": False, "refusals": 0}
 
 
@@ -148,7 +148,7 @@ TOOLS = [
     {"name": "port_check", "description": "Whether a TCP port accepts connections", "parameters": {"type": "object", "properties": {"host": {"type": "string", "default": "127.0.0.1"}, "port": {"type": "integer"}}, "required": ["port"]}},
     {"name": "http_check", "description": "GET an http(s) URL on this host or the private network and return the status code and the first bytes of the body", "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
     {"name": "top_processes", "description": "Top host processes by CPU with memory usage", "parameters": {"type": "object", "properties": {}}},
-    {"name": "recreate_stack", "description": "Recreate a container of this stack that no longer exists at all (docker rm). Start/restart first if it merely exited", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}}},
+    {"name": "recreate_stack", "description": "Recreate a container of this stack from its definition: one that no longer exists at all, or with replace=true one whose own state is corrupt and survives a restart (e.g. a broken config inside the upstream). Start/restart first if it merely exited", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "replace": {"type": "boolean", "default": False}}}},
     {"name": "network_repair", "description": "Make sure the stack network exists and both containers are attached to it; use when the front end cannot resolve or reach the upstream", "parameters": {"type": "object", "properties": {}}},
     {"name": "cleanup_disk", "description": "Free space by deleting this project's own old log files (never images, volumes, or anyone else's data)", "parameters": {"type": "object", "properties": {}}},
     {"name": "kill_process", "description": "Terminate a runaway host process by pid; only processes owned by this user and not part of the platform itself", "parameters": {"type": "object", "properties": {"pid": {"type": "integer"}, "force": {"type": "boolean", "default": False}}, "required": ["pid"]}},
@@ -235,7 +235,12 @@ def run_tool(name, args, dry_run):
         return json.dumps(health)
     if name == "docker_ps":
         out = docker_ps()
-        return attach_runbook(out, "container missing removed no such container") if "MISSING" in out else out
+        for marker, query in (("MISSING", "container missing removed no such container"),
+                              ("Restarting", "container restarting over and over crash loop"),
+                              ("Paused", "container paused frozen upstream timed out 504")):
+            if marker in out:
+                return attach_runbook(out, query)
+        return out
     if name == "docker_logs":
         denied = guard(args["name"])
         if denied:
@@ -310,8 +315,12 @@ def run_tool(name, args, dry_run):
         for t in targets:
             if t not in faults.SPECS:
                 return f"denied: {t!r} is not part of this stack"
+        if args.get("replace") and not args.get("name"):
+            return "denied: replace=true needs an explicit name; it destroys that container and builds it again"
         if dry_run:
-            return f"DRY-RUN: would recreate {targets}"
+            return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
+        if args.get("replace"):
+            sh(f"docker rm -f {args['name']}")       # stateless by definition (SPECS); the config is a host file
         out = [faults.ensure(t) for t in targets]
         time.sleep(2)
         return "\n".join(out) + "\n" + docker_ps()

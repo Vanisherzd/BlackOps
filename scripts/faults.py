@@ -2,6 +2,7 @@
 
   uv run --no-sync scripts/faults.py setup            create edge-victim (nginx front, 127.0.0.1:8880) + edge-victim-app (upstream)
   uv run --no-sync scripts/faults.py inject <case>    cases: nginx-stopped | bad-config | upstream-down | bad-upstream-name | container-removed
+                                                          | crashloop | upstream-paused | upstream-detached | upstream-500
   uv run --no-sync scripts/faults.py verify           exit 0 when / and /api/ both return 200
   uv run --no-sync scripts/faults.py reset            restore config, start both containers
   uv run --no-sync scripts/faults.py run <case>       inject -> agent.py -> verify   (the end-to-end test)
@@ -87,13 +88,22 @@ def setup():
 
 
 def reset():
+    """Undo every injection this file knows how to make, whatever order the drills ran in."""
     CONF_DIR.mkdir(parents=True, exist_ok=True)
     (CONF_DIR / "default.conf").write_text(GOOD_CONF)
     for name in (APP, FRONT):       # a previous drill may have removed one; start cannot bring back what is gone
         ensure(name)
+        sh(f"docker unpause {name} >/dev/null 2>&1")
+        sh(f"docker update --restart=no {name} >/dev/null 2>&1")
+        sh(f"docker network connect {NET} {name} >/dev/null 2>&1")
     sh(f"docker start {APP} {FRONT} >/dev/null 2>&1")
-    sh(f"docker restart {FRONT} >/dev/null 2>&1")
+    sh(f"docker restart -t 1 {APP} {FRONT} >/dev/null 2>&1")
     time.sleep(2)
+    if http("/api/") != 200:        # the upstream's own layer may be poisoned (upstream-500): only a rebuild clears it
+        sh(f"docker rm -f {APP} >/dev/null 2>&1")
+        ensure(APP)
+        sh(f"docker restart -t 1 {FRONT} >/dev/null 2>&1")
+        time.sleep(2)
 
 
 def inject(case):
@@ -106,6 +116,21 @@ def inject(case):
         sh(f"docker stop -t 1 {APP}", check=True)
     elif case == "container-removed":
         sh(f"docker rm -f {FRONT}", check=True)     # start/restart cannot fix this; the container has to be recreated
+    elif case == "crashloop":
+        # restart=always + a config nginx rejects: the container comes back every second and dies every second.
+        # Restarting it is exactly the wrong move; only fixing the config ends the loop.
+        (CONF_DIR / "default.conf").write_text(BAD_CONF)
+        sh(f"docker update --restart=always {FRONT}", check=True)
+        sh(f"docker restart -t 1 {FRONT}")
+    elif case == "upstream-paused":
+        sh(f"docker pause {APP}", check=True)         # alive but frozen: /api/ times out (504), it does not refuse (502)
+    elif case == "upstream-detached":
+        sh(f"docker network disconnect {NET} {APP}", check=True)   # both up, nothing wrong in either log except a timeout
+    elif case == "upstream-500":
+        # The upstream's own config, inside its writable layer, now returns 500. A restart keeps that layer, so
+        # restart does not help; the container has to be recreated from its definition.
+        sh(f"docker exec {APP} sh -c \"printf 'server {{ listen 80; return 500; }}\\n' > /etc/nginx/conf.d/default.conf "
+           f"&& nginx -s reload\"", check=True)
     elif case == "bad-upstream-name":
         (CONF_DIR / "default.conf").write_text(BAD_NAME_CONF)
         sh(f"docker restart -t 1 {FRONT}")  # nginx cannot resolve the name and exits

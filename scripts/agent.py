@@ -426,6 +426,11 @@ def _run_tool(name, args, dry_run):
         if dry_run:
             return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
         if args.get("replace"):
+            # Known precondition, checked in code: a rebuild is never a first move. The runbook says restart first,
+            # and the reviewer once approved a premature rebuild because "the runbook was consulted".
+            if not any(t["tool"] == "docker_restart" and args["name"] in t["args"] for t in _incident["trace"]):
+                return (f"denied: recreate_stack replace=true on {args['name']} before it was restarted in this incident. "
+                        f"docker_restart it first; rebuild only if it still fails afterwards.")
             refusal = reviewed(name, {"name": args["name"], "replace": True})
             if refusal:
                 return refusal

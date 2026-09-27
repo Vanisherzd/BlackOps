@@ -39,8 +39,17 @@ What each action is for, and when it is NOT justified:
   top_processes, that is measurably starving the stack. Never for platform processes.
 - cleanup_disk: deletes this project's old log files. Justified only when disk_usage shows real pressure.
 
-Answer with exactly one word on the first line, APPROVE or REJECT, then one short paragraph of reasoning that names
-the evidence you relied on. If you reject, say what the commander should do instead."""
+Rules of evidence:
+- "A runbook was consulted" is context, not permission. Only the evidence lines justify an action.
+- For recreate_stack replace=true you must find, in the evidence, a docker_restart of that same container followed by
+  a health check or log still showing 5xx. If either is missing, REJECT and say "restart first" or "check after the restart".
+- For kill_process you must find a top_processes result naming that pid with high CPU or memory. Otherwise REJECT.
+- For cleanup_disk you must find a disk_usage result showing the root filesystem above 85 %. Otherwise REJECT.
+- Notices such as "worker process exited", "signal 29 (SIGIO)" or "gracefully shutting down" are normal nginx output,
+  not evidence of a fault.
+
+Answer with exactly one word on the first line, APPROVE or REJECT, then one short paragraph that quotes the evidence
+line(s) you relied on. If you reject, say what the commander should do instead."""
 
 
 def _log(row):

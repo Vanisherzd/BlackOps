@@ -52,10 +52,14 @@ def main():
     import reviewer
     calls = []
     real = reviewer.review
-    reviewer.review = lambda action, args, trace, seen: (calls.append(action) or (False, "not yet: restart first"))
-    agent._incident.update(runbook_seen=True, refusals=0, trace=[{"tool": "check_health", "args": "{}", "result": "500"}])
-    out = agent.run_tool("recreate_stack", {"name": "edge-victim-app", "replace": True}, dry_run=False) if os.environ.get("LIVE_STACK") else "review-rejected: (skipped: no live stack)"
-    assert out.startswith("review-rejected:"), out
+    reviewer.review = lambda action, args, trace, seen: (calls.append(action) or (False, "not yet"))
+    if os.environ.get("LIVE_STACK"):
+        agent._incident.update(runbook_seen=True, refusals=0, trace=[{"tool": "check_health", "args": "{}", "result": "500"}])
+        out = agent.run_tool("recreate_stack", {"name": "edge-victim-app", "replace": True}, dry_run=False)
+        assert out.startswith("denied:") and "restarted" in out and not calls, f"a rebuild with no prior restart is refused in code, reviewer not consulted: {out[:120]}"
+        agent._incident["trace"].append({"tool": "docker_restart", "args": '{"name": "edge-victim-app"}', "result": "still 500"})
+        out = agent.run_tool("recreate_stack", {"name": "edge-victim-app", "replace": True}, dry_run=False)
+        assert out.startswith("review-rejected:") and calls == ["recreate_stack"], f"after a restart the reviewer decides: {out[:120]}"
     reviewer.review = real
     assert agent._incident["trace"][-1]["tool"] in ("recreate_stack", "check_health"), "trace must record calls"
 

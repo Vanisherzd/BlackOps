@@ -12,22 +12,29 @@ CONF = "server {\n  listen 80;\n  location /api/ { proxy_pass http://edge-victim
 
 
 def main():
-    agent._incident["runbook_seen"] = False
+    agent._incident.update(runbook_seen=False, refusals=0)
     first = agent.run_tool("write_config", {"content": CONF}, dry_run=True)
     assert first.startswith("refused:"), f"a cold write_config must be refused, got: {first[:120]}"
-    assert "runbook" in first and "##" in first, "the refusal must hand over the procedure"
-    assert agent._incident["runbook_seen"], "showing the runbook must satisfy the requirement"
+    assert "nginx-config-error.md" in first, "the refusal must list the catalogue"
+    assert not agent._incident["runbook_seen"], "a refusal alone must not count as having read anything"
 
+    agent.run_tool("search_runbooks", {"query": "nginx emerg invalid directive"}, dry_run=True)
+    assert agent._incident["runbook_seen"]
     second = agent.run_tool("write_config", {"content": CONF}, dry_run=True)
-    assert second.startswith("DRY-RUN"), f"the retry must go through, got: {second[:120]}"
+    assert second.startswith("DRY-RUN"), f"after a search the write must go through, got: {second[:120]}"
+
+    agent._incident.update(runbook_seen=False, refusals=0)          # a stubborn agent is let through on the third try
+    for _ in range(2):
+        assert agent.run_tool("write_config", {"content": CONF}, dry_run=True).startswith("refused:")
+    assert agent.run_tool("write_config", {"content": CONF}, dry_run=True).startswith("DRY-RUN"), "must not deadlock"
 
     for tool, args in (("docker_start", {"name": "edge-victim"}), ("recreate_stack", {}),
                        ("network_repair", {}), ("kill_process", {"pid": 999999}), ("cleanup_disk", {})):
-        agent._incident["runbook_seen"] = False
+        agent._incident.update(runbook_seen=False, refusals=0)
         out = agent.run_tool(tool, args, dry_run=True)
         assert out.startswith("refused:"), f"{tool} must be gated, got: {out[:120]}"
 
-    agent._incident["runbook_seen"] = False
+    agent._incident.update(runbook_seen=False, refusals=0)
     assert agent.run_tool("docker_ps", {}, dry_run=True) is not None            # read-only, never gated
     assert agent.run_tool("read_config", {}, dry_run=True) is not None
 

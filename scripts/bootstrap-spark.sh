@@ -63,7 +63,7 @@ nemoclaw() { stage nemoclaw
   # tool surface for a small local model: no tool-search indirection, one skill, no heartbeat (see nemoclaw/openclaw-patch.json5)
   nemoclaw edge-agent upload nemoclaw/openclaw-patch.json5 /sandbox/tmp/ >/dev/null 2>&1 || true
   openshell sandbox exec -- sh -c 'openclaw config patch --stdin < /sandbox/tmp/openclaw-patch.json5' >/dev/null 2>&1 || true
-  for f in AGENTS.md TOOLS.md HEARTBEAT.md; do nemoclaw edge-agent upload "nemoclaw/workspace/$f" /sandbox/.openclaw/workspace/ >/dev/null 2>&1 || true; done
+  for f in AGENTS.md TOOLS.md HEARTBEAT.md SOUL.md IDENTITY.md USER.md; do nemoclaw edge-agent upload "nemoclaw/workspace/$f" /sandbox/.openclaw/workspace/ >/dev/null 2>&1 || true; done
   nemoclaw onboard --resume --non-interactive --yes-i-accept-third-party-software || true
   nemoclaw edge-agent gateway restart >/dev/null 2>&1 || true
   nemoclaw edge-agent status | grep -E "Inference|Policies"; }

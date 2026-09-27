@@ -39,7 +39,7 @@ MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", 
             "kill_process"}
 SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
                         r"not found|exit(ed)? \(?\d|oom|killed|no space", re.I)
-_incident = {"runbook_seen": False}
+_incident = {"runbook_seen": False, "refusals": 0}
 
 
 def symptom_query(text):
@@ -214,10 +214,16 @@ def run_tool(name, args, dry_run):
         return "error: kill_process needs args.pid (from top_processes)"
 
     if name in MUTATING and not _incident["runbook_seen"]:
-        # Refuse once, and hand over the procedure in the same breath so the retry can succeed immediately.
-        symptom = f"{name} " + " ".join(f"{k}={v}" for k, v in args.items() if k != "content")
-        body = attach_runbook(f"refused: no runbook consulted yet for this incident, so {name} is premature", symptom)
-        return body + "\n\nRead the procedure above, then call the tool again if it is still the right action."
+        # The agent is about to act without having read any evidence, so we do not know the symptom either and
+        # cannot pick the procedure for it. Send it back for the symptom. Bounded, so a stubborn model cannot
+        # deadlock: after two refusals the action goes through and the log shows it did.
+        _incident["refusals"] += 1
+        if _incident["refusals"] <= 2:
+            import rag
+            catalogue = "\n".join(f"- {n}: {t}" for n, t, _ in rag.documents())
+            return (f"refused: no runbook consulted yet for this incident, so {name} is premature. "
+                    "Get the symptom first (docker_logs of the failing container attaches the matching procedure), "
+                    "or call search_runbooks with the error text. Runbooks available:\n" + catalogue)
 
     def guard(n):
         if n not in NAMES:
@@ -225,7 +231,7 @@ def run_tool(name, args, dry_run):
     if name == "check_health":
         health = {k: http_status(u) for k, u in HEALTH.items()}
         if all(v == 200 for v in health.values()):
-            _incident["runbook_seen"] = False          # incident over; the next one starts without credit
+            _incident.update(runbook_seen=False, refusals=0)   # incident over; the next one starts without credit
         return json.dumps(health)
     if name == "docker_ps":
         out = docker_ps()

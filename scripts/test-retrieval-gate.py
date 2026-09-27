@@ -42,6 +42,12 @@ def main():
     assert agent.symptom_query('nginx: [emerg] invalid number of arguments in "return" directive'), \
         "an emerg line is a symptom"
 
+    noise = "\n".join(["/docker-entrypoint.sh: Configuration complete; ready for start up"] * 30
+                      + ['nginx: [emerg] invalid number of arguments in "return" directive'] * 6)
+    folded = agent.collapse(noise)
+    assert folded.count("\n") == 1 and "(x30)" in folded and "(x6)" in folded, folded
+    assert agent.sh("printf 'a%.0s' $(seq 1 5000); echo; echo LAST", limit=100).endswith("LAST"), "truncation must keep the end"
+
     health = agent.run_tool("check_health", {}, dry_run=True)
     if '"front": 200' in health and '"api": 200' in health:
         assert not agent._incident["runbook_seen"], "green health must end the incident"

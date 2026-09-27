@@ -185,10 +185,28 @@ TOOLS = [
 ]
 
 
-def sh(cmd, timeout=30):
+def sh(cmd, timeout=30, limit=4000):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
     out = (r.stdout + r.stderr).strip()
-    return out[:4000] if out else f"(exit {r.returncode}, no output)"
+    if not out:
+        return f"(exit {r.returncode}, no output)"
+    # Keep the tail, not the head. A crash-looping nginx printed ten lines of entrypoint chatter per restart on
+    # stdout and its one [emerg] on stderr; head truncation dropped the only line that mattered, three drills in a row.
+    return out if len(out) <= limit else "...(earlier output cut)\n" + out[-limit:]
+
+
+def collapse(text):
+    """Fold lines that repeat into one line with a count, keeping first-seen order. A restart loop turns 100 lines of
+    the same entrypoint chatter into a dozen, and the error that recurs every cycle becomes the loudest line."""
+    seen, order = {}, []
+    for line in text.splitlines():
+        key = line.strip()
+        if key in seen:
+            seen[key] += 1
+        else:
+            seen[key] = 1
+            order.append(line)
+    return "\n".join(f"{l}   (x{seen[l.strip()]})" if seen[l.strip()] > 1 else l for l in order)
 
 
 def http_status(url):
@@ -274,7 +292,7 @@ def run_tool(name, args, dry_run):
         denied = guard(args["name"])
         if denied:
             return denied
-        out = sh(f"docker logs --tail {int(args.get('tail', 40))} {args['name']}")
+        out = collapse(sh(f"docker logs --tail {int(args.get('tail', 40))} {args['name']} 2>&1", limit=6000))
         if "read-only file system" in out:
             out += ("\n\nnote: the entrypoint's 'can not modify /etc/nginx/conf.d/default.conf (read-only file "
                     "system?)' is expected and harmless. That file is a host file mounted read-only into the "

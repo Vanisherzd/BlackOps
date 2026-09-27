@@ -69,6 +69,7 @@ def score_block(case, start, body, log_date=None):
     if not m_turn:
         return None
     t0, report, t1, _, front, api, verdict = m_turn.groups()
+    report = re.sub("[\u2010\u2011\u2012\u2013\u00ad]", "-", report)   # the model writes edge‑victim with U+2011
     inj = re.search(r"injected \S+: / (\S+) /api/ (\S+)", body)
     inj_front, inj_api = (inj.group(1), inj.group(2)) if inj else ("?", "?")
     calls = parse_calls(body.split("ops-api.log", 1)[-1])

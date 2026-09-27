@@ -14,6 +14,6 @@ python3 - <<'PY'
 import json
 for l in open('logs/ops-api.log'):
     d = json.loads(l)
-    print(d['ts'], d['from'], d['tool'], json.dumps(d['args'])[:90], '->', d['result'][:100].replace('\n', ' '))
+    print(d['ts'], d['from'], d['tool'], json.dumps(d['args'])[:90], '->', str(d['result'])[:400].replace('\n', ' '))
 PY
 echo "DRILL_DONE $(date +%T)"

@@ -67,9 +67,16 @@ PARAM_RE = re.compile(r"<parameter=([A-Za-z0-9_.\-]+)>(.*?)</parameter>", re.S)
 def log(**row):
     try:                                   # a log write must never break a request
         with open(os.path.join(os.path.dirname(__file__), "..", "logs", "oai-shim.log"), "a") as f:
-            f.write(json.dumps(row) + "\n")
+            f.write(json.dumps(dict(ts=round(time.time(), 3), **row)) + "\n")
     except OSError:
         pass
+
+
+def log_usage(d):
+    """One row per completed request with the server's token counts: what a turn cost, for the scorecard."""
+    u = d.get("usage") if isinstance(d, dict) else None
+    if u:
+        log(usage={k: u.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")})
 
 
 def salvage_calls(text, tools):
@@ -147,6 +154,7 @@ def stream_with_salvage(resp, tools):
                 d = None
         finishing = bool(d and any(ch.get("finish_reason") for ch in d.get("choices") or []))
         if d:
+            log_usage(d)
             for k in ident:
                 if d.get(k):
                     ident[k] = d[k]
@@ -189,6 +197,7 @@ def salvage_json(payload, tools):
         d = json.loads(payload)
     except ValueError:
         return payload
+    log_usage(d)
     for ch in d.get("choices") or []:
         m = ch.get("message") or {}
         if m.get("tool_calls"):

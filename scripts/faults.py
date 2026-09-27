@@ -32,6 +32,25 @@ BAD_NAME_CONF = GOOD_CONF.replace("http://edge-victim-app:80/", "http://edge-vic
 assert BAD_CONF != GOOD_CONF and BAD_NAME_CONF != GOOD_CONF
 
 
+# Ground truth per case, for scripts/score.py. min_actions is the fewest state-changing calls that fix it; fix_tools
+# are the tools those calls use; cause is a regex the final report must match to count as naming the root cause;
+# tier separates cases the agent was tuned on ("seen") from ones it was not — every case here has driven a fix, so all
+# are "seen" today. A new case stays "unseen" until something is changed because of it.
+CASES = {
+    "nginx-stopped":     dict(min_actions=1, fix_tools={"docker_start", "docker_restart"}, cause=r"edge-victim\b.*(stop|exit|down|not running)|(stop|exit)[a-z]* .*edge-victim\b", tier="seen"),
+    "bad-config":        dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"config|semicolon|syntax|emerg|return directive", tier="seen"),
+    "upstream-down":     dict(min_actions=1, fix_tools={"docker_start", "docker_restart"}, cause=r"(edge-victim-app|upstream|backend).*(exit|stop|down|not running)", tier="seen"),
+    "bad-upstream-name": dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"edge-victim-backend|resolv|proxy_pass|upstream name|host not found|wrong (host|name)", tier="seen"),
+    "container-removed": dict(min_actions=1, fix_tools={"recreate_stack"}, cause=r"missing|removed|deleted|does not exist|no such container|recreat", tier="seen"),
+    "crashloop":         dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"config|emerg|syntax|return directive|restart(ing)? loop|crash", tier="seen"),
+    "upstream-paused":   dict(min_actions=1, fix_tools={"docker_restart"}, cause=r"paus|frozen|504|timed? ?out", tier="seen"),
+    "upstream-detached": dict(min_actions=1, fix_tools={"network_repair"}, cause=r"network|detach|disconnect|edge-net|unreachable", tier="seen"),
+    "upstream-500":      dict(min_actions=1, fix_tools={"recreate_stack"}, cause=r"500|recreat|rebuil|upstream.*(config|broken|misconfig)", tier="seen"),
+}
+MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk", "kill_process"}
+DIAGNOSTIC = {"check_health", "docker_ps", "docker_logs", "read_config", "search_runbooks", "http_check"}
+
+
 def sh(cmd, check=False):
     r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
     if check and r.returncode:

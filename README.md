@@ -261,7 +261,9 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 
 最新一輪五案**5/5 PASS、零空回合、零 `self_heal`**，26 到 111 秒。五次都成立「沒有任何動作在看到 runbook 前執行」：閘門擋下三次，agent 每次都改去查 runbook。前一輪（閘門之前）7/7 但有一次靠 `self_heal` 救回，就是這個機制要解決的問題。
 
-四個新案例第一輪暴露兩種失敗：修好了卻不知道（`upstream-detached` 修完繼續挖到 token 燒完）、症狀是 access log 的 `500` 行而檢索讀不懂（`upstream-500` FAIL）。修法都在工具層：所有動作工具的結果直接附上健康檢查與「已解決，回報並停止」；access-log 的 5xx 改寫成 runbook 用語再檢索。重跑 4/4 PASS，`upstream-500` 從 FAIL 變 41 秒 6 次呼叫。細節在 `docs/agent-design.md`。
+四個新案例第一輪暴露兩種失敗：修好了卻不知道（`upstream-detached` 修完繼續挖到 token 燒完）、症狀是 access log 的 `500` 行而檢索讀不懂（`upstream-500` FAIL）。修法都在工具層：所有動作工具的結果直接附上健康檢查與「已解決，回報並停止」；access-log 的 5xx 改寫成 runbook 用語再檢索。重跑 4/4 PASS，`upstream-500` 從 FAIL 變 41 秒 6 次呼叫。
+
+九案回歸又抓到三個我們自己的缺陷：`sh()` 截斷保留前 4000 字，crash loop 的 `[emerg]` 在 stderr 尾端被砍掉，模型看到的證據裡真的沒有錯誤（crashloop 當天 0/5，修後 3/3）；上游脫離網路時重啟前端會讓 nginx 啟動失敗（現在工具層拒絕並指向 `network_repair`）；nginx 映像的 `read-only file system` 提示被當成「設定改不了」（現在 `docker_logs` 附註解釋，`recreate_stack` 拒絕對前端 replace）。這三個都不是 PASS/FAIL 看得出來的，是讀 sandbox 裡模型的 thinking 找到的。細節在 `docs/agent-design.md`。
 
 前三個案例六輪都沒查 runbook，光靠 `check_health` → `docker_ps` → `docker_logs` 就解掉。新故障（`proxy_pass` 指到不存在的主機）才真的用到書面資料：agent 讀完 log 與設定後呼叫 `search_runbooks {"query":"host not found in upstream"}`，拿到對應 runbook 再修好。
 
@@ -305,6 +307,8 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | 清理 log 時刪到服務開著的檔案 | 空間沒釋放，之後的 log 寫進沒人讀得到的 inode | 跳過 `/proc/*/fd` 指到的檔案 |
 | onboarding 寫的 `maxTokens: 4096` 與 `contextWindow: 131072` | thinking 燒完預算後 `stopReason=length` 空回合；context 超過伺服器 32768 才發現 | 改 12288 與 32768（`nemoclaw/openclaw-patch.json5`） |
 | shim 把串流整段緩衝再送 | OpenClaw 120 秒無資料就切斷：`chunk idle timeout exceeded` | 即時轉發，只扣住 finish chunk 做救援判斷 |
+| 工具輸出截斷保留開頭 | crash loop 的 `[emerg]` 在 stderr 尾端被砍，agent 看不到錯誤 | 保留尾端；`docker_logs` 合併 stderr 並折疊重複行 `(xN)` |
+| 上游不在網路上時重啟前端 | nginx 解析不到上游名稱直接退出，兩個 URL 全掛 | `docker_start/restart edge-victim` 先檢查上游是否在網路上 |
 | `nemoclaw upload` 目的地 | 把檔名路徑當目錄 | 目的地給目錄 |
 | `openshell sandbox exec` / `nemoclaw exec` 吃 stdin | heredoc 腳本後半段被吞 | 一律 `</dev/null` |
 

@@ -389,6 +389,40 @@ What is still slow: `crashloop` and `upstream-detached` take 3-4 minutes because
 `docker_exec` probes, a no-op `recreate_stack`) before it reads the one log line that names the fault. The gate and
 the pushes guarantee it cannot act blind; they do not stop it from looking at irrelevant things first.
 
+## Regression, and a defect that was ours all along (2026-09-27, afternoon)
+
+Nine cases, one pass each, after the four new cases landed: 7/9. The two failures were `crashloop` (`stopReason=length`
+after 290 s) and `upstream-detached`, which ended **worse than it started** — both URLs dark instead of one. Reading
+the model's own reasoning, not the verdicts, found three defects, all in our tooling rather than in the model.
+
+**The log truncation dropped the only error line.** `sh()` joined stdout and stderr and kept the first 4000
+characters. A crash-looping nginx prints ten lines of entrypoint chatter per restart on stdout and its single
+`[emerg]` on stderr, so a hundred-line tail overflowed the limit before stderr began. The model's reasoning was
+exactly right about what it saw — "the logs show no actual error, just the read-only note" — and it went on to
+probe everything else until it ran out of output tokens. `bad-config` is the same broken file, but the container
+exits once, the log fits, and it passed every time. `crashloop` failed 0/5 across the day. `sh()` now keeps the tail,
+`docker_logs` merges stderr in emission order and folds repeated lines into one with a count (`(x6)`), so the
+recurring error is the loudest line rather than the missing one. `crashloop` then passed 3/3: 118 s, 123 s, 74 s,
+all on the canonical path (logs, read config, write config, restart).
+
+**Restarting the front end while the upstream is off the network kills the front end.** nginx refuses to start when
+an upstream name does not resolve. With `edge-victim-app` disconnected, the agent restarted `edge-victim`, which
+exited, and neither runbook it had said not to. `docker_start`/`docker_restart` on the front end now refuse while
+the upstream is not on the stack network and say to run `network_repair` first. `upstream-detached` then passed 2/2
+(54 s / 6 calls, 139 s / 9 calls); the refused restart is visible in the trace, followed by the repair.
+
+**The entrypoint's read-only warning read as "the config cannot be fixed".** The official nginx image logs
+`can not modify /etc/nginx/conf.d/default.conf (read-only file system?)` on every start because the config is a
+host file mounted read-only. The model took it literally, never called `write_config`, and once rebuilt the
+front-end container with `replace: true` — which mounts the same file and reproduces the same fault. `docker_logs`
+keeps the line and appends what it means; `recreate_stack` refuses `replace` on the front end and points at
+`write_config`; the health push appended to every action now lists container states and names the Exited or
+Restarting one as the next thing to fix.
+
+None of these would have been visible from a PASS/FAIL column. The transcript inside the sandbox
+(`/sandbox/.openclaw/agents/main/sessions/*.jsonl`) holds the model's thinking per turn; reading it is how each of
+the three was found in minutes after hours of watching verdicts.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of past incidents, embedding-based retrieval, NemoClaw
 skill packaging. Add each only when a fault case needs it.

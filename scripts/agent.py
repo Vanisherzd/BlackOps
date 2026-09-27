@@ -30,6 +30,42 @@ HEALTH = {"front": "http://127.0.0.1:8880/", "api": "http://127.0.0.1:8880/api/"
 EXEC_ALLOW = ("nginx -t", "nginx -T", "cat ", "ls", "ps", "curl", "df", "du", "tail", "head", "grep", "id", "env")
 UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / journal identifier
 
+# --- retrieval discipline ----------------------------------------------------------------------------------------
+# Telling a model to read the runbook first does not make it read the runbook first: across seven drills it skipped
+# retrieval whenever it believed it already knew the answer, and one bad-config run wandered for six minutes because
+# of it. So the rule lives in the tool layer. Evidence tools push the matching runbook into the answer, and an action
+# refuses once until a runbook has been seen for this incident. An incident ends when health comes back green.
+MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
+            "kill_process"}
+SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
+                        r"not found|exit(ed)? \(?\d|oom|killed|no space", re.I)
+_incident = {"runbook_seen": False}
+
+
+def symptom_query(text):
+    """The lines that look like a complaint, or None when the output carries no symptom worth matching on."""
+    lines = [l.strip() for l in (text or "").splitlines() if SYMPTOM_RE.search(l)]
+    return " ".join(lines[-4:])[:400] or None
+
+
+def attach_runbook(result, query):
+    """Push the matching procedure into an evidence answer, so the agent cannot act without having seen it.
+
+    Only on a query with a real symptom in it: cosine similarity is positive for anything, so attaching on every
+    read would staple an irrelevant procedure to healthy output and teach the agent to ignore the section.
+    """
+    import rag
+    if not query:
+        return result
+    ranked = rag.rank(query)
+    if not ranked or ranked[0][1] <= 0:
+        return result
+    name = ranked[0][0]
+    body = {n: t for n, _, t in rag.documents()}[name]
+    _incident["runbook_seen"] = True
+    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}"
+
+
 # --- host layer -------------------------------------------------------------------------------------------------
 # What this agent may touch outside the two containers. The rule behind the list: only things this project created.
 # Deliberately absent, and why:
@@ -177,15 +213,29 @@ def run_tool(name, args, dry_run):
     if name == "kill_process" and "pid" not in args:
         return "error: kill_process needs args.pid (from top_processes)"
 
+    if name in MUTATING and not _incident["runbook_seen"]:
+        # Refuse once, and hand over the procedure in the same breath so the retry can succeed immediately.
+        symptom = f"{name} " + " ".join(f"{k}={v}" for k, v in args.items() if k != "content")
+        body = attach_runbook(f"refused: no runbook consulted yet for this incident, so {name} is premature", symptom)
+        return body + "\n\nRead the procedure above, then call the tool again if it is still the right action."
+
     def guard(n):
         if n not in NAMES:
             return f"denied: container {n!r} is outside the allowed set {sorted(NAMES)}"
     if name == "check_health":
-        return json.dumps({k: http_status(u) for k, u in HEALTH.items()})
+        health = {k: http_status(u) for k, u in HEALTH.items()}
+        if all(v == 200 for v in health.values()):
+            _incident["runbook_seen"] = False          # incident over; the next one starts without credit
+        return json.dumps(health)
     if name == "docker_ps":
-        return docker_ps()
+        out = docker_ps()
+        return attach_runbook(out, "container missing removed no such container") if "MISSING" in out else out
     if name == "docker_logs":
-        return guard(args["name"]) or sh(f"docker logs --tail {int(args.get('tail', 40))} {args['name']}")
+        denied = guard(args["name"])
+        if denied:
+            return denied
+        out = sh(f"docker logs --tail {int(args.get('tail', 40))} {args['name']}")
+        return attach_runbook(out, symptom_query(out))
     if name == "docker_exec":
         cmd = args["cmd"].strip()
         if not cmd.startswith(EXEC_ALLOW) or any(t in cmd for t in (";", "&&", "|", ">", "`", "$(")):
@@ -211,6 +261,7 @@ def run_tool(name, args, dry_run):
         (CONF_DIR / "default.conf").write_text(content)
         return "written; restart edge-victim to apply"
     if name == "search_runbooks":
+        _incident["runbook_seen"] = True
         return search_runbooks(args["query"])
     if name == "disk_usage":
         return sh("df -h -x tmpfs -x devtmpfs -x efivarfs | head -12") + "\n\n" + sh("docker system df")

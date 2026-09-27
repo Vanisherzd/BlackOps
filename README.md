@@ -68,7 +68,7 @@ scripts/
 skills/ops/SKILL.md             OpenClaw skill，教 sandbox agent 用 ops 指令
 nemoclaw/openclaw-patch.json5   小模型的工具介面設定（關掉 tool search、只留 ops skill、關 heartbeat）
 nemoclaw/workspace/*.md         取代 OpenClaw 預設 bootstrap 的精簡 AGENTS.md / TOOLS.md / HEARTBEAT.md
-runbooks/*.md                   小型 RAG 語料（IT runbook，9 篇：服務掛掉、容器被刪、設定錯、502、504、上游名稱解析、crash loop、OOM、磁碟滿）
+runbooks/*.md                   小型 RAG 語料（IT runbook，11 篇：服務掛掉、容器被刪、設定錯、502、504、上游 5xx、上游脫離網路、上游名稱解析、crash loop、OOM、磁碟滿）
 victim/conf.d/                  victim nginx 設定（由 faults.py 產生，不入版控）
 trt/*.yaml                      trtllm-serve 的 extra_llm_api_options（nano.yaml 為正式）
 systemd/*.service               user unit（目前刻意不啟用開機自啟）
@@ -159,7 +159,7 @@ uv run --no-sync scripts/faults.py setup      # edge-victim (nginx, 127.0.0.1:88
 uv run --no-sync scripts/faults.py verify     # / 200 /api/ 200 -> PASS
 uv run hf download BAAI/bge-small-en-v1.5     # 檢索用的 embedding 模型，33M，跑 CPU 不佔 GPU
 uv run --no-sync scripts/rag.py build         # 建索引到 logs/rag-index.npz（約 12 秒）
-uv run --no-sync scripts/rag.py eval          # 檢索品質：dense 23/23、hybrid 20/23、keyword 16/23
+uv run --no-sync scripts/rag.py eval          # 檢索品質（28 題）：dense 為預設，keyword 為無索引時的後備
 ```
 
 ### 3.6（備援）vLLM 路線
@@ -271,7 +271,7 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 2. `runbooks/` 加一篇對應的 runbook（RAG 語料）。
 3. 若需要新動作，在 `scripts/agent.py` 的 `TOOLS` + `run_tool()` 加白名單工具（ops API 與 MCP 會自動曝露）。現成的主機層唯讀工具：`disk_usage`、`service_status`、`journal_tail`、`port_check`、`http_check`、`top_processes`。
 4. `uv run --no-sync scripts/faults.py run <case>` 與 `scripts/nemoclaw-drill.sh <case>` 各跑一次。
-現成案例：`nginx-stopped`、`bad-config`、`upstream-down`、`bad-upstream-name`、`container-removed`。加 runbook 後要 `scripts/rag.py build` 重建索引，並把新症狀加進 `rag.py` 的 `EVAL`。
+現成案例九個：`nginx-stopped`、`bad-config`、`upstream-down`、`bad-upstream-name`、`container-removed`、`crashloop`（restart=always 加壞設定，重啟是錯的動作）、`upstream-paused`（上游凍結，504 而非 502）、`upstream-detached`（上游脫離 docker 網路，兩邊都 Up）、`upstream-500`（上游自己的 overlay 層設定壞掉，重啟救不回來，要 `recreate_stack` 加 `replace`）。`faults.py reset` 能還原全部九種注入，不論順序。加 runbook 後要 `scripts/rag.py build` 重建索引，並把新症狀加進 `rag.py` 的 `EVAL`。
 
 **主機層動作**：`recreate_stack`（容器被整個刪掉，start/restart 救不回來）、`network_repair`、`cleanup_disk`（只刪本專案的舊 log，跳過行程正開著的檔案，不碰 image 與 volume，也不刪 `logs/agent/` 的事故軌跡）、`kill_process`（同一使用者、非平台行程）。刻意不放進白名單的是 docker daemon（推論容器是 `--rm`，重啟 daemon 會刪掉 agent 賴以思考的模型）、任何系統 unit（sudo 要密碼）、image 與 volume（全實驗室共用）。
 

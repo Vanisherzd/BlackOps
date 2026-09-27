@@ -11,4 +11,7 @@ covers it).
 whether it is spinning on CPU.
 4) `ops__read_config` and check the `/api/` `proxy_pass` target and any `proxy_read_timeout`.
 5) Restart the upstream (`ops__docker_restart {"name": "edge-victim-app"}`), then verify `/api/` returns 200.
-Do not restart the front-end for an upstream timeout.
+6) Still 504 with both containers Up and nothing in the upstream's log? Then nginx cannot reach it at all: the
+upstream has fallen off the stack network. `ops__network_repair`, then `ops__docker_restart {"name": "edge-victim"}`
+so nginx reconnects. (Runbook: upstream-detached.)
+Do not restart the front-end for an upstream timeout before step 6.

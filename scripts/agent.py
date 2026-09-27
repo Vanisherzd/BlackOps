@@ -69,7 +69,12 @@ def with_health(result):
     if all(v == 200 for v in health.values()):
         _incident.update(runbook_seen=False, refusals=0)
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
-    return f"{result}\nhealth now: {json.dumps(health)} -> still failing; keep going."
+    state = docker_ps()
+    hint = ""
+    for line in state.splitlines():
+        if "Exited" in line or "MISSING" in line or "Restarting" in line:
+            hint = f" {line.split(chr(9))[0]} is {line.split(chr(9))[1][:40]}: that is the next thing to fix."
+    return f"{result}\nhealth now: {json.dumps(health)} -> still failing.{hint}\ncontainers now:\n{state}"
 
 
 def attach_runbook(result, query):
@@ -284,6 +289,12 @@ def run_tool(name, args, dry_run):
         d = guard(args["name"])
         if d:
             return d
+        if args["name"] == "edge-victim":
+            import faults
+            app_nets = sh(f"docker inspect edge-victim-app --format '{{{{json .NetworkSettings.Networks}}}}'")
+            if faults.NET not in app_nets:
+                return (f"denied: edge-victim-app is not on the {faults.NET} network right now, so nginx would fail to "
+                        "resolve it at startup and exit. Run network_repair first, then start/restart edge-victim.")
         if dry_run:
             return f"DRY-RUN: would run docker {name.split('_')[1]} {args['name']}"
         out = sh(f"docker {name.split('_')[1]} -t 5 {args['name']}" if name == "docker_restart" else f"docker start {args['name']}")

@@ -285,6 +285,63 @@ So the fallback is doing real work, not sitting decorative: roughly one bad-conf
 that as a clean pass would be dishonest. The gap is that the model skips retrieval when it believes it already knows
 the answer, and no prompt line has fixed that so far. Worth measuring again as the runbook set grows.
 
+## Runbook-first, enforced (2026-09-27)
+
+The ask was "make it always consult the runbook before acting". A prompt cannot deliver "always": across seven drills
+the model skipped retrieval whenever it believed it already knew, and one run wandered for six minutes because of it.
+So the rule moved into the tool layer, where it is a property rather than a request.
+
+- **Push.** `docker_logs` attaches the best-matching runbook to its output when the log carries a complaint
+  (`[emerg]`, `refused`, `exit 137`, `no such`...). `docker_ps` attaches `container-missing.md` when a container is
+  absent. Only on a real symptom: cosine similarity is positive for anything, and stapling an irrelevant procedure to
+  healthy output would teach the agent to skip the section.
+- **Gate.** The seven mutating tools (`docker_start`, `docker_restart`, `write_config`, `recreate_stack`,
+  `network_repair`, `cleanup_disk`, `kill_process`) refuse while no runbook has been seen for this incident. The
+  refusal does not guess a procedure from the tool name (that retrieved the wrong one in testing); it lists the
+  catalogue and sends the agent to `docker_logs` or `search_runbooks`. Bounded at two refusals per incident so a
+  stubborn model cannot deadlock. An incident ends when `check_health` comes back 200/200.
+- `scripts/test-retrieval-gate.py` asserts all of it with dry runs.
+
+Five cases, one run each, with the gate live:
+
+| Case | Result | Seconds | Calls | How the runbook arrived |
+| --- | --- | --- | --- | --- |
+| bad-config | PASS | 91 | 8 | `docker_start` refused -> `docker_logs` attached `nginx-config-error` -> write, restart |
+| nginx-stopped | PASS | 111 | 9 | clean stop, no symptom in logs -> `network_repair` refused -> `search_runbooks` -> start |
+| upstream-down | PASS | 72 | 8 | `docker_start` refused -> `search_runbooks` -> start |
+| bad-upstream-name | PASS | 39 | 7 | `docker_logs` attached `upstream-name-resolution` -> write, restart |
+| container-removed | PASS | 26 | 4 | `docker_ps` attached `container-missing` -> `recreate_stack` |
+
+5/5, no `self_heal`, no empty turn. The invariant held in every run: **no mutating tool executed before a runbook
+had been seen.** The gate fired three times and each time the agent went and got the procedure instead of arguing.
+Cost is visible on the two clean-stop cases (nginx-stopped, upstream-down), where a stopped container has no
+complaint in its log to match on, so the agent pays one refusal and one search: 20-40 s. The cases with a real error
+line got faster, because the procedure arrived with the evidence.
+
+### Two more things the same pass fixed
+
+**Streaming.** The salvage logic added earlier buffered the whole SSE stream to inspect it. OpenClaw aborts a model
+request after 120 s without a chunk (`agents.defaults.timeoutSeconds` is capped at 120 s for the idle window), and
+raising `maxTokens` to 12288 made long thinking phases hit it: `response truncated: chunk idle timeout exceeded`. The
+shim now forwards every chunk the moment it lands (time to first byte 6 ms on a 3.3 s response) and holds back only
+the finish chunk, where it can still inject a recovered tool call.
+
+**Prompt.** `SOUL.md`, `IDENTITY.md`, `USER.md` were OpenClaw's fill-in-your-personality templates, 3.3 KB about
+vibes and emoji. Three lines each now. System prompt 28,859 -> 16,904 -> **14,200 chars**. What remains is
+OpenClaw's own base prompt (~8 KB, fixed) and NemoClaw's generated `POLICY.md` (4.4 KB, regenerated on every policy
+change, so not ours to trim).
+
+## What is left to optimise, measured where it was cheap
+
+| Item | Expected gain | Cost / risk | Status |
+| --- | --- | --- | --- |
+| Speculative decoding on TensorRT-LLM (`MTPDecodingConfig`, `EagleDecodingConfig`, `DraftTargetDecodingConfig` exist in 1.3.0rc13; NGram already crashed) | decode 1.5-2x, drills ~30 % shorter | needs an MTP/Eagle head or draft model that fits Nemotron-3-Nano — unknown; server restart to test | untested |
+| KV block reuse for the fixed 14 KB system prompt | ~1 s prefill saved per turn, 5-8 s per drill | measured 18.65 s first-prompt penalty earlier; worth a retest as warm-up only | untested |
+| `mcp.servers.ops.supportsParallelToolCalls: true` | fewer turns when the model batches `check_health` + `docker_ps` | the model has not batched once in 19 drills; hint only | not worth it yet |
+| Incident memory: append "seen <date>, fixed by <tools>" to the matched runbook after a PASS | the second occurrence of a fault starts with the answer | small; changes runbooks automatically | not built |
+| Disk: 47.8 GB docker build cache, 52.9 GB unused images, 11 GB partial `Qwen3.6-35B-A3B-NVFP4` download | 110 GB free -> ~220 GB | deleting shared lab data is the operator's call, never the agent's | waiting on a decision |
+| Watchdog for `oai_shim.py` / `ops_api.py` | survives a crash during a demo | a background supervisor, which is adjacent to the no-autostart rule | ask first |
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of past incidents, embedding-based retrieval, NemoClaw
 skill packaging. Add each only when a fault case needs it.

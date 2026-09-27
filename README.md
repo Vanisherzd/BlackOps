@@ -257,7 +257,9 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | upstream-down | PASS 47 秒 | PASS 62 秒 | 5、7 |
 | bad-upstream-name（新） | PASS 70 秒 | – | 9 |
 
-五個案例最新一輪複驗（bad-config 跑三次）**7/7 PASS、零空回合**，耗時 44 到 387 秒。其中一個 bad-config 回合是靠 `self_heal` 後備救回來的，agent 自己的推理走偏了，詳情與原因記在 `docs/agent-design.md`。
+**先查 runbook 再動手是機制，不是提示詞。** `docker_logs` 在 log 有錯誤字樣時直接附上對應 runbook，`docker_ps` 在容器消失時附上 `container-missing`；七個會改變狀態的工具在本次事故還沒看過任何 runbook 之前一律拒絕，並列出目錄要 agent 先取得症狀。`scripts/test-retrieval-gate.py` 驗證這個性質。
+
+最新一輪五案**5/5 PASS、零空回合、零 `self_heal`**，26 到 111 秒。五次都成立「沒有任何動作在看到 runbook 前執行」：閘門擋下三次，agent 每次都改去查 runbook。前一輪（閘門之前）7/7 但有一次靠 `self_heal` 救回，就是這個機制要解決的問題。
 
 前三個案例六輪都沒查 runbook，光靠 `check_health` → `docker_ps` → `docker_logs` 就解掉。新故障（`proxy_pass` 指到不存在的主機）才真的用到書面資料：agent 讀完 log 與設定後呼叫 `search_runbooks {"query":"host not found in upstream"}`，拿到對應 runbook 再修好。
 
@@ -299,6 +301,8 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | 用 ssh 一行指令背景啟動服務 | 登入 shell 一結束就被殺，drill 中途收到 502 | `setsid nohup ... < /dev/null &` |
 | `docker ps -a` 不會列出被刪掉的容器 | agent 看不出差別，重複查六次 | `docker_ps` 改成列出預期容器並標 MISSING |
 | 清理 log 時刪到服務開著的檔案 | 空間沒釋放，之後的 log 寫進沒人讀得到的 inode | 跳過 `/proc/*/fd` 指到的檔案 |
+| onboarding 寫的 `maxTokens: 4096` 與 `contextWindow: 131072` | thinking 燒完預算後 `stopReason=length` 空回合；context 超過伺服器 32768 才發現 | 改 12288 與 32768（`nemoclaw/openclaw-patch.json5`） |
+| shim 把串流整段緩衝再送 | OpenClaw 120 秒無資料就切斷：`chunk idle timeout exceeded` | 即時轉發，只扣住 finish chunk 做救援判斷 |
 | `nemoclaw upload` 目的地 | 把檔名路徑當目錄 | 目的地給目錄 |
 | `openshell sandbox exec` / `nemoclaw exec` 吃 stdin | heredoc 腳本後半段被吞 | 一律 `</dev/null` |
 

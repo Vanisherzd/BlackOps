@@ -548,6 +548,32 @@ goes to a second pass without thinking, and the reasoning channel is never parse
 Cost: one extra model call, 9–20 s, on the destructive path only. The drilled cases that never touch that path are
 unaffected.
 
+### Two keys, not one (2026-09-27 17:30)
+
+With the computed facts shown to it, the reviewer still rejected a justified rebuild in one of two drills — the same
+evidence, two verdicts, the second demanding proof that the container's writable layer was corrupt, which nothing can
+observe. A 3B-active model is not a reliable sole decider even for a yes/no it has been handed the facts for.
+
+So the decision is now split into two keys, each asked the question it can answer:
+
+- **Code key — sufficiency.** The precondition facts are computed from the incident trace and checked in code:
+  rebuild needs a `docker_restart` of that container in this incident and `/api/` still failing afterwards; kill needs
+  `top_processes` listing that pid; cleanup needs `disk_usage` above 85 %. A missing fact rejects without a model
+  call and names what is missing ("restart first", "measure before killing", "below the 85 % threshold").
+- **Model key — relevance and contradiction.** Only when the condition is met is the model asked, told the condition
+  is MET, and limited to what code cannot judge: is the action relevant to this incident's symptom, and does any
+  evidence line contradict the diagnosis. To reject it must quote that line.
+
+Three consecutive `upstream-500` drills with the two-key reviewer: 3/3 PASS, 3/3 APPROVE from the model key
+(7.8 s, 10.9 s, 21.8 s), median 65 s and 6 calls per drill, no rejections, no empty turns. Before the split, with
+the same facts on screen, it was 1 rejection in 2. Worth recording: in one of the three approvals the model's stated
+reason was wrong ("health after the restart now shows both URLs returning 200" — it did not), while its verdict was
+right. The verdict is what runs; the reason is logged for humans. That is one more argument for keeping the
+deterministic key in code and giving the model the narrow question.
+
+Every review logs the computed facts and which key decided (`logs/reviews.jsonl`), so a rejection is always
+explainable from the log alone.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of past incidents, embedding-based retrieval, NemoClaw
 skill packaging. Add each only when a fault case needs it.

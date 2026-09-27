@@ -20,6 +20,16 @@
 
 headline: autonomous resolution 9/9 (100%); made-worse 0; false health claims 0; evidence-first 100%; closure 100%
 
+## With the change reviewer live (2026-09-27 17:26–17:32): upstream-500 three times
+
+| case | runs | autonomous | median s | median calls | efficiency | reviewer rejects | destructive | median tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| upstream-500 | 3 | 3/3 | 65 | 6 | 0.50 | 0 | 3 | 7351 |
+
+Efficiency 0.50 is by design here: the runbook prescribes a restart before a rebuild, so two actions where the minimum
+counts one. `destructive 3` is the three approved rebuilds. Reviews: 3/3 APPROVE by the model key after the code key
+confirmed the precondition; see `docs/agent-design.md`, "Two keys, not one".
+
 ## History: every detached run of the day, failures included (they precede their fixes)
 
 Source: every `logs/drills-*.log` on the Spark (8 files). Run: `uv run --no-sync scripts/score.py logs/drills-*.log --shim logs/oai-shim.log`.

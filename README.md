@@ -283,7 +283,7 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 4. `uv run --no-sync scripts/faults.py run <case>` 與 `scripts/nemoclaw-drill.sh <case>` 各跑一次。
 現成案例九個：`nginx-stopped`、`bad-config`、`upstream-down`、`bad-upstream-name`、`container-removed`、`crashloop`（restart=always 加壞設定，重啟是錯的動作）、`upstream-paused`（上游凍結，504 而非 502）、`upstream-detached`（上游脫離 docker 網路，兩邊都 Up）、`upstream-500`（上游自己的 overlay 層設定壞掉，重啟救不回來，要 `recreate_stack` 加 `replace`）。`faults.py reset` 能還原全部九種注入，不論順序。加 runbook 後要 `scripts/rag.py build` 重建索引，並把新症狀加進 `rag.py` 的 `EVAL`。
 
-**審核代理（多代理協作與風險控制）**：`recreate_stack` 加 `replace`、`kill_process`、`cleanup_disk` 執行前，`scripts/reviewer.py` 用同一顆本地模型、不同的 system prompt、不給工具，讀本次事故的證據軌跡判 APPROVE 或 REJECT 並引用證據；REJECT 會當成工具結果回給指揮代理；審核代理連不上就不執行（fail-closed）。已知的前置條件（重建前必須先重啟過）直接寫在程式碼裡，不交給模型判斷。實測：無證據殺行程 REJECT、`top_processes` 量到 100% CPU 的失控行程 APPROVE、重啟後仍 500 的上游重建 APPROVE。紀錄在 `logs/reviews.jsonl`，計分卡多一欄 reviewer rejects。
+**審核代理（多代理協作與風險控制）**：`recreate_stack` 加 `replace`、`kill_process`、`cleanup_disk` 執行前，`scripts/reviewer.py` 用同一顆本地模型、不同的 system prompt、不給工具，讀本次事故的證據軌跡判 APPROVE 或 REJECT 並引用證據；REJECT 會當成工具結果回給指揮代理；審核代理連不上就不執行（fail-closed）。設計是**雙鑰匙**：充分條件由程式從事故軌跡算出並判定（重建前必須重啟過且之後仍失敗、殺行程前 `top_processes` 要列到該 pid、清磁碟前 `disk_usage` 要超過 85%），缺哪個事實就直接拒絕並點名、不問模型；條件成立才問模型，且模型只判「與本次症狀相關嗎、有沒有一行證據反駁診斷」，要 REJECT 必須引用那行。原因：只給模型判時，同樣的證據兩次判決不同（一次要求證明觀察不到的機制）。實測：無證據殺行程 REJECT、量到 100% CPU 的失控行程 APPROVE、重啟後仍 500 的上游重建連續三次 APPROVE（7.8 到 21.8 秒）。紀錄在 `logs/reviews.jsonl`（含算出的事實與哪把鑰匙決定），計分卡多一欄 reviewer rejects。
 
 **主機層動作**：`recreate_stack`（容器被整個刪掉，start/restart 救不回來）、`network_repair`、`cleanup_disk`（只刪本專案的舊 log，跳過行程正開著的檔案，不碰 image 與 volume，也不刪 `logs/agent/` 的事故軌跡）、`kill_process`（同一使用者、非平台行程）。刻意不放進白名單的是 docker daemon（推論容器是 `--rm`，重啟 daemon 會刪掉 agent 賴以思考的模型）、任何系統 unit（sudo 要密碼）、image 與 volume（全實驗室共用）。
 

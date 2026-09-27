@@ -105,43 +105,58 @@ def salvage_calls(text, tools):
     return calls
 
 
-def salvage_stream(lines, tools):
-    """Replay the upstream SSE lines untouched, unless the turn came back empty and holds a recoverable tool call."""
-    content, reasoning, saw_calls = [], [], False
+def stream_with_salvage(resp, tools):
+    """Yield upstream SSE lines as they arrive; decide about salvage only at the end.
+
+    Every chunk is forwarded the moment it lands, so a long thinking phase keeps bytes flowing and the client's idle
+    timeout never fires (buffering the whole stream to inspect it turned a 12k-token budget into a 120 s timeout).
+    Only the chunks that carry a finish_reason, and everything after them, are held back: if the turn ends empty and
+    the reasoning channel holds a tool call, a tool_calls delta is injected there and the finish becomes tool_calls.
+    """
+    content, reasoning, saw_calls, held = [], [], False, []
     ident = {"id": "chatcmpl-salvaged", "model": "edge-agent", "created": int(time.time())}
-    for ln in lines:
-        if not ln.startswith(b"data:"):
+    for ln in resp:
+        chunk = ln[5:].strip() if ln.startswith(b"data:") else b""
+        d = None
+        if chunk and chunk != b"[DONE]":
+            try:
+                d = json.loads(chunk)
+            except ValueError:
+                d = None
+        finishing = bool(d and any(ch.get("finish_reason") for ch in d.get("choices") or []))
+        if d:
+            for k in ident:
+                if d.get(k):
+                    ident[k] = d[k]
+            for ch in d.get("choices") or []:
+                delta = ch.get("delta") or {}
+                saw_calls = saw_calls or bool(delta.get("tool_calls"))
+                content.append(delta.get("content") or "")
+                reasoning.append(delta.get("reasoning_content") or "")
+        if held or finishing or chunk == b"[DONE]":
+            held.append(ln)            # from the first finish_reason onward: usage chunk, [DONE]
             continue
-        chunk = ln[5:].strip()
-        if not chunk or chunk == b"[DONE]":
-            continue
-        try:
-            d = json.loads(chunk)
-        except ValueError:
-            continue
-        for k in ident:
-            if d.get(k):
-                ident[k] = d[k]
-        for ch in d.get("choices") or []:
-            delta = ch.get("delta") or {}
-            saw_calls = saw_calls or bool(delta.get("tool_calls"))
-            content.append(delta.get("content") or "")
-            reasoning.append(delta.get("reasoning_content") or "")
-    if saw_calls or "".join(content).strip():
-        return lines
-    calls = salvage_calls("".join(reasoning), tools)
-    if not calls:
-        return lines
-    log(salvaged=[c["function"]["name"] for c in calls], via="stream")
-    head = dict(ident, object="chat.completion.chunk",
-                choices=[{"index": 0, "delta": {"role": "assistant", "content": None,
-                                                "tool_calls": [dict(c, index=i) for i, c in enumerate(calls)]},
-                          "finish_reason": None}])
-    tail = dict(ident, object="chat.completion.chunk",
-                choices=[{"index": 0, "delta": {}, "finish_reason": "tool_calls"}])
-    return [b"data: " + json.dumps(head).encode() + b"\n\n",
-            b"data: " + json.dumps(tail).encode() + b"\n\n",
-            b"data: [DONE]\n\n"]
+        yield ln
+    calls = [] if (saw_calls or "".join(content).strip()) else salvage_calls("".join(reasoning), tools)
+    if calls:
+        log(salvaged=[c["function"]["name"] for c in calls], via="stream")
+        yield b"data: " + json.dumps(dict(ident, object="chat.completion.chunk", choices=[{
+            "index": 0, "finish_reason": None,
+            "delta": {"role": "assistant", "content": None,
+                      "tool_calls": [dict(c, index=i) for i, c in enumerate(calls)]}}])).encode() + b"\n\n"
+        for ln in held:              # rewrite the finish reason on the held chunk(s); pass usage/[DONE] untouched
+            if ln.startswith(b"data:") and b"finish_reason" in ln:
+                try:
+                    d = json.loads(ln[5:].strip())
+                    for ch in d.get("choices") or []:
+                        if ch.get("finish_reason"):
+                            ch["finish_reason"] = "tool_calls"
+                    ln = b"data: " + json.dumps(d).encode() + b"\n\n"
+                except ValueError:
+                    pass
+            yield ln
+    else:
+        yield from held
 
 
 def salvage_json(payload, tools):
@@ -190,7 +205,7 @@ class H(BaseHTTPRequestHandler):
         else:
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
-            for line in salvage_stream(list(resp), tools):
+            for line in stream_with_salvage(resp, tools):
                 self.wfile.write(f"{len(line):x}\r\n".encode() + line + b"\r\n")
             self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()

@@ -60,7 +60,8 @@ scripts/
   nemoclaw-drill.sh             注入錯誤 → 叫 NemoClaw sandbox agent 修 → 驗證 → 印出它呼叫過的工具
   ops-sandbox-helper.sh         上傳到 sandbox 的 /sandbox/bin/ops（`ops tools` / `ops call <tool> '<json>'`，MCP 之外的後備路徑）
   smoke.py / probe.py           健康+tool call 煙霧測試；8 題 needle 精準度探針
-  rag.py                        runbook 檢索：dense（bge-small，預設）/ keyword / hybrid，附 23 題評測集
+  reviewer.py                   審核代理：破壞性動作（replace、kill、cleanup）執行前，第二個代理讀事故軌跡判 APPROVE/REJECT，連不上就不執行
+  rag.py                        runbook 檢索：dense（bge-small，預設）/ keyword / hybrid，附評測集
   score.py                      演練計分卡：結果分級、動作效率、證據先行、收尾、回報正確性、安全、成本，依案例與 tier 彙總 → docs/scorecard.md
   bench.py / serve-summary.py / bench-summary.py   吞吐測試與結果表
   try.sh                        對任一模型/參數組合：起臨時 server(:8101) → bench → smoke → 關掉
@@ -281,6 +282,8 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 3. 若需要新動作，在 `scripts/agent.py` 的 `TOOLS` + `run_tool()` 加白名單工具（ops API 與 MCP 會自動曝露）。現成的主機層唯讀工具：`disk_usage`、`service_status`、`journal_tail`、`port_check`、`http_check`、`top_processes`。
 4. `uv run --no-sync scripts/faults.py run <case>` 與 `scripts/nemoclaw-drill.sh <case>` 各跑一次。
 現成案例九個：`nginx-stopped`、`bad-config`、`upstream-down`、`bad-upstream-name`、`container-removed`、`crashloop`（restart=always 加壞設定，重啟是錯的動作）、`upstream-paused`（上游凍結，504 而非 502）、`upstream-detached`（上游脫離 docker 網路，兩邊都 Up）、`upstream-500`（上游自己的 overlay 層設定壞掉，重啟救不回來，要 `recreate_stack` 加 `replace`）。`faults.py reset` 能還原全部九種注入，不論順序。加 runbook 後要 `scripts/rag.py build` 重建索引，並把新症狀加進 `rag.py` 的 `EVAL`。
+
+**審核代理（多代理協作與風險控制）**：`recreate_stack` 加 `replace`、`kill_process`、`cleanup_disk` 執行前，`scripts/reviewer.py` 用同一顆本地模型、不同的 system prompt、不給工具，讀本次事故的證據軌跡判 APPROVE 或 REJECT 並引用證據；REJECT 會當成工具結果回給指揮代理；審核代理連不上就不執行（fail-closed）。已知的前置條件（重建前必須先重啟過）直接寫在程式碼裡，不交給模型判斷。實測：無證據殺行程 REJECT、`top_processes` 量到 100% CPU 的失控行程 APPROVE、重啟後仍 500 的上游重建 APPROVE。紀錄在 `logs/reviews.jsonl`，計分卡多一欄 reviewer rejects。
 
 **主機層動作**：`recreate_stack`（容器被整個刪掉，start/restart 救不回來）、`network_repair`、`cleanup_disk`（只刪本專案的舊 log，跳過行程正開著的檔案，不碰 image 與 volume，也不刪 `logs/agent/` 的事故軌跡）、`kill_process`（同一使用者、非平台行程）。刻意不放進白名單的是 docker daemon（推論容器是 `--rm`，重啟 daemon 會刪掉 agent 賴以思考的模型）、任何系統 unit（sudo 要密碼）、image 與 volume（全實驗室共用）。
 

@@ -48,6 +48,11 @@ def main():
     assert folded.count("\n") == 1 and "(x30)" in folded and "(x6)" in folded, folded
     assert agent.sh("printf 'a%.0s' $(seq 1 5000); echo; echo LAST", limit=100).endswith("LAST"), "truncation must keep the end"
 
+    for marker, want in agent.STATE_RUNBOOKS:              # state markers map to fixed runbooks, never a guess
+        got = agent.attach_named("x", want)
+        assert f"## {want}" in got, f"{marker} -> {want} must attach by name"
+    assert agent.attach_named("x", "no-such.md") == "x"
+
     health = agent.run_tool("check_health", {}, dry_run=True)
     if '"front": 200' in health and '"api": 200' in health:
         assert not agent._incident["runbook_seen"], "green health must end the incident"

@@ -77,6 +77,21 @@ def with_health(result):
     return f"{result}\nhealth now: {json.dumps(health)} -> still failing.{hint}\ncontainers now:\n{state}"
 
 
+# A container state is a fact with a known procedure; it does not need a similarity search that can land on the
+# runbook with the loudest "Exited" in it (it did: a clean stop retrieved container-crashloop). Log text, which is
+# free-form, still goes through retrieval.
+STATE_RUNBOOKS = (("MISSING", "container-missing.md"), ("Restarting", "container-crashloop.md"),
+                  ("Paused", "upstream-504.md"), ("Exited (137)", "oom-killed.md"), ("Exited (0)", "web-service-down.md"))
+
+
+def attach_named(result, name):
+    body = {n: t for n, _, t in __import__("rag").documents()}.get(name)
+    if not body:
+        return result
+    _incident["runbook_seen"] = True
+    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}"
+
+
 def attach_runbook(result, query):
     """Push the matching procedure into an evidence answer, so the agent cannot act without having seen it.
 
@@ -282,13 +297,9 @@ def run_tool(name, args, dry_run):
         return json.dumps(health)
     if name == "docker_ps":
         out = docker_ps()
-        for marker, query in (("MISSING", "container missing removed no such container"),
-                              ("Restarting", "container restarting over and over crash loop"),
-                              ("Paused", "container paused frozen upstream timed out 504"),
-                              ("Exited (137)", "container killed exit 137 out of memory"),
-                              ("Exited (0)", "container exited cleanly with code 0, stopped, no error in the log, start it again")):
+        for marker, runbook in STATE_RUNBOOKS:
             if marker in out:
-                return attach_runbook(out, query)
+                return attach_named(out, runbook)
         return out
     if name == "docker_logs":
         denied = guard(args["name"])
@@ -302,11 +313,12 @@ def run_tool(name, args, dry_run):
         query = symptom_query(out)
         if not query:
             state = next((l for l in docker_ps().splitlines() if l.startswith(args["name"] + "\t")), "")
-            if "Exited" in state or "MISSING" in state:
-                # nothing wrong in the log and the process is gone: a clean stop. Say so, or the agent goes looking
-                # for an error that does not exist and the gate keeps refusing the start it should have done.
-                out += f"\n\nno error in this log; the container is {state.split(chr(9))[1][:30]}. A clean stop with nothing to fix inside."
-                query = "container exited cleanly with code 0, stopped, no error in the log, start it again"
+            for marker, runbook in STATE_RUNBOOKS:
+                if marker in state:
+                    # nothing wrong in the log and the process is gone: say so, or the agent goes looking for an
+                    # error that does not exist while the gate keeps refusing the start it should have done.
+                    out += f"\n\nno error in this log; the container is {state.split(chr(9))[1][:30]}."
+                    return attach_named(out, runbook)
         return attach_runbook(out, query)
     if name == "docker_exec":
         cmd = args["cmd"].strip()

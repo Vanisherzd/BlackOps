@@ -284,7 +284,9 @@ def run_tool(name, args, dry_run):
         out = docker_ps()
         for marker, query in (("MISSING", "container missing removed no such container"),
                               ("Restarting", "container restarting over and over crash loop"),
-                              ("Paused", "container paused frozen upstream timed out 504")):
+                              ("Paused", "container paused frozen upstream timed out 504"),
+                              ("Exited (137)", "container killed exit 137 out of memory"),
+                              ("Exited (0)", "container exited cleanly with code 0, stopped, no error in the log, start it again")):
             if marker in out:
                 return attach_runbook(out, query)
         return out
@@ -297,7 +299,15 @@ def run_tool(name, args, dry_run):
             out += ("\n\nnote: the entrypoint's 'can not modify /etc/nginx/conf.d/default.conf (read-only file "
                     "system?)' is expected and harmless. That file is a host file mounted read-only into the "
                     "container; write_config changes it on the host, then docker_restart applies it.")
-        return attach_runbook(out, symptom_query(out))
+        query = symptom_query(out)
+        if not query:
+            state = next((l for l in docker_ps().splitlines() if l.startswith(args["name"] + "\t")), "")
+            if "Exited" in state or "MISSING" in state:
+                # nothing wrong in the log and the process is gone: a clean stop. Say so, or the agent goes looking
+                # for an error that does not exist and the gate keeps refusing the start it should have done.
+                out += f"\n\nno error in this log; the container is {state.split(chr(9))[1][:30]}. A clean stop with nothing to fix inside."
+                query = "container exited cleanly with code 0, stopped, no error in the log, start it again"
+        return attach_runbook(out, query)
     if name == "docker_exec":
         cmd = args["cmd"].strip()
         if not cmd.startswith(EXEC_ALLOW) or any(t in cmd for t in (";", "&&", "|", ">", "`", "$(")):

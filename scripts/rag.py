@@ -184,6 +184,10 @@ EVAL = [                                            # symptom -> the runbook an 
     ("the backend fell off the docker network", "upstream-detached.md"),
     ("container is paused", "upstream-504.md"),
     ("the service itself answers HTTP 500 to requests, container is up", "upstream-5xx.md"),
+    ("container exited", "web-service-down.md"),
+    ("container exited unexpectedly", "web-service-down.md"),
+    ("exited with code 0 and nothing in the log", "web-service-down.md"),
+    ("container exited cleanly with code 0, stopped, no error in the log, start it again", "web-service-down.md"),
 ]
 
 

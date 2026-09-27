@@ -29,7 +29,11 @@ The tools have already computed the facts that matter, listed under "Computed fa
 against the evidence and check two things the tools cannot: that the action is relevant to the symptom of THIS
 incident, and that nothing in the evidence contradicts it.
 
-Sufficient conditions — when the computed facts say these hold, APPROVE:
+The code has already verified the sufficient condition before asking you; you will be told it is MET. Your remit is
+narrower and yours alone: (1) is the action relevant to this incident's symptom, and (2) does any evidence line
+contradict the diagnosis. To REJECT you must quote such a line. Do not demand proof of causes that cannot be observed.
+
+Sufficient conditions, for reference:
 - recreate_stack replace=true on edge-victim-app: a docker_restart of edge-victim-app happened in this incident AND
   the health check after it still shows /api/ failing (5xx). The underlying cause (its writable layer) is inferred,
   not observable; do not demand proof of it. Never for edge-victim (its config is a host file; a rebuild changes
@@ -86,19 +90,57 @@ def computed_facts(action, args, trace):
     return facts
 
 
+def sufficient(action, args, facts):
+    """(met: bool, why: str). The deterministic key: which fact is missing, if any."""
+    if action == "recreate_stack":
+        if facts.get("restart of this container in this incident") != "yes":
+            return False, "no docker_restart of this container in this incident yet — restart first"
+        if facts.get("/api/ still failing after the restart") != "yes":
+            return False, "after the restart /api/ was not seen failing — check health before rebuilding"
+        return True, "restarted, and /api/ still failing afterwards"
+    if action == "kill_process":
+        line = facts.get("top_processes lists this pid", "NO")
+        if line == "NO":
+            return False, "top_processes in this incident does not list this pid — measure before killing"
+        return True, line
+    if action == "cleanup_disk":
+        pct = facts.get("root filesystem usage from disk_usage", "")
+        if not pct.endswith("%"):
+            return False, "disk_usage was not run in this incident — measure before deleting"
+        if int(pct[:-1]) < 85:
+            return False, f"root filesystem at {pct}, below the 85 % threshold — nothing to free"
+        return True, f"root filesystem at {pct}"
+    return True, "no precondition defined"
+
+
 def review(action, args, trace, runbook_seen):
-    """Return (approved: bool, reason: str). Never raises: a failure is a rejection with the failure as the reason."""
+    """Return (approved: bool, reason: str). Never raises: a failure is a rejection with the failure as the reason.
+
+    Two keys. The first is code: the precondition facts are computed from the trace, and a missing one rejects
+    without a model call, naming what is missing. The second is the model: with the precondition met, it checks what
+    code cannot — relevance to this incident's symptom, and evidence that contradicts the diagnosis — and must quote
+    a contradicting evidence line to reject. Small models over-reject when asked to prove the unprovable, and
+    under-reject when asked only "is this fine"; the split gives each key the question it can answer.
+    """
     if not ENABLED:
         return True, "reviewer disabled (REVIEW=0)"
+    facts = computed_facts(action, args, trace)
+    met, why = sufficient(action, args, facts)
+    if not met:
+        _log(dict(action=action, args=args, verdict="REJECT", reason=why, ms=0, evidence_items=len(trace), facts=facts, key="code"))
+        return False, why
     evidence = "\n".join(f"- {t['tool']}({t['args']}) -> {t['result']}" for t in trace[-10:]) or "- (no evidence gathered yet)"
-    facts = "\n".join(f"- {k}: {v}" for k, v in computed_facts(action, args, trace).items())
+    facts_txt = "\n".join(f"- {k}: {v}" for k, v in facts.items())
     symptom = next((t["result"][:120] for t in trace if t["tool"] == "check_health"), "(no health check in this incident)")
     user = (f"Proposed action: {action} {json.dumps(args, ensure_ascii=False)}\n"
             f"Incident symptom (first health check): {symptom}\n"
             f"Runbook consulted for this incident: {'yes' if runbook_seen else 'no'}\n"
-            f"Computed facts:\n{facts}\n"
+            f"Sufficient condition for this action: MET ({why}).\n"
+            f"Computed facts:\n{facts_txt}\n"
             f"Evidence so far, oldest first (tool(args) -> result, truncated):\n{evidence}\n\n"
-            "APPROVE or REJECT?")
+            "The precondition is met. APPROVE unless you can quote an evidence line that contradicts the diagnosis, "
+            "or the action is unrelated to the incident symptom above. Answer APPROVE or REJECT on the first line, "
+            "then at most three sentences.")
     t0 = time.time()
     try:
         from openai import OpenAI
@@ -110,7 +152,7 @@ def review(action, args, trace, runbook_seen):
         # "APPROVE or REJECT based on..." that once read as a decision.
         for thinking in (True, False):
             r = client.chat.completions.create(
-                model=MODEL, temperature=0, max_tokens=3000 if thinking else 600,
+                model=MODEL, temperature=0, max_tokens=4000 if thinking else 600,
                 messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
                 extra_body={"chat_template_kwargs": {"enable_thinking": thinking}})
             msg = r.choices[0].message
@@ -125,5 +167,5 @@ def review(action, args, trace, runbook_seen):
     except Exception as e:                      # fail closed
         verdict, reason = "REJECT", f"reviewer unavailable ({type(e).__name__}: {str(e)[:120]}); destructive action withheld"
     _log(dict(action=action, args=args, verdict=verdict, reason=reason, ms=int(1000 * (time.time() - t0)),
-              evidence_items=len(trace)))
+              evidence_items=len(trace), facts=facts, key="model"))
     return verdict == "APPROVE", reason

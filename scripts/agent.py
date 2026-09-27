@@ -164,7 +164,7 @@ TOOLS = [
     {"name": "docker_start", "description": "Start a stopped container", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "docker_restart", "description": "Restart a container (needed after a config change)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "read_config", "description": "Read victim/conf.d/default.conf", "parameters": {"type": "object", "properties": {}}},
-    {"name": "write_config", "description": "Replace victim/conf.d/default.conf with the given full content, then restart edge-victim is still required", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
+    {"name": "write_config", "description": "Replace the nginx config with the given full content. The file lives on the host and is mounted read-only into edge-victim, so this tool is the only way to change it (the container's own 'read-only file system' warning is expected). docker_restart edge-victim afterwards to apply", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
     {"name": "search_runbooks", "description": "Search the IT runbooks for a symptom in your own words or with the exact error text (502 upstream, nginx emerg config, disk full, exit 137, crash loop); returns the best matching procedures, or the catalogue if nothing matches", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "disk_usage", "description": "Host filesystem usage (df) and docker disk usage; use for disk-full symptoms", "parameters": {"type": "object", "properties": {}}},
     {"name": "service_status", "description": "Whether a host systemd unit is active, plus its last status line (read-only)", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}}, "required": ["unit"]}},
@@ -270,6 +270,10 @@ def run_tool(name, args, dry_run):
         if denied:
             return denied
         out = sh(f"docker logs --tail {int(args.get('tail', 40))} {args['name']}")
+        if "read-only file system" in out:
+            out += ("\n\nnote: the entrypoint's 'can not modify /etc/nginx/conf.d/default.conf (read-only file "
+                    "system?)' is expected and harmless. That file is a host file mounted read-only into the "
+                    "container; write_config changes it on the host, then docker_restart applies it.")
         return attach_runbook(out, symptom_query(out))
     if name == "docker_exec":
         cmd = args["cmd"].strip()
@@ -341,6 +345,10 @@ def run_tool(name, args, dry_run):
                 return f"denied: {t!r} is not part of this stack"
         if args.get("replace") and not args.get("name"):
             return "denied: replace=true needs an explicit name; it destroys that container and builds it again"
+        if args.get("replace") and args.get("name") == "edge-victim":
+            return ("denied: edge-victim's nginx config is a host file mounted into the container; rebuilding the "
+                    "container keeps the same file and the same fault. Fix the file with write_config, then "
+                    "docker_restart edge-victim.")
         if dry_run:
             return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
         if args.get("replace"):

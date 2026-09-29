@@ -1,0 +1,530 @@
+% Blackout Ops — 企劃書 12 頁（CFP 對照 · 成就導向 · 貢獻明示）16:9 Beamer，XeLaTeX
+% 每頁：大標 = 一個成就或主張；角標 = 對應的 CFP 評分項；「貢獻」框 = 我們新做出來的東西。
+% 規則：不放任何外部連結；每個數字標「已量 (DGX Spark)」或「規劃 (決賽期間於 Thor)」。
+\documentclass[aspectratio=169,9pt]{beamer}
+\usepackage{fontspec}
+\usepackage{xeCJK}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.misc,calc,fit}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{pifont}
+\usepackage{xcolor}
+\usepackage{graphicx}
+
+\IfFontExistsTF{PingFang TC}{\setCJKmainfont{PingFang TC}\setCJKsansfont{PingFang TC}}
+  {\setCJKmainfont[BoldFont={Heiti TC Medium}]{Heiti TC Light}\setCJKsansfont[BoldFont={Heiti TC Medium}]{Heiti TC Light}}
+\IfFontExistsTF{Helvetica Neue}{\setmainfont{Helvetica Neue}\setsansfont{Helvetica Neue}}{\setsansfont{Helvetica}}
+\setmonofont[Scale=0.85]{Menlo}
+\xeCJKsetup{CJKmath=true,PunctStyle=quanjiao}
+
+\definecolor{ink}{HTML}{1D1D1B}
+\definecolor{paper}{HTML}{FAF9F6}
+\definecolor{navy}{HTML}{0F1A2B}
+\definecolor{accent}{HTML}{0B6B3A}
+\definecolor{plan}{HTML}{C8501E}
+\definecolor{muted}{HTML}{5F5E58}
+\definecolor{line}{HTML}{E2DFD6}
+\definecolor{panel}{HTML}{F1EFE8}
+\definecolor{ok}{HTML}{0B6B3A}
+\definecolor{bad}{HTML}{B3261E}
+\definecolor{contrib}{HTML}{EAF3FF}
+\definecolor{contribfg}{HTML}{174A8B}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamercolor{background canvas}{bg=paper}
+\setbeamercolor{normal text}{fg=ink}
+\setbeamercolor{structure}{fg=accent}
+\setbeamercolor{frametitle}{fg=ink}
+\setbeamerfont{frametitle}{size=\large,series=\bfseries}
+\setbeamertemplate{frametitle}{\vspace*{4mm}\insertframetitle\par\vspace{-0.5mm}{\color{muted}\scriptsize\insertframesubtitle}\par\vspace{0.5mm}{\color{line}\rule{\textwidth}{0.4pt}}}
+\setbeamertemplate{itemize items}{\color{accent}\tiny\raisebox{0.25ex}{$\blacksquare$}}
+\setbeamertemplate{footline}{%
+  \hbox to \paperwidth{\hskip 8mm{\color{muted}\tiny Blackout Ops · 2026 Agentic AI on the Edge Hackathon · 企劃書}\hfill{\color{muted}\tiny \insertframenumber\,/\,12}\hskip 8mm}\vskip 2.5mm}
+\setlength{\leftmargini}{1.1em}
+\setbeamersize{text margin left=8mm,text margin right=8mm}
+
+\newcommand{\tagm}[1]{\tikz[baseline=(t.base)]\node[fill=accent!12,text=accent,rounded corners=2pt,inner sep=1.8pt,font=\tiny\bfseries](t){#1};}
+\newcommand{\tagp}[1]{\tikz[baseline=(t.base)]\node[fill=plan!12,text=plan,rounded corners=2pt,inner sep=1.8pt,font=\tiny\bfseries](t){#1};}
+\newcommand{\tagc}[1]{\tikz[baseline=(t.base)]\node[fill=contribfg!12,text=contribfg,rounded corners=2pt,inner sep=1.8pt,font=\tiny\bfseries](t){#1};}
+\newcommand{\measured}{\tagm{已量 · DGX Spark}}
+\newcommand{\planned}{\tagp{規劃 · 決賽期間於 Thor}}
+\newcommand{\punch}[1]{{\normalsize\bfseries\color{accent}#1}\par\vspace{1.5mm}}
+\newcommand{\yes}{\textcolor{ok}{\ding{51}}}
+\newcommand{\no}{\textcolor{bad}{\ding{55}}}
+\newcommand{\warn}{\textcolor{plan}{\ding{115}}}
+\newenvironment{panel}{\begin{beamercolorbox}[rounded=true,sep=1.6mm,wd=\linewidth]{panelbox}}{\end{beamercolorbox}}
+\setbeamercolor{panelbox}{bg=panel,fg=ink}
+\newenvironment{contribution}{\begin{beamercolorbox}[rounded=true,sep=1.6mm,wd=\linewidth]{contribbox}\small{\bfseries\color{contribfg}貢獻}\ \ }{\end{beamercolorbox}}
+\setbeamercolor{contribbox}{bg=contrib,fg=ink}
+\tikzset{box/.style={draw=line,fill=white,rounded corners=2pt,inner sep=3.5pt,align=center,font=\small},
+         hi/.style={box,fill=accent!10,draw=accent},
+         pl/.style={box,fill=plan!8,draw=plan},
+         arr/.style={-{Latex[length=1.8mm]},thick,color=muted}}
+
+\begin{document}
+
+% ================= P1 封面 =================
+{\setbeamercolor{background canvas}{bg=navy}\setbeamercolor{normal text}{fg=white}\usebeamercolor[fg]{normal text}
+\begin{frame}[plain]
+\vspace{6mm}
+\begin{columns}[T]
+\begin{column}{0.6\textwidth}
+{\fontsize{30}{34}\selectfont\bfseries Blackout Ops}\par\medskip
+{\Large 當基礎設施崩潰時，\\仍然活著的自主維運代理}\par\smallskip
+{\small\color{white!70!navy}An out-of-band, fully local, self-healing SRE agent\\for air-gapped and degraded networks}\par\medskip
+{\small 部署：Jetson AGX Thor ・ NemoClaw / OpenShell ・ Nemotron-3-Nano ・ TensorRT-LLM}\par\bigskip
+{\scriptsize\bfseries\color{white!70!navy}已達成（實驗室 DGX Spark 上量測）}\par\smallskip
+\begin{tikzpicture}[node distance=1.2mm,font=\tiny,align=center]
+\node[fill=white!10!navy,rounded corners=2pt,inner sep=3pt](a){{\normalsize\bfseries 9/9}\\自主修復};
+\node[fill=white!10!navy,rounded corners=2pt,inner sep=3pt,right=of a](b){{\normalsize\bfseries 48 s}\\中位數};
+\node[fill=white!10!navy,rounded corners=2pt,inner sep=3pt,right=of b](c){{\normalsize\bfseries 0}\\弄更糟};
+\node[fill=white!10!navy,rounded corners=2pt,inner sep=3pt,right=of c](d){{\normalsize\bfseries 20}\\白名單工具};
+\node[fill=white!10!navy,rounded corners=2pt,inner sep=3pt,right=of d](e){{\normalsize\bfseries 11}\\runbook};
+\node[fill=white!10!navy,rounded corners=2pt,inner sep=3pt,right=of e](f){{\normalsize\bfseries 2 鑰匙}\\審核代理};
+\end{tikzpicture}
+\end{column}
+\begin{column}{0.38\textwidth}
+{\scriptsize\bfseries\color{white!70!navy}三項貢獻}\par\smallskip
+{\small
+\textbf{1. 機制取代提示詞}：證據先行、runbook 推送、動作前置條件全部在工具層強制，小模型也能穩定自主修復\\[3pt]
+\textbf{2. 雙鑰匙審核}：程式判充分條件、第二個代理判相關性與反證，破壞性動作 fail-closed\\[3pt]
+\textbf{3. 算力是 Agent 管理的資源}：信心分級 Tier 路由與 nvpmodel/MIG 連動，能耗成為決策對象}\par\medskip
+{\scriptsize\color{white!60!navy}Operational intelligence belongs next to the infrastructure it protects.}
+\end{column}
+\end{columns}
+\end{frame}}
+
+% ================= P2 =================
+\begin{frame}{目標場景：雲端 AI 不被允許出現的地方}{Application Value 30\% · 邊緣場景相關性 · 隱私 · 即時 · 無網}
+\punch{監控者不能與被監控者共命運——維運智能必須是機櫃裡的獨立裝置。}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\begin{itemize}
+\item 現行 AIOps 跑在它要保護的那座基礎設施上：叢集耗盡、儲存故障、WAN 中斷，監控一起死
+\item BMC / IPMI 早證明帶外管理的必要；本案把帶外從「開關機」提升到「推理與決策」
+\item 診斷資料就是攻擊面地圖：日誌、設定、拓撲、憑證路徑不能離開現場——本地推論是資安要求
+\item 常時開機的獨立裝置，真實成本是累積能耗（第 10 頁的主張由此而來）
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}l X c l@{}}
+\toprule
+層級 & 情境 & 雲端 AI & Blackout Ops \\
+\midrule
+\textbf{L1} & WAN / DNS / 防火牆 / 憑證 & \no & \yes\ 全功能 \\
+\textbf{L2} & 金融核心、國防、半導體廠務的政策性氣隙 & \no\ 不准連 & \yes\ 全功能 \\
+\textbf{L3} & 部分網段失聯 & \no & \warn\ 標示不可達，其餘照常 \\
+\bottomrule
+\end{tabularx}
+\vspace{2mm}
+\begin{contribution}L2 不是斷線而是不准連：一個沒有雲端替代方案的市場。本案的每一項能力都在「沒有任何對外連線」的前提下量測（離線旗標強制、CPU 上跑檢索）。\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P3 CFP 對照 =================
+\begin{frame}{對照本次徵件：四項能力全中，四個評分項各有量測證據}{Readability 10\% · 評審清單直接回答}
+\scriptsize
+\begin{tabularx}{\textwidth}{@{}l l X l@{}}
+\toprule
+徵件要求 & 權重 / 門檻 & 本案的成就（頁） & 狀態 \\
+\midrule
+目標與任務分解 & 必備 & 事故迴圈 Observe$\to$Diagnose$\to$Retrieve$\to$Act$\to$Verify；9 案 9/9、中位 48 s（P4） & \measured \\
+工具與系統調用 & 至少二選 & 20 個白名單工具經 MCP 直接調用；HTTP＋MCP 雙介面（P5） & \measured \\
+狀態與動態調整 & 至少二選 & 事故狀態、動作後健康推送、前置條件改路線；四層調整（P6） & \measured\ \planned \\
+權限與風險控制 & 至少二選 & R/W/D 分級、雙鑰匙審核、fail-closed、刻意排除清單（P7） & \measured \\
+\midrule
+Edge Optimization & 35\% & TRT-LLM NVFP4 實測、prompt $-$51\%、log 治理、檢索 28/33（P9）；能耗治理（P10） & \measured\ \planned \\
+Agent Architecture & 25\% & 自建決策層＋NemoClaw 為執行基材；雙代理（指揮／審核）（P8） & \measured \\
+Application Value & 30\% & 氣隙市場、現場注入故障 demo、斷網後零降級（P2、P11） & \measured\ \planned \\
+決賽要件 & NeMo 深度整合 & NemoClaw/OpenShell 沙箱、Nemotron、TensorRT-LLM；Jetson Thor 部署（P8、P10） & \measured\ \planned \\
+\bottomrule
+\end{tabularx}
+\vspace{1.5mm}
+\begin{panel}\scriptsize
+\textbf{淘汰條款自檢}：非單輪問答（每場 3–14 次工具呼叫）、非一次性生成（動作後驗證、失敗換路徑）、非純檢索（檢索只是工具之一）、非影片模擬（現場注入故障、現場斷網）。
+\end{panel}
+\end{frame}
+
+% ================= P4 能力一 =================
+\begin{frame}{能力一 · 任務分解：每一步都由上一步的證據決定}{必備門檻 · Agent Architecture 25\% \hfill \measured}
+\punch{成就：9 種注入故障，9/9 自主修復，中位數 48 秒，證據先行 100\%，收尾驗證 100\%。}
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+\begin{panel}\scriptsize\ttfamily
+check\_health\ \ \ $\to$ front / api unreachable\\
+docker\_ps\ \ \ \ \ \ $\to$ edge-victim Exited(1) {\color{accent}$\Leftarrow$ 附上 runbook}\\
+docker\_logs\ \ \ \ $\to$ [emerg] invalid number of\\
+\phantom{docker\_logs\ \ \ \ $\to$ }arguments in "return" (x6)\\
+read\_config\ \ \ \ $\to$ 看到缺分號的那一行\\
+write\_config\ \ \ $\to$ written, not applied until restart\\
+docker\_restart\ $\to$ health now: front 200, api 200\\
+\phantom{docker\_restart\ $\to$ }{\color{accent}事故結束，回報並停止}
+\end{panel}
+{\tiny\color{muted}真實演練 transcript（bad-config 案例，6 次呼叫）}\par\medskip
+\centering
+\resizebox{0.95\linewidth}{!}{%
+\begin{tikzpicture}[node distance=2mm,font=\scriptsize]
+\node[box](o){Observe};\node[box,right=of o](d){Diagnose};\node[hi,right=of d](r){Retrieve};\node[box,right=of r](a){Act};\node[hi,right=of a](v){Verify};
+\draw[arr](o)--(d);\draw[arr](d)--(r);\draw[arr](r)--(a);\draw[arr](a)--(v);
+\draw[arr] (v.north) -- ++(0,3mm) -| node[pos=0.25,above,font=\tiny,color=muted]{沒修好：換假設} (d.north);
+\end{tikzpicture}}
+\end{column}
+\begin{column}{0.43\textwidth}
+\begin{itemize}\small
+\item 不是把工具全跑一遍：每步的下一個動作由上一步的結果決定（Exited $\to$ 看 log；[emerg] $\to$ 讀設定；改完 $\to$ 重啟；重啟後 $\to$ 驗證）
+\item 修不好就回到假設生成換路徑；達不到 200/200 就帶著 exit code 與 log 升級，不空轉
+\end{itemize}
+\begin{contribution}證據先行不是寫在 prompt 裡的請求，是工具層的性質：證據工具把對應 runbook 推進上下文，改變狀態的工具在沒看過 runbook 前一律拒絕。同一顆小模型，靠提示詞時六場裡一場走偏；改成機制後連續 9/9。\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P5 能力二 =================
+\begin{frame}{能力二 · 工具與系統調用：20 個白名單工具，全部直接可呼叫}{Agent Architecture 25\% · Edge Optimization \hfill \measured}
+\punch{成就：工具面從「24 個藏在 tool-search 迷宮後」變成「20 個直接工具」，同一顆模型從猜 tool id 變成 9/9。}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+類別 & 工具 \\
+\midrule
+觀察 & check\_health · docker\_ps · docker\_logs · docker\_exec（唯讀白名單）· read\_config \\
+主機診斷 & disk\_usage · service\_status · journal\_tail · port\_check · http\_check · top\_processes \\
+知識 & search\_runbooks（向量檢索，11 篇） \\
+動作 & docker\_start · docker\_restart · write\_config · network\_repair \\
+破壞性 & recreate\_stack(replace) · kill\_process · cleanup\_disk $\to$ 審核代理 \\
+後備 & self\_heal（整段迴圈在主機端跑一次） \\
+\bottomrule
+\end{tabularx}
+\vspace{1mm}
+{\scriptsize 介面：ops API 同時提供 HTTP 與 MCP；沙箱內沒有 docker、沒有 systemctl，影響真實系統的路徑只有一條且都有紀錄。參數別名、JSON 字串、雙重轉義全在伺服端修正。}
+\end{column}
+\begin{column}{0.48\textwidth}
+{\small\textbf{工具面調整前後（同一顆模型、同一組故障）}}\par\vspace{0.5mm}
+\tiny
+\begin{tabularx}{\linewidth}{@{}X X X@{}}
+\toprule
+指標 & NemoClaw 預設 & 調整後 \\
+\midrule
+模型直接看到的工具 & 3 個 meta-tool，24 個藏在後面 & 20 個直接工具 \\
+可見 skill & 16（15 個無關） & 1 \\
+System prompt 字元 & 28,859 & 14,200 \\
+每回合 tool\_search & 5 次 & 0 \\
+Heartbeat 空轉 & 每 30 分 & 關閉 \\
+提示詞要寫出指令 & 要，否則猜錯 id & 不用，一句警報 \\
+通過 / 耗時 & 3/3，2.5–3 min，靠後備 & 9/9，中位 48 s，自主 \\
+\bottomrule
+\end{tabularx}
+\vspace{1mm}
+\begin{contribution}\textbf{邊緣優化不只是壓模型，也要壓縮它必須思考的選項。}工具面壓平後，六場零猜錯；之後所有失敗都追到工具層缺陷，沒有一個靠改提示詞。\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P6 能力三 =================
+\begin{frame}{能力三 · 狀態與動態調整：被擋下就換路，修好了就停}{Agent Architecture 25\% \hfill \measured\ \planned}
+\punch{成就：上游脫離網路的案例，重啟前端被前置條件擋下後改走 network\_repair，修復後 3/3 通過。}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\small\textbf{事故狀態（工具層維護）}
+\begin{itemize}\small
+\item 狀態：本次事故看過的 runbook、被擋次數、證據軌跡；健康回綠燈就歸零
+\item 每個動作的結果自帶健康檢查：「已解決，回報並停止」或「仍失敗，哪個容器 Exited 是下一步」——修好了卻不知道，這個失敗形態從此消失
+\item 前置條件即時判斷：上游不在網路上時拒絕重啟前端（nginx 會解析不到而退出），並指向正確工具
+\end{itemize}
+\end{column}
+\begin{column}{0.48\textwidth}
+\small\textbf{四層動態調整}
+\begin{tabularx}{\linewidth}{@{}l X l@{}}
+\toprule
+層 & 觸發 $\to$ 調整 & 狀態 \\
+\midrule
+計畫層 & 修復失敗 $\to$ 換假設路徑 & \measured \\
+模型層 & 信心不足 $\to$ 升 Tier（關/開 thinking） & \planned \\
+硬體層 & 偵測異常 $\to$ nvpmodel 拉升，結束降回 & \planned \\
+通道層 & 網路降級 $\to$ 審批通道改本地 UI & \planned \\
+\bottomrule
+\end{tabularx}
+\vspace{2mm}
+\begin{contribution}在提示詞裡寫「修完要驗證」沒有用：模型修好後仍挖了五分鐘到 token 用完。把驗證推進動作結果之後，同一案例 201 s $\to$ 54 s。\textbf{動態調整靠的是工具回傳的狀態，不是模型的自覺。}\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P7 能力四 =================
+\begin{frame}{能力四 · 權限與風險控制：Self-Healing $\neq$ Root Shell}{權限與風險控制 · Agent Architecture 25\% \hfill \measured}
+\punch{成就：破壞性動作零誤放——無證據殺行程 REJECT，量到 100\% CPU 的失控行程 APPROVE，重啟後仍 500 的重建 3/3 APPROVE。}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+\small
+\begin{tabularx}{\linewidth}{@{}l X l@{}}
+\toprule
+級別 & 內容 & 執行條件 \\
+\midrule
+R 唯讀 & health · ps · logs · config · disk · journal · port · process & 自主 \\
+W 可逆 & start · restart · network repair · 寫回設定 & 自主＋審計 \\
+D 破壞性 & 重建容器 · 殺行程 · 清理磁碟 & \textbf{雙鑰匙審核} \\
+\bottomrule
+\end{tabularx}
+\vspace{1.5mm}
+{\small\textbf{刻意排除}：docker daemon（推論容器會跟著死，帶外裝置不能自殺）、任何系統服務、共用 image 與 volume。\\
+\textbf{其他護欄}：沙箱 default-deny 只開兩個端點；探測工具只允許 loopback 與私有網段；事故軌跡永不被清理。}
+\end{column}
+\begin{column}{0.48\textwidth}
+\small\textbf{雙鑰匙審核代理}
+\begin{itemize}\small
+\item 鑰匙一（程式）：從事故軌跡算充分條件——重建前必須重啟過且仍失敗、殺行程前 top\_processes 要列到、清磁碟前用量 $>$ 85\%；缺一個直接拒絕並點名
+\item 鑰匙二（第二個代理，獨立 prompt、不給工具）：只判與症狀相關與否、有無一行證據反駁，要拒絕必須引用；連不上就不執行
+\end{itemize}
+\begin{contribution}單靠模型審核時，同樣證據兩次判決不同（一次要求證明觀察不到的機制）。拆成兩把鑰匙後連續 3/3 一致。\textbf{確定性的條件放程式，模型只回答它答得了的問題。}每筆審核記錄事實與哪把鑰匙決定，拒絕永遠可解釋。\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P8 架構 + NemoClaw =================
+\begin{frame}{代理架構：自建決策層，NemoClaw 為執行基材}{Agent Architecture 25\% · 決賽要件 · NeMo 深度整合 \hfill \measured}
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[node distance=4mm and 5mm]
+\node[box](alert){警報 / 監看};
+\node[hi,right=of alert,align=left](sb){NemoClaw sandbox（指揮代理）\\{\scriptsize OpenShell：policy · default-deny · 審計}};
+\node[box,right=of sb,align=left](shim){相容層 shim\\{\scriptsize 格式正規化 · thinking · 格式救援}};
+\node[hi,right=of shim,align=left](llm){TensorRT-LLM\\{\scriptsize Nemotron-3-Nano-30B-A3B NVFP4}};
+\node[box,below=7mm of sb,align=left](ops){ops API（自建決策層）\\{\scriptsize 閘門 · runbook 推送 · 前置條件 · 健康推送}};
+\node[hi,right=of ops,align=left](rev){審核代理\\{\scriptsize 第二把鑰匙 · fail-closed}};
+\node[box,right=of rev,align=left](rag){Runbook RAG\\{\scriptsize 11 篇 · 本地向量索引 · CPU}};
+\node[box,below=5mm of ops](infra){被監控系統（容器、網路、主機）};
+\draw[arr] (alert) -- (sb);
+\draw[arr] (sb) -- node[above=0.6mm,font=\tiny,color=muted]{inference} (shim);
+\draw[arr] (shim) -- (llm);
+\draw[arr] (sb) -- node[left,font=\tiny,color=muted]{MCP} (ops);
+\draw[arr] (ops) -- (infra);
+\draw[arr] (ops) -- (rev);
+\draw[arr] (ops.south east) -- ++(0,-2.5mm) -| (rag);
+\end{tikzpicture}}
+\vspace{1.5mm}
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}X X@{}}
+\toprule
+本案需求 & NemoClaw / NeMo 元件 \\
+\midrule
+指令隔離、不得逃逸 & OpenShell 沙箱 \\
+資料絕不外流 & Network Policy default-deny（僅推論與 ops API） \\
+工具受控進沙箱 & MCP：20 個工具直接曝露 \\
+本地 Nemotron 推論 & TensorRT-LLM PyTorch backend 直跑 NVFP4，不需 build engine \\
+\bottomrule
+\end{tabularx}
+\end{column}
+\begin{column}{0.43\textwidth}
+\begin{contribution}NemoClaw 是執行基材；它不知道 [emerg] 之後該看哪個檔、不知道重啟前端會讓 nginx 退出、不知道氣隙網段裡什麼絕對禁止。\textbf{決策層（迴圈、閘門、前置條件、審核、計分卡）全是自建程式碼，攤得開。}\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P9 邊緣優化 Benchmark =================
+\begin{frame}{邊緣優化 I · Benchmark 比對：全部離線、量測後才採用}{Edge Optimization 35\% \hfill \measured}
+\begin{columns}[T]
+\begin{column}{0.5\textwidth}
+{\small\textbf{引擎對照（同一台、同一套腳本）}}\par\vspace{0.5mm}
+\tiny
+\begin{tabularx}{\linewidth}{@{}X X X@{}}
+\toprule
+指標 & vLLM 0.29 · Qwen3.6-35B-A3B FP8＋MTP & \textbf{TensorRT-LLM 1.3 · Nemotron-3-Nano NVFP4（正式採用）} \\
+\midrule
+啟動到 health & 275 s & \textbf{106 s} \\
+單流 / 8 併發 tok/s & 60.7 / 343 & 57.9 / 237 \\
+12.9k token prefill & 3.5 s（cache 命中 0.3 s） & \textbf{1.17 s} \\
+GSM8K-CoT，150 題 & 92.7\% & \textbf{96.7\%} \\
+IFEval strict，100 題 & 78.0\% & \textbf{80.0\%} \\
+needle 探針，8 題 & 8/8 & 5–7/8 \\
+GPU 記憶體 & 52 GB & \textbf{34 GB} \\
+\bottomrule
+\end{tabularx}
+\vspace{1.5mm}
+{\small\textbf{選型探索矩陣（vLLM，DGX Spark，32k ctx）}}\par\vspace{0.5mm}
+\tiny
+\begin{tabularx}{\linewidth}{@{}X X X X@{}}
+\toprule
+配置 & 單流 tok/s & 8 併發 tok/s & needle \\
+\midrule
+Qwen3-8B BF16 & 14.1 & 116.6 & 8/8 \\
+27B NVFP4 · ＋MTP5 · ＋DFlash & 11.6 · 23.9 · 32.6 & 82 · 140 · 158 & 8/8 \\
+35B-A3B FP8 · ＋MTP3 · ＋DFlash & 48.9 · 66.6 · 56.1 & 270 · 307 · 125 & 8/8 \\
+\bottomrule
+\end{tabularx}
+\vspace{0.5mm}
+{\tiny\color{muted}帶寬受限的機器上 MoE 小 active 是甜蜜點；探索用 vLLM，正式部署改 TensorRT-LLM＋Nemotron（合規、更省記憶體、prefill 快 3 倍）。}
+\end{column}
+\begin{column}{0.48\textwidth}
+{\small\textbf{檢索方式矩陣（recall@1）}}\par\vspace{0.5mm}
+\tiny
+\begin{tabularx}{\linewidth}{@{}X X X X@{}}
+\toprule
+題集：runbook 數 / 題數 & 關鍵字 & \textbf{向量} & 混合 \\
+\midrule
+8 / 20 & 15 & \textbf{20} & 18 \\
+9 / 23 & 16 & \textbf{23} & 20 \\
+11 / 33 & 19 & \textbf{28} & 23 \\
+\midrule
+權重掃描，8 / 20 & \multicolumn{3}{l}{向量 20 · 關鍵字權重 0.1 得 20 · 0.2–0.5 得 19 · RRF 18 · max 17} \\
+\bottomrule
+\end{tabularx}
+\vspace{1.5mm}
+{\small\textbf{輸入端治理}}\par\vspace{0.5mm}
+\tiny
+\begin{tabularx}{\linewidth}{@{}X X X@{}}
+\toprule
+指標 & 前 & 後 \\
+\midrule
+System prompt 字元 & 28,859 & 14,200（$-$51\%） \\
+crash loop 案例（log 截斷修正） & 0/5 & 4/4 \\
+每次事故 token & \multicolumn{2}{l}{中位約 2.7k，區間 1.5k–10k} \\
+\bottomrule
+\end{tabularx}
+\vspace{1.5mm}
+\begin{contribution}結論全部與直覺相反才值得放：混合檢索輸給純向量、關 block reuse 更快（首個長 prompt 18.7 s $\to$ 1.2 s）、NGram 投機解碼會炸、PDL 無感、prompt 越短工具越準。\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P10 邊緣優化 II · 量測計畫 =================
+\begin{frame}{邊緣優化 II · 量測計畫：算力不是限制條件，是 Agent 自己要管理的資源}{Edge Optimization 35\% · 初賽給方法與對照組，決賽於 Jetson AGX Thor 交數字 \hfill \planned\ \measured}
+\punch{全場每隊都拿到 128 GB；帶外裝置的真實成本是累積能耗，所以量的是「何時花、花多少、會不會排擠監控」。}
+\begin{columns}[T]
+\begin{column}{0.4\textwidth}
+\small\textbf{機制}
+\begin{itemize}\small
+\item Tier-1 = 同一顆 30B A3B 關 thinking；Tier-2 = 開 thinking。已量：token 幾乎全在 thinking，第一刀切在這裡
+\item 信心不足 $\to$ 升 Tier-2 同時 nvpmodel 拉升；MIG 把巡檢與推理分開
+\item 輸入端：四級日誌預處理，量壓縮比 vs 正確率
+\end{itemize}
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[node distance=2.5mm]
+\node[pl,align=center,minimum width=50mm,font=\scriptsize](p){巡檢：低功耗 · Tier-1 · MIG A};
+\node[box,below=of p,minimum width=50mm,font=\scriptsize](d){偵測異常 $\to$ 信心評估};
+\node[box,below left=3mm and -18mm of d,align=center,font=\tiny](t1){信心足\\Tier-1，不拉功耗};
+\node[pl,below right=3mm and -18mm of d,align=center,font=\tiny](t2){信心不足\\Tier-2 · nvpmodel 拉升 · MIG B};
+\node[box,below=11mm of d,minimum width=50mm,font=\scriptsize](end){事故結束 $\to$ 降回};
+\draw[arr](p)--(d);\draw[arr](d)--(t1);\draw[arr](d)--(t2);\draw[arr](t1)--(end);\draw[arr](t2)--(end);
+\end{tikzpicture}}
+\end{column}
+\begin{column}{0.58\textwidth}
+{\small\textbf{量測計畫矩陣（每個指標：怎麼量、跟誰比、什麼算通過）}}
+\tiny
+\begin{tabularx}{\linewidth}{@{}X X X X@{}}
+\toprule
+指標 & 量測方法 & 對照組 & 通過標準 \\
+\midrule
+單次診斷能耗 Wh & tegrastats 200 ms 取樣積分 & 同機、全程 Tier-2 固定高功耗 & 下降，且正確率不降 \\
+24 h 累積能耗 Wh & 同上，含巡檢時段 & 1U 監控伺服器（牆上電表） & 低於基準 \\
+功耗動態範圍（倍） & 巡檢模式 vs 推理模式平均功耗 & — & 報告倍率，取代「低功耗」形容詞 \\
+Tier-1 承接比例 & 計分卡逐案記錄 & — & 越高越好，正確率不降 \\
+每瓦診斷次數 & 診斷次數 ÷ Wh & x86 工作站＋獨顯（牆上電表） & 高於基準；量測邊界分開標示 \\
+壓縮比 vs 正確率 & 4 級預處理 × 9 案 × 計分卡 & 無壓縮 & 畫曲線，標拐點與工作點 \\
+巡檢不被推理餓死 & MIG 實例 A 的健康輪詢 p99 & 無 MIG 共用 GPU & p99 不惡化 \\
+\bottomrule
+\end{tabularx}
+\vspace{1mm}
+{\small\textbf{目前已量的依據（DGX Spark）}}\\
+{\scriptsize 每次事故 token 中位 2.7k、區間 1.5k–10k，幾乎全在 thinking $\to$ Tier 切在 thinking 開關；prompt $-$51\% 與日誌折疊已上線，會直接反映在能耗指標上；配發清單裡的 2U 寬壓工業機型即為部署形態。}
+\vspace{1mm}
+\begin{contribution}對照組是同一台機器自比，控制變因乾淨；x86 基準對的是現行 AIOps 真正跑的環境。同一段程式碼同時是能耗優化（35\%）與 Agent 的自主資源決策（25\%）。\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P11 評估矩陣與 demo =================
+\begin{frame}{評估矩陣：我們量的不是回答，是系統有沒有恢復}{Application Value 30\% · 現場驗證 \hfill \measured\ \planned}
+\begin{columns}[T]
+\begin{column}{0.56\textwidth}
+{\small\textbf{九案逐案計分（最新一輪，所有修正就位）}}
+\scriptsize
+\begin{tabularx}{\linewidth}{@{}X c r r r r@{}}
+\toprule
+案例 & 結果 & 秒 & 呼叫 & 效率 & token \\
+\midrule
+nginx-stopped & 自主 & 44 & 4 & 1.00 & 2.0k \\
+bad-config & 自主 & 79 & 6 & 1.00 & 4.7k \\
+upstream-down & 自主 & 36 & 4 & 1.00 & 1.5k \\
+bad-upstream-name & 自主 & 54 & 7 & 0.67 & 2.7k \\
+container-removed & 自主 & 30 & 3 & 1.00 & 1.8k \\
+crashloop & 自主 & 123 & 6 & 1.00 & 6.5k \\
+upstream-paused & 自主 & 46 & 3 & 1.00 & 1.9k \\
+upstream-detached & 自主 & 206 & 14 & 0.50 & 10.2k \\
+upstream-500 & 自主 & 48 & 6 & 0.50 & 2.7k \\
+\midrule
+合計 / 中位數 & 9/9 & 48 & 6 & 0.85 & 2.7k \\
+當天全部 86 場（含修正前） & 73 自主 & \multicolumn{4}{l}{弄更糟 1 · 假健康宣稱 0 · 誠實升級欄待 unseen 案例} \\
+\bottomrule
+\end{tabularx}
+{\tiny 效率 = 該案最少動作數 ÷ 實際執行的狀態改變動作；upstream-500 為 0.50 是 runbook 規定先重啟再重建。計分卡另量證據先行、收尾驗證、root cause 點名、無關與重複呼叫、閘門與審核擋下次數。}
+\end{column}
+\begin{column}{0.42\textwidth}
+{\small\textbf{現場 demo（約 6.5 分鐘，不預錄）}}
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[node distance=1.4mm,font=\tiny]
+\node[box,align=center](s1){當場注入\\故障};
+\node[pl,align=center,right=of s1](s2){功耗尖峰\\硬體層調整};
+\node[box,align=center,right=of s2](s3){逐步診斷\\假設·工具·證據};
+\node[hi,align=center,right=of s3](s4){審核代理\\擋破壞性動作};
+\node[box,align=center,right=of s4](s5){執行·驗證\\功耗回落};
+\node[pl,align=center,right=of s5](s6){切斷對外網段\\重跑一次};
+\foreach \a/\b in {s1/s2,s2/s3,s3/s4,s4/s5,s5/s6}{\draw[arr](\a)--(\b);}
+\end{tikzpicture}}
+\par\smallskip
+\small\textbf{結果分級}：自主 / 靠後備 / 誠實升級 / 弄更糟 / 沉默失敗——單一通過率看不見前三種，這張卡各有一欄。
+\par\smallskip
+\begin{contribution}失敗分析方法本身是成果：每個失敗都從沙箱裡模型的 thinking 追根因（log 截斷砍掉 stderr 的 [emerg]、上游不在網路時重啟前端、把 nginx 的 read-only 提示當成改不了），修的都是工具。\textbf{可重現的故障 harness＋計分卡，讓改進是量出來的。}\end{contribution}
+\end{column}
+\end{columns}
+\end{frame}
+
+% ================= P12 貢獻 · 揭露 · 風險 =================
+{\setbeamercolor{background canvas}{bg=navy}\setbeamercolor{normal text}{fg=white}\usebeamercolor[fg]{normal text}
+\setbeamercolor{panelbox}{bg=white!10!navy,fg=white}
+\begin{frame}[plain]
+\vspace{1mm}
+{\large\bfseries 貢獻、既有成果揭露、決賽交付}\par\smallskip
+\begin{columns}[T]
+\begin{column}{0.36\textwidth}\raggedright
+{\small\bfseries 貢獻（新做出來的）}\par\smallskip
+{\tiny
+1. 工具層強制的證據先行：runbook 推送＋動作閘門＋前置條件，機制取代提示詞\\[1pt]
+2. 雙鑰匙審核代理：程式判充分條件、第二代理判相關與反證，fail-closed\\[1pt]
+3. 全地端 NemoClaw＋TensorRT-LLM 維運代理，沙箱內 20 個工具經 MCP 直接調用\\[1pt]
+4. 可重現的故障 harness（9 案）與多維計分卡，改進可量測\\[1pt]
+5. 算力當作 Agent 管理的資源：信心分級 Tier 路由與 nvpmodel/MIG 連動（決賽交付）}
+\end{column}
+\begin{column}{0.32\textwidth}
+\begin{panel}\tiny
+{\scriptsize\bfseries 既有成果揭露（規則要求）}\\[1pt]
+2026/09/21–09/29 於實驗室 DGX Spark 建置並量測：NemoClaw/OpenShell 沙箱＋TensorRT-LLM 服務、20 個白名單工具的 ops API（HTTP＋MCP）、11 篇 runbook 與向量檢索、9 種故障注入與 harness、雙鑰匙審核代理、演練計分卡。\\[3pt]
+{\scriptsize\bfseries 決賽期間新增}\\[1pt]
+Jetson Thor 部署、nvpmodel/MIG 能耗治理與表一表二、信心分級 Tier 路由、日誌壓縮曲線、本地審批 UI、未演練過的故障案例（unseen 通過率）
+\end{panel}
+\end{column}
+\begin{column}{0.3\textwidth}\raggedright
+{\small\bfseries 風險與備案}\par\smallskip
+{\tiny
+Thor 上 TensorRT-LLM 可用性 $\to$ NIM / Ollama 基準線可 demo\\[1pt]
+配發 OEM 機型核心模組 $\to$ 工作坊當天優先驗證\\[1pt]
+Privacy Router 無法程式切換 $\to$ Tier 路由做在自有相容層\\[1pt]
+功耗動態範圍不如預期 $\to$ 日誌壓縮為第二條腿\\[1pt]
+配發偏好：Jetson AGX Thor 開發者套件 $>$ ASUS PE3000N $>$ Aetina AIE-KT78}
+\end{column}
+\end{columns}
+\vspace{3mm}
+\centering{\normalsize\bfseries OBSERVE LOCALLY.\quad REASON LOCALLY.\quad RECOVER LOCALLY.}\par
+{\tiny\color{white!60!navy}Blackout Ops — a fully local autonomous SRE agent for resilient edge infrastructure}
+\end{frame}}
+
+\end{document}

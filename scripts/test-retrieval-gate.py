@@ -45,6 +45,7 @@ def main():
     assert kb.startswith("knowledge base (disk_full): matched") and "solution-linux-disk" in kb and "CHECK [R]" in kb, kb[:200]
     assert len(kb) <= 2600, f"the knowledge answer must stay small for a 32k window, got {len(kb)}"
     assert not agent._incident["runbook_seen"], "the knowledge pack is hypotheses, not this stack's runbook"
+    assert agent._incident["trace"][-1]["tool"] == "search_incident_knowledge", "trace must record calls"
     kb = agent.run_tool("search_incident_knowledge", {"query": "printer toner low in tray two"}, dry_run=True)
     assert "insufficient" in kb.splitlines()[0] and "not a basis for repair" in kb, kb[:200]
     assert agent.run_tool("search_incident_knowledge", {}, dry_run=True).startswith("error:")
@@ -72,9 +73,8 @@ def main():
         out = agent.run_tool("recreate_stack", {"name": "edge-victim-app", "replace": True}, dry_run=False)
         assert out.startswith("review-rejected:") and calls == ["recreate_stack"], f"after a restart the reviewer decides: {out[:120]}"
     reviewer.review = real
-    recorded = [t["tool"] for t in agent._incident["trace"]]
-    assert "search_incident_knowledge" in recorded and recorded[-1] == ("recreate_stack" if os.environ.get("LIVE_STACK") else "write_config"), \
-        f"trace must record calls, last three: {recorded[-3:]}"
+    recorded = [t["tool"] for t in agent._incident["trace"]]        # LIVE_STACK replaces the trace above, so only the tail is checked
+    assert recorded[-1] == ("recreate_stack" if os.environ.get("LIVE_STACK") else "write_config"), f"last three: {recorded[-3:]}"
 
     for marker, want in agent.STATE_RUNBOOKS:              # state markers map to fixed runbooks, never a guess
         got = agent.attach_named("x", want)

@@ -71,6 +71,8 @@ skills/ops/SKILL.md             OpenClaw skill，教 sandbox agent 用 ops 指�
 nemoclaw/openclaw-patch.json5   小模型的工具介面設定（關掉 tool search、只留 ops skill、關 heartbeat）
 nemoclaw/workspace/*.md         取代 OpenClaw 預設 bootstrap 的精簡 AGENTS.md / TOOLS.md / HEARTBEAT.md
 runbooks/*.md                   小型 RAG 語料（IT runbook，11 篇：服務掛掉、容器被刪、設定錯、502、504、上游 5xx、上游脫離網路、上游名稱解析、crash loop、OOM、磁碟滿）
+kb/                             離線知識庫（組員整理，2026-09-30 遷入，見 5.5）：blackout-ops-kb 0.3.0，SQLite FTS5，1,644 歷史案例 + 17 張 Linux/K8s 修復卡 + 7 拓撲；agent 以 search_incident_knowledge 查
+datasets/                       四個公開 AIOps benchmark 的清單、授權與使用規則；raw/（39 GB）只在 Spark 與 TRANSCEND USB，不入版控
 victim/conf.d/                  victim nginx 設定（由 faults.py 產生，不入版控）
 trt/*.yaml                      trtllm-serve 的 extra_llm_api_options（nano.yaml 為正式）
 systemd/*.service               user unit（目前刻意不啟用開機自啟）
@@ -236,6 +238,26 @@ uv run lm_eval --model local-chat-completions --model_args "…同上…" --task
 
 PDL 無感；NGram 投機解碼觸發 `CUDA error: device-side assert`；`enable_block_reuse` 讓首個長 prompt 從 1.2 s 變 18.7 s → 全部不採用，正式用 `trt/nano.yaml`（`free_gpu_memory_fraction 0.5`、chunked prefill、`max_seq_len 32768`）。
 
+### 5.5 知識庫 `kb/` 與資料集 `datasets/`（2026-09-30 遷入）
+
+組員整理、經 USB 搬進 Spark 的兩個資料夾，遷入後的位置與規則：
+
+| 位置 | 內容 | 入版控 |
+|---|---|---|
+| `kb/artifacts/` | `blackout_ops_kb.sqlite`（FTS5，1,668 chunks：1,644 案例、17 修復卡、7 拓撲）、`rag_documents.jsonl`（`id+text+metadata`，可餵任何 vector store）、train/dev/eval 切分、`eval_ground_truth.jsonl`（只給評分程式）、`manifest.json`（來源 commit 與 SHA256） | 是（約 16 MB） |
+| `kb/src/blackout_ops_kb/` | 純標準庫套件：查詢、telemetry 壓縮、評分；`PYTHONPATH=kb/src python3 -m blackout_ops_kb doctor\|stats\|search\|context` | 是 |
+| `kb/build/`、`kb/dist/`、`*.egg-info`、`kb/integrations/…/{vendor,data}` | 可重建的 wheel 與 nemo-deepagents skill 副本（`kb/scripts/build_linux_bundle.py`） | 否 |
+| `datasets/README.md`、`manifests/`、`docs/` | 四個 benchmark 的 commit、案例數、授權、場景對照、答案隔離規則 | 是 |
+| `datasets/raw/` | AgenticOpsEval 13 G、Cloud-OpsBench 3.7 G、RCAEval 3.3 G、ITBench-Lite 1.5 G（各含 git-lfs 物件，約一半是重複） | 否；Spark 與 USB 各一份 |
+
+Spark 上驗證（aarch64；系統 Python 3.12.3 與 venv 3.12.14 都有 FTS5）：`kb/tests` 13/13、`doctor` pass；`context` 對 systemd restart loop 0.78、disk full 0.67 皆 `matched`。
+
+Agent 端是一個唯讀工具 `search_incident_knowledge`（`scripts/agent.py`）：把原始 14–24 KB 的 JSON 壓成 ≤2.5 KB——狀態與覆蓋率、前兩張修復卡的 CHECK/FIX/verify、相似案例標題。它保留知識庫自己的 `matched`/`insufficient` 判定，`insufficient` 時明說弱候選不可作為修復依據；它**不算**看過 runbook，閘門仍要求 `search_runbooks` 或證據工具推送的 runbook（那些才是這個 stack 的程序）。skill 裡的規則：`search_runbooks` 只回目錄時才查它。
+
+授權：AgenticOpsEval 為 CC BY-NC 4.0、RCA100 為 CC BY-NC-SA 4.0（研究、競賽可用，商用另議）；其餘 MIT / Apache-2.0。原始資料不進模型 prompt，eval 答案不進 RAG（`datasets/docs/p0_rag_usage.md`）。
+
+重建（只在有 raw 的機器）：`cd kb && PYTHONPATH=src python3 -m blackout_ops_kb build --datasets-root ../datasets/raw --out-dir artifacts && python3 scripts/build_linux_bundle.py`。
+
 ## 6. 錯誤注入與自我修復 drill
 
 兩條路徑都對同一組 victim 容器與同一套白名單工具。
@@ -343,6 +365,8 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | `docs/plan-trtllm-nemoclaw.md` | TRT-LLM 與 NemoClaw 遷移：事實查核、執行日誌、每個坑的修法 |
 | `docs/agent-design.md` | Agent 迴圈設計、工具白名單、兩條 drill 路徑與結果 |
 | `docs/hackathon-runbook.md` | 當天流程、離線 bundle、Jetson 對照 |
+| `kb/README.md`、`kb/docs/*.md` | 知識庫：安裝、查詢 API、RAG schema、來源、交付稽核 |
+| `datasets/README.md`、`datasets/docs/p0_rag_usage.md` | 資料集清單、授權、答案隔離與實驗切分規則 |
 
 Repo 副本：GitHub `Vanisherzd/dgx-spark-edge-agent`（private）、lab Spark `hsnl@192.168.2.60:~/edge-agent`（可直接 push）、筆電 `~/Desktop/HSNL/edge-agent`。lab VPN 下筆電連不到 GitHub，推 GitHub 從 Spark 端執行，token 從筆電經 stdin 傳過去，且要先把 Spark 上既有的 credential helper 清掉（那台曾用別人的帳號 `s102345` 推送而被 403）：
 

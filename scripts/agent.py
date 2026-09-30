@@ -16,6 +16,7 @@ import re
 import socket
 import shutil
 import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -197,6 +198,7 @@ TOOLS = [
     {"name": "read_config", "description": "Read victim/conf.d/default.conf", "parameters": {"type": "object", "properties": {}}},
     {"name": "write_config", "description": "Replace the nginx config with the given full content. The file lives on the host and is mounted read-only into edge-victim, so this tool is the only way to change it (the container's own 'read-only file system' warning is expected). docker_restart edge-victim afterwards to apply", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
     {"name": "search_runbooks", "description": "Search the IT runbooks for a symptom in your own words or with the exact error text (502 upstream, nginx emerg config, disk full, exit 137, crash loop); returns the best matching procedures, or the catalogue if nothing matches", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
+    {"name": "search_incident_knowledge", "description": "Offline knowledge base of 1,644 historical incidents and 17 Linux/Kubernetes remediation cards (disk full, inode exhaustion, systemd restart loop, OOM, DNS resolver, TLS expiry, port not listening, CrashLoopBackOff). Use it for a symptom no runbook covers. Answers 'matched' with checks and fixes to verify on this host, or 'insufficient', which means gather more evidence or escalate; never repair from a weak candidate", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "symptom or exact error text"}, "scenario": {"type": "string", "enum": ["disk_full", "crashloop", "dns"]}}, "required": ["query"]}},
     {"name": "disk_usage", "description": "Host filesystem usage (df) and docker disk usage; use for disk-full symptoms", "parameters": {"type": "object", "properties": {}}},
     {"name": "service_status", "description": "Whether a host systemd unit is active, plus its last status line (read-only)", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}}, "required": ["unit"]}},
     {"name": "journal_tail", "description": "Last lines of a host systemd unit's journal", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}, "lines": {"type": "integer", "default": 30}}, "required": ["unit"]}},
@@ -251,6 +253,51 @@ def search_runbooks(query):
     return rag.search(query)
 
 
+KB_DB = ROOT / "kb" / "artifacts" / "blackout_ops_kb.sqlite"
+_kb = None
+
+
+def search_incident_knowledge(query, scenario=None):
+    """A teammate's offline knowledge pack (kb/): historical cases from four public AIOps benchmarks plus curated
+    Linux/Kubernetes remediation cards in SQLite FTS5, stdlib only. Its verdict is kept (`matched` = a card covers
+    the symptom, `insufficient` = nothing does, so no repair may be derived from the weak candidates) but its size
+    is not: the raw bundle is 14-24 KB of JSON and the model has a 32k window, so only the lines the agent can act
+    on come back. It never counts as having read this stack's runbook; the gate still wants search_runbooks."""
+    global _kb
+    try:
+        if _kb is None:
+            sys.path.insert(0, str(ROOT / "kb" / "src"))
+            from blackout_ops_kb import KnowledgeBase
+            _kb = KnowledgeBase(KB_DB)
+        incident = {"query": query, "scenario": scenario} if scenario in ("disk_full", "crashloop", "dns") else {"query": query}
+        bundle = _kb.retrieve(incident, case_k=3, solution_k=3)
+    except Exception as e:
+        return f"knowledge base unavailable ({type(e).__name__}: {str(e)[:100]}); use search_runbooks"
+    km = bundle["knowledge_match"]
+    lines = [f"knowledge base ({bundle['scenario']}): {km['status']}, best card coverage {km['best_solution_coverage']:.2f}"]
+    for s in bundle["solutions"][:2]:            # two cards: the third is mostly noise on a 33-term query
+        m = s.get("metadata") or {}
+        lines.append(f"\n## {s['id']}: {m.get('title', s.get('title', ''))} [{m.get('platform', '?')}, risk {s.get('risk_tier')}, coverage {s['match_coverage']:.2f}]")
+        if m.get("symptoms"):
+            lines.append("symptoms: " + "; ".join(m["symptoms"][:2]))
+        for c in m.get("checks", [])[:3]:
+            lines.append(f"CHECK [{c.get('level', 'R')}] {c.get('command', '')} :: {c.get('purpose', '')}")
+        for f in m.get("remediation", [])[:2]:
+            lines.append(f"FIX [{f.get('level', 'W')}] {f.get('action', '')}")
+        if m.get("verify"):
+            lines.append("verify: " + str(m["verify"][0]))
+    if km["status"] != "matched":
+        weak = ", ".join(f"{s['id']} ({s['match_coverage']:.2f})" for s in bundle["weak_solution_candidates"][:3]) or "none"
+        lines.append(f"no remediation card covers this symptom; weak candidates ({weak}) are not a basis for repair. "
+                     "Use search_runbooks for this stack's own procedures, gather more read-only evidence, or escalate.")
+    titles = list(dict.fromkeys(str(c.get("title", ""))[:60] for c in bundle["cases"][:3]))
+    if titles:
+        lines.append("\nsimilar historical cases: " + "; ".join(titles))
+    lines.append("These are hypotheses from other systems' incidents: confirm against this host's evidence before acting.")
+    out = "\n".join(lines)
+    return out if len(out) <= 2500 else out[:2500] + "\n...(cut)"
+
+
 def run_tool(name, args, dry_run):
     """Dispatch one tool call and record it in the incident trace (the reviewer's evidence)."""
     result = _run_tool(name, args, dry_run)
@@ -284,8 +331,8 @@ def _run_tool(name, args, dry_run):
         return "error: docker_exec needs args.cmd"
     if name == "write_config" and "content" not in args:
         return "error: write_config needs args.content (the full file)"
-    if name == "search_runbooks" and "query" not in args:
-        return "error: search_runbooks needs args.query"
+    if name in ("search_runbooks", "search_incident_knowledge") and "query" not in args:
+        return f"error: {name} needs args.query"
     for alias in ("service", "unit_name", "systemd_unit"):         # small models rename this one too
         if alias in args and "unit" not in args:
             args["unit"] = args.pop(alias)
@@ -376,6 +423,8 @@ def _run_tool(name, args, dry_run):
     if name == "search_runbooks":
         _incident["runbook_seen"] = True
         return search_runbooks(args["query"])
+    if name == "search_incident_knowledge":
+        return search_incident_knowledge(str(args["query"]), args.get("scenario"))
     if name == "disk_usage":
         return sh("df -h -x tmpfs -x devtmpfs -x efivarfs | head -12") + "\n\n" + sh("docker system df")
     if name in ("service_status", "journal_tail"):

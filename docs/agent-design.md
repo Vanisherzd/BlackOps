@@ -574,6 +574,31 @@ deterministic key in code and giving the model the narrow question.
 Every review logs the computed facts and which key decided (`logs/reviews.jsonl`), so a rejection is always
 explainable from the log alone.
 
+## The knowledge pack joins the tool surface (2026-09-30)
+
+A teammate's offline knowledge base arrived on a USB stick and now lives in `kb/`: blackout-ops-kb 0.3.0, built
+from four public AIOps benchmarks (AgenticOpsEval, Cloud-OpsBench, RCAEval, ITBench-Lite) into an SQLite FTS5 index
+of 1,644 historical cases, 17 Linux/Kubernetes remediation cards and 7 service topologies, stdlib only. Its own audit
+listed aarch64 as unverified; on the Spark it passes its 13 tests and `doctor` (FTS5 present in both Pythons).
+
+It is one more read-only tool, `search_incident_knowledge`, beside `search_runbooks`, under three rules:
+
+- **Its verdict is kept, its size is not.** The pack answers `matched` or `insufficient` from a term-coverage
+  threshold (0.34); the tool passes that through but compacts the 14–24 KB JSON bundle to under 2.5 KB: status and
+  coverage, the CHECK/FIX/verify lines of the top two cards, deduplicated similar-case titles. A 32k window cannot
+  afford the raw bundle, and the third card was noise on every query tried.
+- **It does not open the runbook gate.** The runbooks describe this stack; the pack describes other people's
+  incidents on Kubernetes clusters and Linux hosts. A mutating action still needs a runbook seen for this incident.
+- **`insufficient` is said in words the model acts on**: the weak candidates are named with their coverage and
+  declared not a basis for repair; the answer points back to `search_runbooks`, more evidence, or escalation.
+
+Measured: `No space left on device` retrieves `solution-linux-disk-log-growth` at coverage 0.67 with the journalctl
+and logrotate checks the local runbook does not spell out; a systemd restart loop 0.78; an unrelated query 0.33,
+`insufficient`. This stack's own `host not found in upstream` line also reaches `matched` at 0.44, on DNS cards for
+other platforms, which is why the skill says to ask the pack only after `search_runbooks` returned the catalogue.
+In the scorecard the tool counts as diagnostic and as evidence for evidence-first. The raw datasets (39 GB) stay out
+of git and out of the prompt; only the built index ships.
+
 ## Not yet
-Host-level actions (systemctl on the Spark itself), memory of past incidents, embedding-based retrieval, NemoClaw
-skill packaging. Add each only when a fault case needs it.
+Host-level actions (systemctl on the Spark itself), memory of this host's own past incidents, NemoClaw skill
+packaging. Add each only when a fault case needs it.

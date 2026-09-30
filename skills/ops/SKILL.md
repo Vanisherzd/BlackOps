@@ -24,6 +24,7 @@ Look first, and never guess a state you can read:
 | `ops__docker_exec` | `name`, `cmd` | a read-only command inside a container (`nginx -t`, `cat`, `ls`, `df`, `du`, `ps`, `curl`) |
 | `ops__read_config` | – | the current nginx config |
 | `ops__search_runbooks` | `query` | the written procedure for a symptom; an unmatched query returns the catalogue |
+| `ops__search_incident_knowledge` | `query`, `scenario` | historical incidents and Linux/Kubernetes remediation cards for a symptom no runbook covers (disk, inode, systemd, OOM, DNS, TLS, ports, CrashLoopBackOff); hypotheses to verify here, never a licence to act |
 | `ops__disk_usage` | – | host filesystems and docker disk usage |
 | `ops__service_status` | `unit` | whether a host systemd unit is active |
 | `ops__journal_tail` | `unit`, `lines` | host journal, including OOM kills |
@@ -44,7 +45,9 @@ Actions, least invasive first:
 1. `ops__check_health` — know the actual symptom before theorising.
 2. `ops__docker_ps` — which container, and how did it exit.
 3. `ops__docker_logs` on that container — read the real error, not the first plausible one.
-4. `ops__search_runbooks` with words from that error.
+4. `ops__search_runbooks` with words from that error. If it returns only the catalogue, `ops__search_incident_knowledge`
+   with the same words: `matched` gives checks and fixes to confirm on this host; `insufficient` means gather more
+   evidence or escalate, not repair from a weak candidate.
 5. Apply the smallest action that addresses the cause. A container that exited on a config error will exit again if
    you only restart it.
 6. `ops__check_health` again. Both URLs must be 200. If they are not, go back to step 3 with what you learned.

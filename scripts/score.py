@@ -11,7 +11,7 @@ run is scored on several axes and the verdict is a class, not a bit:
   outcome       autonomous | fallback (self_heal did it) | escalated (failed, and said so honestly) |
                 made-worse (a URL that worked at injection is dead at the end) | silent-fail (everything else)
   efficiency    min_actions / state-changing calls actually executed (1.0 = shortest fix, lower = extra actions)
-  evidence      a docker_ps / docker_logs / search_runbooks came before the first executed action
+  evidence      a docker_ps / docker_logs / search_runbooks / search_incident_knowledge came before the first executed action
   closure       health was checked (or pushed) after the last action
   cause named   the final report matches the case's root-cause pattern (scripts/faults.py CASES)
   false claim   the report says healthy while verify says FAIL — worse than saying nothing
@@ -93,7 +93,7 @@ def score_block(case, start, body, log_date=None):
 
     # process
     first_action_idx = next((i for i, c in enumerate(calls) if c["status"] == "ok" and c["tool"] in MUTATING), None)
-    first_evidence_idx = next((i for i, c in enumerate(calls) if c["tool"] in ("docker_ps", "docker_logs", "search_runbooks")), None)
+    first_evidence_idx = next((i for i, c in enumerate(calls) if c["tool"] in ("docker_ps", "docker_logs", "search_runbooks", "search_incident_knowledge")), None)
     evidence_first = None if first_action_idx is None else (first_evidence_idx is not None and first_evidence_idx < first_action_idx)
     last_action_idx = max((i for i, c in enumerate(calls) if c["status"] == "ok" and c["tool"] in MUTATING), default=None)
     if last_action_idx is None:

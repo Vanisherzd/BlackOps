@@ -48,7 +48,7 @@ CASES = {
     "upstream-500":      dict(min_actions=1, fix_tools={"recreate_stack"}, cause=r"500|recreat|rebuil|upstream.*(config|broken|misconfig)", tier="seen"),
 }
 MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk", "kill_process"}
-DIAGNOSTIC = {"check_health", "docker_ps", "docker_logs", "read_config", "search_runbooks", "http_check"}
+DIAGNOSTIC = {"check_health", "docker_ps", "docker_logs", "read_config", "search_runbooks", "search_incident_knowledge", "http_check"}
 
 
 def sh(cmd, check=False):

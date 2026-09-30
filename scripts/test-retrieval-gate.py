@@ -39,6 +39,17 @@ def main():
     assert agent.run_tool("docker_ps", {}, dry_run=True) is not None            # read-only, never gated
     assert agent.run_tool("read_config", {}, dry_run=True) is not None
 
+    # The knowledge pack (kb/): read-only, compact, keeps its own matched/insufficient verdict, never counts as a runbook.
+    agent._incident.update(runbook_seen=False, refusals=0)
+    kb = agent.run_tool("search_incident_knowledge", {"query": "write error: No space left on device, / at 97%"}, dry_run=True)
+    assert kb.startswith("knowledge base (disk_full): matched") and "solution-linux-disk" in kb and "CHECK [R]" in kb, kb[:200]
+    assert len(kb) <= 2600, f"the knowledge answer must stay small for a 32k window, got {len(kb)}"
+    assert not agent._incident["runbook_seen"], "the knowledge pack is hypotheses, not this stack's runbook"
+    kb = agent.run_tool("search_incident_knowledge", {"query": "printer toner low in tray two"}, dry_run=True)
+    assert "insufficient" in kb.splitlines()[0] and "not a basis for repair" in kb, kb[:200]
+    assert agent.run_tool("search_incident_knowledge", {}, dry_run=True).startswith("error:")
+    assert agent.run_tool("write_config", {"content": CONF}, dry_run=True).startswith("refused:"), "knowledge alone must not open the gate"
+
     assert agent.symptom_query("all fine\nstarting up") is None, "clean output must not trigger an attachment"
     assert agent.symptom_query('nginx: [emerg] invalid number of arguments in "return" directive'), \
         "an emerg line is a symptom"

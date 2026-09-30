@@ -258,7 +258,7 @@ Agent 端是一個唯讀工具 `search_incident_knowledge`（`scripts/agent.py`�
 
 重建（只在有 raw 的機器）：`cd kb && PYTHONPATH=src python3 -m blackout_ops_kb build --datasets-root ../datasets/raw --out-dir artifacts && python3 scripts/build_linux_bundle.py`。
 
-**RAG 實測（`docs/kb-eval.md`，2026-09-30）**：`uv run --no-sync scripts/kb-eval.py all`（Spark 上 detach 跑，約 45 分鐘）——63 個知識庫的保留案例、1×–32× 六個壓縮比、兩組（只給 telemetry / 加上 `search_incident_knowledge` 的檢索結果），Nemotron 關 thinking、4 路併發，用知識庫自己的評分程式計分。結果：只給 telemetry 時 8× 最好（嚴格 32%、15k tokens、9 s、0.08 Wh/次），32× 掉到 22%；加檢索反而掉到 8–21%——知識庫對 45% 的輸入回 `matched`，但卡片場景對到真值的只有 1/210，相似案例標題含正確標籤的只有 4%，因為案例語料是由標籤產生的文字，跟 telemetry 的用語對不上。第一輪 0–8% 是量測本身的錯（prompt 列出的場景名被當成標籤、idle 基準取錯），修正後才是上面的數字。細節與對組員的建議見 `docs/agent-design.md`。
+**RAG 實測（`docs/kb-eval.md`，2026-09-30）**：`uv run --no-sync scripts/kb-eval.py all`（Spark 上 detach 跑，約 45 分鐘）——63 個知識庫的保留案例、1×–32× 六個壓縮比、兩組（只給 telemetry / 加上 `search_incident_knowledge` 的檢索結果），Nemotron 關 thinking、4 路併發，用知識庫自己的評分程式計分。結果：只給 telemetry 時 8× 最好（嚴格 32%、15k tokens、9 s、0.08 Wh/次），32× 掉到 22%；加檢索反而掉到 8–21%——知識庫對 45% 的輸入回 `matched`，但卡片場景對到真值的只有 1/210，相似案例標題含正確標籤的只有 4%，因為案例語料是由標籤產生的文字，跟 telemetry 的用語對不上。第一輪 0–8% 是量測本身的錯（prompt 列出的場景名被當成標籤、idle 基準取錯），修正後才是上面的數字。同樣 63 案在 8× 開 thinking（`docs/kb-eval-think.md`）：嚴格 10%、57 s、0.30 Wh/次——單發診斷開 thinking 不划算，thinking 的價值在迴圈裡選下一個工具。細節與對組員的建議見 `docs/agent-design.md`。
 
 ## 6. 錯誤注入與自我修復 drill
 

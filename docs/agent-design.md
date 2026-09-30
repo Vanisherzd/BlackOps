@@ -644,6 +644,16 @@ level. RCAEval's network loss and delay cases become "disk" (13 of 19 disk cases
 called disk); Cloud-OpsBench collapses onto `service_dns_resolution_failure` (7 of 15 at 8x). One more measured
 reason the destructive path keeps a deterministic key and a second reader: the model's confidence is not evidence.
 
+**Thinking does not buy a better one-shot diagnosis; it buys a slower, different wrong one.** Same 63 cases at 8x
+with thinking on (`docs/kb-eval-think.md`): strict 10 % against 32 %, scenario 44 % against 41 %, 57 s against 9 s,
+0.30 Wh against 0.08 Wh per diagnosis; per case, thinking-off alone was right 15 times, thinking-on alone once.
+Four of 63 answers spent the whole 4,000-token budget deliberating and returned nothing. The failure mode moved:
+on RCAEval's metric tables the deliberating model reads the CPU columns and answers "cpu" for 13 of 27 cases (19
+are disk faults; thinking-off answered "disk" for 20), and on AIOps logs it concludes "no fault" for 6 of 17. In
+the drills, thinking earns its cost because it chooses the next tool; on a single closed-set question it second-
+guesses the obvious prior. For the tier plan this is the measured version of "escalate on evidence, not by default":
+Tier-1 is the working point for a one-shot read, and Tier-2 is for the loop that gathers more evidence.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of this host's own past incidents, NemoClaw skill
 packaging, a telemetry-indexed rebuild of the knowledge pack. Add each only when a fault case needs it.

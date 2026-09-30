@@ -3,7 +3,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import tarfile
+from datetime import datetime, timedelta, timezone
+from statistics import mean
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -45,6 +48,7 @@ def _event(
 def _timestamp(row: dict[str, Any]) -> Any:
     for key in (
         "timestamp",
+        "@timestamp",
         "time",
         "ts",
         "datetime",
@@ -271,33 +275,158 @@ def _select_aiops_archive(record: dict[str, Any], root: Path) -> Path:
     return min(archives, key=lambda path: abs(int(path.stem[:10].replace("-", "")) - int(start.replace("-", "") or 0)))
 
 
+AIOPS_TZ_OFFSET = timedelta(hours=8)      # archive slices are named in UTC+8; ground-truth windows are UTC
+AIOPS_MARGIN = timedelta(seconds=300)
+AIOPS_BASELINE = timedelta(minutes=30)
+AIOPS_INFRA_KPIS = (        # answer-agnostic: the same KPIs for every case, never the ground truth's key_metrics
+    "pod_cpu_usage", "pod_memory_working_set_bytes", "pod_processes", "pod_fs_reads_bytes", "pod_fs_writes_bytes",
+    "pod_network_receive_bytes", "pod_network_transmit_bytes", "node_cpu_usage_rate", "node_memory_usage_rate",
+    "node_filesystem_usage_rate", "node_disk_written_bytes_total", "node_disk_read_bytes_total",
+    "node_network_receive_bytes_total", "node_network_transmit_bytes_total", "node_sockstat_TCP_inuse",
+)
+AIOPS_APM_METRICS = ("error_ratio", "server_error_ratio", "client_error_ratio", "timeout", "rrt", "rrt_max", "request")
+AIOPS_SYMPTOM_RE = re.compile(r"error|fail|exception|refused|timeout|timed out|killed|unavailable|panic|fatal|denied|"
+                              r"no such|not found|unreachable|\b5\d\d\b", re.I)
+
+
+def _iso(value: Any) -> datetime | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _series_value(kpi: str, rows: list[tuple[str, float]]) -> float | None:
+    """Mean of a gauge, or mean per-sample increase of a counter (cumulative *_total / *_bytes series)."""
+    values = [v for _, v in sorted(rows) if isinstance(v, (int, float))]
+    if not values:
+        return None
+    if re.search(r"_total$|_bytes$", kpi) and len(values) >= 2 and all(b >= a for a, b in zip(values, values[1:])):
+        return (values[-1] - values[0]) / (len(values) - 1)
+    return mean(values)
+
+
+def _ratio_line(name: str, before: float | None, after: float | None, peak: float | None = None) -> tuple[float, str]:
+    if before is None or after is None:
+        return 0.0, ""
+    ratio = (after + 1e-9) / (before + 1e-9)
+    change = abs(ratio - 1.0) if before > 0 else (1.0 if after > 0 else 0.0)
+    text = f"{name}: baseline {before:.4g} -> window {after:.4g}" + (f", peak {peak:.4g}" if peak is not None else "") + f" (x{ratio:.2f})"
+    return change, text
+
+
 def _load_aiops2025(record: dict[str, Any], root: Path, max_events: int) -> list[dict[str, Any]]:
+    """Evidence for one AIOps2025 case: the logs inside its time window, and every APM and infra series of that day
+    summarised as baseline (30 min before) versus window. One streaming pass over the day's archive.
+
+    The archive's hourly slices are named in UTC+8 while the case windows are UTC, so the slice is chosen by the
+    shifted hour; the first version of this loader read the twelve smallest slices of the day, which for a
+    twenty-minute fault window meant logs from the wrong hours with no timestamps to filter on."""
+    import pyarrow.compute as pc
+    import pyarrow.parquet as parquet
+
     archive = _select_aiops_archive(record, root)
-    key_metrics = [str(value).lower() for value in record.get("metadata", {}).get("key_metrics", [])]
-    with tarfile.open(archive, "r:gz") as tar:
-        members = [
-            member
-            for member in tar.getmembers()
-            if member.isfile() and member.name.endswith(".parquet") and "/._" not in member.name and not Path(member.name).name.startswith("._")
-        ]
-        members.sort(
-            key=lambda member: (
-                0 if "log-parquet" in member.name else 1 if any(metric in member.name.lower() for metric in key_metrics) else 2,
-                member.size,
-            )
-        )
-        selected = members[: min(12, len(members))]
-        per_source = max(1, max_events // max(len(selected), 1))
-        events: list[dict[str, Any]] = []
-        for member in selected:
+    metadata = record.get("metadata", {})
+    start, end = _iso(metadata.get("start_time")), _iso(metadata.get("end_time"))
+    if not start or not end:
+        raise EvidenceUnavailable(f"AIOps2025 case without a time window: {record.get('id')}")
+    lo, hi = start - AIOPS_MARGIN, end + AIOPS_MARGIN
+    base_lo = lo - AIOPS_BASELINE
+    hours = set()
+    cursor = lo
+    while cursor <= hi:
+        hours.add((cursor + AIOPS_TZ_OFFSET).strftime("%Y-%m-%d_%H-00-00"))
+        cursor += timedelta(hours=1)
+    hours.add((hi + AIOPS_TZ_OFFSET).strftime("%Y-%m-%d_%H-00-00"))
+    fmt = lambda t: t.strftime("%Y-%m-%dT%H:%M:%S") + "Z"        # the tables carry ISO Z strings; string order is time order
+    log_rows: list[dict[str, Any]] = []
+    apm_lines: list[tuple[float, str, str]] = []
+    infra_lines: list[tuple[float, str, str]] = []
+
+    def in_range(table, column, lo_s, hi_s):
+        col = pc.cast(table[column], "string")
+        return table.filter(pc.and_(pc.greater_equal(col, lo_s), pc.less_equal(col, hi_s)))
+
+    with tarfile.open(archive, "r|gz") as tar:
+        for member in tar:
+            name = member.name
+            if not member.isfile() or not name.endswith(".parquet") or "/._" in name or Path(name).name.startswith("._"):
+                continue
+            is_log = "log-parquet" in name and any(h in name for h in hours)
+            is_apm = "/apm/" in name
+            is_infra = ("/infra/infra_pod/" in name or "/infra/infra_node/" in name) and any(k in name for k in AIOPS_INFRA_KPIS)
+            if not (is_log or is_apm or is_infra):
+                continue
             extracted = tar.extractfile(member)
             if extracted is None:
                 continue
-            data = io.BytesIO(extracted.read())
-            kind = "log" if "log-parquet" in member.name else "trace" if "trace-parquet" in member.name else "metric"
-            events.extend(_parquet_events(data, kind=kind, source_name=f"{archive.name}:{member.name}", limit=per_source))
-        return events[:max_events]
+            table = parquet.read_table(io.BytesIO(extracted.read()))
+            if is_log:
+                if "@timestamp" not in table.column_names:
+                    continue
+                window = in_range(table, "@timestamp", fmt(lo), fmt(hi) + "~")
+                for row in window.select([c for c in ("@timestamp", "k8_pod", "k8_node_name", "message") if c in window.column_names]).to_pylist():
+                    log_rows.append(row)
+            elif is_apm:
+                rows = in_range(table, "time", fmt(base_lo), fmt(hi) + "~").to_pylist()
+                if not rows:
+                    continue
+                obj = f"{rows[0].get('object_type', 'apm')} {rows[0].get('object_id', Path(name).stem)}"
+                before = [r for r in rows if str(r.get("time")) < fmt(lo)]
+                during = [r for r in rows if str(r.get("time")) >= fmt(lo)]
+                parts, score = [], 0.0
+                for m in AIOPS_APM_METRICS:
+                    b = [r[m] for r in before if isinstance(r.get(m), (int, float))]
+                    d = [r[m] for r in during if isinstance(r.get(m), (int, float))]
+                    if b and d:
+                        change, _ = _ratio_line(m, mean(b), mean(d))
+                        score = max(score, change if m != "request" else 0.0)
+                        parts.append(f"{m} {mean(b):.4g}->{mean(d):.4g} (peak {max(d):.4g})")
+                if parts:
+                    apm_lines.append((score, obj, f"apm {obj}: " + "; ".join(parts)))
+            else:
+                kpi = next((k for k in AIOPS_INFRA_KPIS if k in name), Path(name).stem)
+                if kpi not in table.column_names:
+                    continue
+                obj_col = "pod" if "infra_pod" in name else "kubernetes_node"
+                rows = in_range(table, "time", fmt(base_lo), fmt(hi) + "~").select(["time", obj_col, kpi]).to_pylist()
+                per_obj: dict[str, tuple[list, list]] = {}
+                for r in rows:
+                    obj = str(r.get(obj_col) or "?")
+                    bucket = per_obj.setdefault(obj, ([], []))
+                    (bucket[0] if str(r["time"]) < fmt(lo) else bucket[1]).append((str(r["time"]), r[kpi]))
+                for obj, (b, d) in per_obj.items():
+                    before, during = _series_value(kpi, b), _series_value(kpi, d)
+                    peak = max((v for _, v in d if isinstance(v, (int, float))), default=None)
+                    change, text = _ratio_line(f"{kpi} {obj}", before, during, peak)
+                    if text:
+                        infra_lines.append((change, obj, text))
 
+    events: list[dict[str, Any]] = []
+    stamp = start.isoformat().replace("+00:00", "Z")
+    for change, obj, text in sorted(apm_lines, key=lambda x: -x[0]):
+        events.append(_event("metric", text, timestamp=stamp, service=obj, source_file="apm", fields={"change": round(change, 3)}))
+    for change, obj, text in sorted(infra_lines, key=lambda x: -x[0])[:80]:
+        events.append(_event("metric", text, timestamp=stamp, service=obj, source_file="infra", fields={"change": round(change, 3)}))
+    budget = max(200, max_events - len(events))
+    symptomatic = [r for r in log_rows if AIOPS_SYMPTOM_RE.search(str(r.get("message", "")))]
+    quiet = [r for r in log_rows if not AIOPS_SYMPTOM_RE.search(str(r.get("message", "")))]
+    keep = symptomatic[: int(budget * 0.7)]
+    step = max(1, len(quiet) // max(1, budget - len(keep)))
+    keep += quiet[::step][: budget - len(keep)]
+    keep.sort(key=lambda r: str(r.get("@timestamp")))
+    for r in keep:
+        service = str(r.get("k8_pod") or "")
+        node = r.get("k8_node_name")
+        events.append(_event("log", r.get("message"), timestamp=r.get("@timestamp"),
+                             service=f"{service}@{node}" if node and service else (service or node),
+                             source_file=f"{archive.name}:log", fields={}))
+    if not log_rows and not apm_lines:
+        raise EvidenceUnavailable(f"AIOps2025 archive {archive.name} has nothing inside {fmt(lo)}..{fmt(hi)}")
+    return events[:max_events]
 
 def load_evidence(record: dict[str, Any], datasets_root: str | Path, max_events: int = 2000) -> dict[str, Any]:
     root = Path(datasets_root).resolve()

@@ -43,7 +43,7 @@ MODEL = os.environ.get("SERVED_NAME", "edge-agent")
 RATIOS = [1, 2, 4, 8, 16, 32]
 OTHER_PER_SOURCE = {"AgenticOpsEval/AIOps2025": 6, "AgenticOpsEval/RCA100": 4, "Cloud-OpsBench": 10, "RCAEval": 8}
 TELEMETRY_CHARS = 60_000        # ~20k tokens of JSON-ish logs; the server's max_seq_len is 32k and the answer needs room
-EVENT_CHARS = 600
+EVENT_CHARS = 1500              # per event line; wide metric rows are pivoted instead (see render)
 SCENARIOS = ("disk_full (disk, inode or filesystem exhaustion, DiskPressure, runaway file writes); "
              "crashloop (container or pod crash or restart loop, OOMKilled, pod failure or kill, invalid command); "
              "dns (any name-resolution failure: service DNS, CoreDNS, registry DNS, host resolver); other (anything else)")
@@ -54,8 +54,9 @@ SYSTEM = ("You are the on-call SRE for a Kubernetes/Linux system with no interne
           "telemetry from one incident (logs, metrics, traces, alerts, Kubernetes state) and sometimes retrieved knowledge from "
           f"an offline knowledge base. Name the root cause. Scenario categories: {SCENARIOS}. Reply with exactly one JSON object and "
           'nothing else: {"predicted_scenario": "disk_full|crashloop|dns|other", "predicted_label": "<copy exactly one label from the '
-          'candidate list; only if none fits, a short phrase>", "confidence": <0..1>, "evidence": ["<at most 2 quotes from the telemetry, '
-          'each under 80 characters>"]}. predicted_scenario is the category; predicted_label is the fault itself, never a category name.')
+          'candidate list; only if none fits, a short phrase>", "predicted_service": "<the failing pod, service, node or component named '
+          'in the telemetry, or unknown>", "confidence": <0..1>, "evidence": ["<at most 2 quotes from the telemetry, each under 80 '
+          'characters>"]}. predicted_scenario is the category; predicted_label is the fault itself, never a category name.')
 
 
 def jsonl(path):
@@ -98,11 +99,16 @@ def prepare(args):
             skipped.append({"id": t["id"], "reason": str(e)[:200]})
             print(f"skip {t['id']}: {e}", flush=True)
             continue
+        window = dict(ev.get("window") or {})
+        if t["source"] == "RCAEval":                       # the injection time is part of the benchmark's input
+            f = RAW / t["source_path"] / "inject_time.txt"
+            if f.exists():
+                window["boundary"] = float(f.read_text().strip())
         for r, s in streams.items():
             c = compress_events(ev["events"], target_ratio=float(r), keywords=DEFAULT_KEYWORDS,
-                                window_start=ev["window"].get("start"), window_end=ev["window"].get("end"))
-            s.write(json.dumps({"id": t["id"], "compression_ratio": r, "telemetry": c["events"], "compression_metrics": c["metrics"]},
-                               ensure_ascii=False) + "\n")
+                                window_start=window.get("start"), window_end=window.get("end"))
+            s.write(json.dumps({"id": t["id"], "compression_ratio": r, "window": window, "telemetry": c["events"],
+                                "compression_metrics": c["metrics"]}, ensure_ascii=False) + "\n")
         print(f"[{i}/{len(cases)}] {t['id']} {t['source']} {t['scenario']} events={len(ev['events'])} {time.time() - t0:.1f}s", flush=True)
     for s in streams.values():
         s.close()
@@ -112,11 +118,63 @@ def prepare(args):
 
 # --- run ----------------------------------------------------------------------------------------------------------
 
-def render(events, budget):
-    """One line per event. Over budget, symptom-looking lines are kept first, then the rest in order, and the kept
-    lines go back into their original order: cutting from the head would drop the fault window of a chronological log."""
-    lines = []
+def wide_rows(events):
+    """Metric events whose message is a JSON row of many numeric columns (RCAEval's per-timestamp tables)."""
+    rows = []
     for e in events:
+        if e.get("kind") not in ("metrics", "metric"):
+            continue
+        m = str(e.get("message", ""))
+        if not m.startswith("{"):
+            continue
+        try:
+            d = json.loads(m)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(d, dict) and sum(isinstance(v, (int, float)) for v in d.values()) >= 5:
+            rows.append((e, d))
+    return rows
+
+
+def pivot(rows, boundary, top=30):
+    """Per-column before/after summary of wide metric rows. The renderer used to cut each 2 KB row at 600 characters,
+    which left the model the first dozen columns, all CPU, and it duly answered 'cpu'."""
+    import math
+    from statistics import mean
+    times = [d.get("time") for _, d in rows if isinstance(d.get("time"), (int, float))]
+    split = boundary if boundary is not None else (sorted(times)[len(times) // 2] if times else None)
+    cols = {}
+    for _, d in rows:
+        after = split is None or not isinstance(d.get("time"), (int, float)) or d["time"] >= split
+        for k, v in d.items():
+            if k == "time" or not isinstance(v, (int, float)):
+                continue
+            cols.setdefault(k, ([], []))[1 if after else 0].append(v)
+    out = []
+    for k, (b, a) in cols.items():
+        if not a or not b:
+            continue
+        mb, ma = mean(b), mean(a)
+        ratio = (ma + 1e-9) / (mb + 1e-9)
+        out.append((abs(math.log(max(ratio, 1e-9))), f"{k}: before {mb:.4g} -> after {ma:.4g}, peak {max(a):.4g} (x{ratio:.2f})"))
+    out.sort(reverse=True)
+    return [t for _, t in out[:top]]
+
+
+def render(events, budget, boundary=None):
+    """One line per event; wide metric rows become a per-column before/after pivot. Over budget, symptom-looking
+    lines are kept first, then the rest in order, and the kept lines go back into their original order: cutting from
+    the head would drop the fault window of a chronological log."""
+    lines = []
+    wide = wide_rows(events)
+    if wide:
+        n = len(wide)
+        lines.append(f"[metrics] per-column summary of {n} samples, before vs after the anomaly boundary, largest changes first:")
+        lines += ["  " + t for t in pivot(wide, boundary)]
+    wide_ids = {id(e) for e, _ in wide}
+    for e in events:
+        if id(e) in wide_ids:
+            continue
         msg = str(e.get("message", "")).replace("\n", " ")
         msg = msg if len(msg) <= EVENT_CHARS else msg[:EVENT_CHARS] + "…"
         head = " ".join(x for x in (f"[{e.get('kind')}]", str(e.get("timestamp") or e.get("first_timestamp") or ""), str(e.get("service") or "")) if x)
@@ -202,7 +260,7 @@ def knowledge_for(events, client):
 
 
 def prompt(case, row, knowledge, budget):
-    text, capped = render(row["telemetry"], budget)
+    text, capped = render(row["telemetry"], budget, (row.get("window") or {}).get("boundary"))
     parts = [f"Source system: {case['source']}.", f"Candidate fault labels: {json.dumps(vocab().get(case['source'], []))}"]
     if knowledge:
         parts.append("Retrieved knowledge (hypotheses from other incidents, not facts about this one):\n" + knowledge)
@@ -221,7 +279,7 @@ def parse_answer(text):
         except json.JSONDecodeError:
             pass
     pred = {}
-    for key in ("predicted_scenario", "predicted_label"):
+    for key in ("predicted_scenario", "predicted_label", "predicted_service"):
         k = re.search(rf'"{key}"\s*:\s*"([^"]*)"', text)
         if k:
             pred[key] = k.group(1)
@@ -294,7 +352,8 @@ def run(args):
             try:
                 pred, text, usage = ask(client, user, args.think)
                 rec.update(capped=capped, prompt_chars=len(user), predicted_label=pred.get("predicted_label"),
-                           predicted_scenario=pred.get("predicted_scenario"), confidence=pred.get("confidence"), raw=text[:300],
+                           predicted_scenario=pred.get("predicted_scenario"), predicted_service=pred.get("predicted_service"),
+                           confidence=pred.get("confidence"), raw=text[:400],
                            input_tokens=getattr(usage, "prompt_tokens", None), output_tokens=getattr(usage, "completion_tokens", None))
                 rec.pop("error", None)
                 break
@@ -353,6 +412,31 @@ def lenient_correct(expected, predicted):
     return any((e := _normalize(x)) and (e in p or (len(p) >= 3 and p in e)) for x in expected)
 
 
+def truth_services(t):
+    md = t.get("metadata") or {}
+    vals = []
+    for k in ("service", "instance", "root_cause_service", "fault_object"):
+        v = md.get(k)
+        vals += v if isinstance(v, list) else ([v] if v else [])
+    for e in md.get("entities") or []:
+        vals.append(e if isinstance(e, str) else (e.get("name") if isinstance(e, dict) else str(e)))
+    return [str(v) for v in vals if v]
+
+
+def service_correct(truth_vals, pred):
+    """The named component is the ground-truth service/pod/node, allowing pod suffixes and path prefixes."""
+    import re as _re
+    from blackout_ops_kb.evaluation import _normalize
+    p = _normalize(pred or "")
+    if len(p) < 3 or p in ("unknown", "none", "null"):
+        return False
+    for v in truth_vals:
+        toks = {_normalize(v)} | {_normalize(x) for x in _re.split(r"[/:,\s]+", str(v)) if len(x) >= 3}
+        if any(len(t) >= 3 and (t in p or p in t) for t in toks):
+            return True
+    return False
+
+
 def report(args):
     from blackout_ops_kb import infer_scenario
     from blackout_ops_kb.evaluation import _label_correct, score_predictions
@@ -378,6 +462,8 @@ def report(args):
             r["correct"] = _label_correct(t.get("labels") or [], r.get("predicted_label"))
             r["lenient"] = lenient_correct(t.get("labels") or [], r.get("predicted_label"))
             r["scenario_ok"] = r.get("predicted_scenario") == t["scenario"]
+            r["has_service"] = bool(truth_services(t))
+            r["service_ok"] = service_correct(truth_services(t), r.get("predicted_service")) if r["has_service"] else None
             r["truth_scenario"], r["source"] = t["scenario"], t["source"]
         scored = OUT / f"scored-{arm}{suffix}.jsonl"
         with open(scored, "w", encoding="utf-8") as f:
@@ -398,13 +484,15 @@ def report(args):
     lines += ["## Accuracy vs compression", "", "Strict = the pack's scorer (exact label, or the label inside the answer when it has 6+ characters). "
               "Lenient = strict, or truth label inside the answer, or answer inside the truth label. Wh = GPU energy above idle per diagnosis "
               f"at {args.concurrency}-way concurrency; solo = the same charged in full to each call (upper bound, sequential-equivalent).", "",
-              "| arm | ratio | cases | strict acc | lenient acc | scenario acc | avg prompt tokens | avg latency | Wh/diagnosis | Wh solo |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
+              "Service = the named failing component equals the ground-truth service/pod/node (cases that have one).", "",
+              "| arm | ratio | cases | strict acc | lenient acc | scenario acc | service acc | avg prompt tokens | avg latency | Wh/diagnosis | Wh solo |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for arm, rep in curves.items():
         for c in rep["curve"]:
             rs = [x for x in arms[arm] if x["compression_ratio"] == c["compression_ratio"]]
             lines.append(f"| {arm} | {c['compression_ratio']:g}x | {c['cases']} | {100 * c['diagnostic_accuracy']:.0f}% | "
                          f"{100 * sum(x['lenient'] for x in rs) / len(rs):.0f}% | {100 * sum(x['scenario_ok'] for x in rs) / len(rs):.0f}% | "
+                         f"{pct([x['service_ok'] for x in rs])} | "
                          f"{c['avg_input_tokens']:.0f} | {c['avg_latency_ms'] / 1000:.1f} s | {c['avg_energy_wh']:.3f} | "
                          f"{sum(x['energy_wh_solo'] for x in rs) / len(rs):.3f} |")
     for arm, rep in curves.items():
@@ -423,12 +511,13 @@ def report(args):
             b = [x["lenient"] for x in arms.get("rag", []) if x["truth_scenario"] == sc and x["compression_ratio"] == r]
             cells.append(f"{100 * sum(a) / len(a):.0f}% → {100 * sum(b) / len(b):.0f}%" if a and b else "-")
         lines.append(f"| {sc} | {n} | " + " | ".join(cells) + " |")
-    lines += ["", "## By source (over all ratios, none → rag)", "", "| source | n | strict | lenient | scenario |", "|---|---|---|---|---|"]
+    lines += ["", "## By source (over all ratios, none → rag)", "", "| source | n | strict | lenient | scenario | service |", "|---|---|---|---|---|---|"]
     for src in sorted({c["source"] for c in cases}):
         a = [x for x in arms.get("none", []) if x["source"] == src]
         b = [x for x in arms.get("rag", []) if x["source"] == src]
         lines.append(f"| {src} | {sum(1 for c in cases if c['source'] == src)} | {pct([x['correct'] for x in a])} → {pct([x['correct'] for x in b])} | "
-                     f"{pct([x['lenient'] for x in a])} → {pct([x['lenient'] for x in b])} | {pct([x['scenario_ok'] for x in a])} → {pct([x['scenario_ok'] for x in b])} |")
+                     f"{pct([x['lenient'] for x in a])} → {pct([x['lenient'] for x in b])} | {pct([x['scenario_ok'] for x in a])} → {pct([x['scenario_ok'] for x in b])} | "
+                     f"{pct([x['service_ok'] for x in a])} → {pct([x['service_ok'] for x in b])} |")
     if "rag" in arms:
         rag = arms["rag"]
         lines += ["", "## What retrieval did (rag arm)", ""]

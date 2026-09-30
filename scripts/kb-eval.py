@@ -54,7 +54,7 @@ SYSTEM = ("You are the on-call SRE for a Kubernetes/Linux system with no interne
           "telemetry from one incident (logs, metrics, traces, alerts, Kubernetes state) and sometimes retrieved knowledge from "
           f"an offline knowledge base. Name the root cause. Scenarios: {SCENARIOS}. Reply with exactly one JSON object and "
           'nothing else: {"predicted_scenario": "disk_full|crashloop|dns|other", "predicted_label": "<one candidate label, '
-          'or a short phrase if none fits>", "confidence": <0..1>, "evidence": ["<up to 3 short quotes from the telemetry>"]}')
+          'or a short phrase if none fits>", "confidence": <0..1>, "evidence": ["<at most 2 quotes from the telemetry, each under 80 characters>"]}')
 
 
 def jsonl(path):
@@ -112,18 +112,26 @@ def prepare(args):
 # --- run ----------------------------------------------------------------------------------------------------------
 
 def render(events, budget):
-    lines, n, capped = [], 0, False
+    """One line per event. Over budget, symptom-looking lines are kept first, then the rest in order, and the kept
+    lines go back into their original order: cutting from the head would drop the fault window of a chronological log."""
+    lines = []
     for e in events:
         msg = str(e.get("message", "")).replace("\n", " ")
         msg = msg if len(msg) <= EVENT_CHARS else msg[:EVENT_CHARS] + "…"
         head = " ".join(x for x in (f"[{e.get('kind')}]", str(e.get("timestamp") or e.get("first_timestamp") or ""), str(e.get("service") or "")) if x)
-        line = f"{head}: {msg}" + (f"  (x{e['count']})" if int(e.get("count") or 1) > 1 else "")
-        if n + len(line) > budget:
-            capped = True
-            break
-        lines.append(line)
-        n += len(line) + 1
-    return "\n".join(lines), capped
+        lines.append(f"{head}: {msg}" + (f"  (x{e['count']})" if int(e.get("count") or 1) > 1 else ""))
+    if sum(len(l) + 1 for l in lines) <= budget:
+        return "\n".join(lines), False
+    keep, n = set(), 0
+    for pass_symptoms in (True, False):
+        for i, l in enumerate(lines):
+            if i in keep or bool(SYMPTOM_RE.search(l)) != pass_symptoms:
+                continue
+            if n + len(l) + 1 > budget:
+                continue
+            keep.add(i)
+            n += len(l) + 1
+    return "\n".join(lines[i] for i in sorted(keep)), True
 
 
 def symptom_query(events):
@@ -185,20 +193,32 @@ def prompt(case, row, knowledge, budget):
     return "\n\n".join(parts), capped
 
 
-def ask(client, user, think):
-    r = client.chat.completions.create(
-        model=MODEL, temperature=0, max_tokens=4000 if think else 400,
-        messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
-        extra_body={"chat_template_kwargs": {"enable_thinking": bool(think)}})
-    text = (r.choices[0].message.content or "").strip()
-    pred = {}
+def parse_answer(text):
+    """The JSON object, or what can be salvaged from one the output limit cut off (scenario and label come first)."""
     m = re.search(r"\{.*\}", text, re.S)
     if m:
         try:
-            pred = json.loads(m.group(0))
+            return json.loads(m.group(0))
         except json.JSONDecodeError:
-            pred = {}
-    return pred, text, r.usage
+            pass
+    pred = {}
+    for key in ("predicted_scenario", "predicted_label"):
+        k = re.search(rf'"{key}"\s*:\s*"([^"]*)"', text)
+        if k:
+            pred[key] = k.group(1)
+    k = re.search(r'"confidence"\s*:\s*([0-9.]+)', text)
+    if k:
+        pred["confidence"] = float(k.group(1))
+    return pred
+
+
+def ask(client, user, think):
+    r = client.chat.completions.create(
+        model=MODEL, temperature=0, max_tokens=4000 if think else 600,
+        messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
+        extra_body={"chat_template_kwargs": {"enable_thinking": bool(think)}})
+    text = (r.choices[0].message.content or "").strip()
+    return parse_answer(text), text, r.usage
 
 
 class PowerSampler(threading.Thread):
@@ -317,6 +337,8 @@ def report(args):
         idle = energy(recs, power)
         for r in recs:
             t = truths[r["id"]]
+            if r.get("predicted_label") is None and r.get("raw"):
+                r.update({k: v for k, v in parse_answer(r["raw"]).items() if k in ("predicted_label", "predicted_scenario")})
             r["correct"] = _label_correct(t.get("labels") or [], r.get("predicted_label"))
             r["scenario_ok"] = r.get("predicted_scenario") == t["scenario"]
             r["truth_scenario"], r["source"] = t["scenario"], t["source"]

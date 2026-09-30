@@ -52,9 +52,10 @@ SYMPTOM_RE = re.compile(r"\b(error|fail(ed|ure|ing)?|fatal|exception|refused|tim
 HEADER_RE = re.compile(r"^(NAME\s|Restart Count: 0|Liveness:|Readiness:)")     # kubectl table headers and healthy probes are not symptoms
 SYSTEM = ("You are the on-call SRE for a Kubernetes/Linux system with no internet and no colleague to ask. You get compressed "
           "telemetry from one incident (logs, metrics, traces, alerts, Kubernetes state) and sometimes retrieved knowledge from "
-          f"an offline knowledge base. Name the root cause. Scenarios: {SCENARIOS}. Reply with exactly one JSON object and "
-          'nothing else: {"predicted_scenario": "disk_full|crashloop|dns|other", "predicted_label": "<one candidate label, '
-          'or a short phrase if none fits>", "confidence": <0..1>, "evidence": ["<at most 2 quotes from the telemetry, each under 80 characters>"]}')
+          f"an offline knowledge base. Name the root cause. Scenario categories: {SCENARIOS}. Reply with exactly one JSON object and "
+          'nothing else: {"predicted_scenario": "disk_full|crashloop|dns|other", "predicted_label": "<copy exactly one label from the '
+          'candidate list; only if none fits, a short phrase>", "confidence": <0..1>, "evidence": ["<at most 2 quotes from the telemetry, '
+          'each under 80 characters>"]}. predicted_scenario is the category; predicted_label is the fault itself, never a category name.')
 
 
 def jsonl(path):
@@ -168,11 +169,29 @@ def vocab():
     return _vocab
 
 
-def knowledge_for(events):
+ONE_LINER = ("You are an SRE. From the telemetry, write ONE line (under 25 words) naming the failing component and its symptom, "
+             "in the words an operator would type into an incident search. No JSON, no explanation.")
+
+
+def one_liner(client, events):
+    """The query the agent itself would type: a one-line symptom, written by the model from the telemetry. Measured
+    against raw telemetry lines and keyword bags on the ratio-8 inputs, it is the only query that clears the pack's
+    coverage bar at all (21/63 vs 1-6/63); none of them surfaces the true label in the top-3 cases more than 3/63."""
+    text, _ = render(events, 40_000)
+    t0 = time.time()
+    r = client.chat.completions.create(model=MODEL, temperature=0, max_tokens=60,
+                                       messages=[{"role": "system", "content": ONE_LINER}, {"role": "user", "content": text}],
+                                       extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+    line = ((r.choices[0].message.content or "").strip().splitlines() or [""])[0][:200]
+    return line, int(1000 * (time.time() - t0)), getattr(r.usage, "prompt_tokens", None)
+
+
+def knowledge_for(events, client):
     import agent
-    q = symptom_query(events)
+    q, ms, toks = one_liner(client, events)
+    q = q or symptom_query(events)[:240]
     text = agent.search_incident_knowledge(q)
-    meta = {"query_chars": len(q)}
+    meta = {"query": q, "query_chars": len(q), "summary_ms": ms, "summary_tokens": toks}
     try:
         b = agent._kb.retrieve({"query": q}, case_k=3, solution_k=3)
         meta.update(status=b["knowledge_match"]["status"], coverage=b["knowledge_match"]["best_solution_coverage"], scenario=b["scenario"],
@@ -267,7 +286,7 @@ def run(args):
     def work(job):
         arm, r, row = job
         case = cases[row["id"]]
-        knowledge, meta = knowledge_for(row["telemetry"]) if arm == "rag" else (None, {})
+        knowledge, meta = knowledge_for(row["telemetry"], client) if arm == "rag" else (None, {})
         rec = dict(id=row["id"], compression_ratio=float(r), arm=arm, think=int(bool(args.think)), retrieval=meta)
         t0 = time.time()
         for budget in (TELEMETRY_CHARS, TELEMETRY_CHARS // 2, TELEMETRY_CHARS // 4):   # shrink if the server says too long
@@ -302,16 +321,20 @@ def run(args):
 # --- report -------------------------------------------------------------------------------------------------------
 
 def energy(recs, power):
-    """Wh per call: each 1 s power sample above the idle draw is split among the calls in flight at that moment."""
+    """Wh per call. energy_wh: each 1 s sample above the idle draw is split among the calls in flight at that moment
+    (the cost per diagnosis at this concurrency). energy_wh_solo: the same sample charged in full to every call in
+    flight (what one diagnosis would cost alone; an upper bound). Idle = the lowest sample, which the sampler takes
+    before the first call; a percentile does not work because the GPU never idles during the run."""
     for r in recs:
-        r["energy_wh"] = 0.0
+        r["energy_wh"] = r["energy_wh_solo"] = 0.0
     if not power:
         return None
-    idle = sorted(w for _, w in power)[len(power) // 20]          # 5th percentile: the box doing nothing
+    idle = min(w for _, w in power)
     for t, w in power:
         inflight = [r for r in recs if r["t0"] <= t <= r["t1"]]
         for r in inflight:
             r["energy_wh"] += max(0.0, w - idle) / 3600.0 / len(inflight)
+            r["energy_wh_solo"] += max(0.0, w - idle) / 3600.0
     return idle
 
 
@@ -320,7 +343,18 @@ def pct(vals):
     return f"{100 * sum(vals) / len(vals):.0f}% ({sum(vals)}/{len(vals)})" if vals else "-"
 
 
+def lenient_correct(expected, predicted):
+    """Strict match, or the truth label inside the prediction, or the prediction (3+ chars) inside the truth label: what
+    a human grader would accept ("disk_full" for "disk", "pod failure on cartservice" for "pod failure")."""
+    from blackout_ops_kb.evaluation import _label_correct, _normalize
+    if _label_correct(expected, predicted):
+        return True
+    p = _normalize(predicted or "")
+    return any((e := _normalize(x)) and (e in p or (len(p) >= 3 and p in e)) for x in expected)
+
+
 def report(args):
+    from blackout_ops_kb import infer_scenario
     from blackout_ops_kb.evaluation import _label_correct, score_predictions
     truths = {t["id"]: t for t in jsonl(GT)}
     cases = json.loads((OUT / "cases.json").read_text())
@@ -339,7 +373,10 @@ def report(args):
             t = truths[r["id"]]
             if r.get("predicted_label") is None and r.get("raw"):
                 r.update({k: v for k, v in parse_answer(r["raw"]).items() if k in ("predicted_label", "predicted_scenario")})
+            if r.get("predicted_scenario") not in ("disk_full", "crashloop", "dns", "other"):     # a label in the category slot
+                r["predicted_scenario"] = infer_scenario(r.get("predicted_scenario"), r.get("predicted_label"))
             r["correct"] = _label_correct(t.get("labels") or [], r.get("predicted_label"))
+            r["lenient"] = lenient_correct(t.get("labels") or [], r.get("predicted_label"))
             r["scenario_ok"] = r.get("predicted_scenario") == t["scenario"]
             r["truth_scenario"], r["source"] = t["scenario"], t["source"]
         scored = OUT / f"scored-{arm}{suffix}.jsonl"
@@ -358,34 +395,40 @@ def report(args):
              f"plus what the agent's `search_incident_knowledge` returns for the symptoms in it. Same closed-set label vocabulary "
              f"(train split of each source) for both arms; scored by the pack's own scorer (`blackout_ops_kb.evaluation`). Energy = "
              f"nvidia-smi power at 1 Hz minus idle{f' ({idle:.1f} W)' if idle else ''}, shared among concurrent calls.", ""]
-    lines += ["## Accuracy vs compression", "", "| arm | ratio | cases | diagnostic acc | scenario acc | avg prompt tokens | avg latency | avg Wh/diagnosis |",
-              "|---|---|---|---|---|---|---|---|"]
+    lines += ["## Accuracy vs compression", "", "Strict = the pack's scorer (exact label, or the label inside the answer when it has 6+ characters). "
+              "Lenient = strict, or truth label inside the answer, or answer inside the truth label. Wh = GPU energy above idle per diagnosis "
+              f"at {args.concurrency}-way concurrency; solo = the same charged in full to each call (upper bound, sequential-equivalent).", "",
+              "| arm | ratio | cases | strict acc | lenient acc | scenario acc | avg prompt tokens | avg latency | Wh/diagnosis | Wh solo |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
     for arm, rep in curves.items():
         for c in rep["curve"]:
+            rs = [x for x in arms[arm] if x["compression_ratio"] == c["compression_ratio"]]
             lines.append(f"| {arm} | {c['compression_ratio']:g}x | {c['cases']} | {100 * c['diagnostic_accuracy']:.0f}% | "
-                         f"{100 * (c['scenario_accuracy'] or 0):.0f}% | {c['avg_input_tokens']:.0f} | {c['avg_latency_ms'] / 1000:.1f} s | {c['avg_energy_wh']:.3f} |")
+                         f"{100 * sum(x['lenient'] for x in rs) / len(rs):.0f}% | {100 * sum(x['scenario_ok'] for x in rs) / len(rs):.0f}% | "
+                         f"{c['avg_input_tokens']:.0f} | {c['avg_latency_ms'] / 1000:.1f} s | {c['avg_energy_wh']:.3f} | "
+                         f"{sum(x['energy_wh_solo'] for x in rs) / len(rs):.3f} |")
     for arm, rep in curves.items():
         sel = rep.get("selected_working_point")
         if sel:
             lines.append(f"\nWorking point ({arm}, {rep['selection_rule']}): {sel['compression_ratio']:g}x, {100 * sel['diagnostic_accuracy']:.0f}%, "
                          f"{sel['avg_input_tokens']:.0f} tokens.")
     ratios = sorted({r["compression_ratio"] for recs in arms.values() for r in recs})
-    lines += ["", "## By scenario (diagnostic accuracy, none → rag)", "", "| scenario | n | " + " | ".join(f"{r:g}x" for r in ratios) + " |",
+    lines += ["", "## By scenario (lenient accuracy, none → rag)", "", "| scenario | n | " + " | ".join(f"{r:g}x" for r in ratios) + " |",
               "|---|---|" + "---|" * len(ratios)]
     for sc in ("disk_full", "crashloop", "dns", "other"):
         n = sum(1 for c in cases if c["scenario"] == sc)
         cells = []
         for r in ratios:
-            a = [x["correct"] for x in arms.get("none", []) if x["truth_scenario"] == sc and x["compression_ratio"] == r]
-            b = [x["correct"] for x in arms.get("rag", []) if x["truth_scenario"] == sc and x["compression_ratio"] == r]
+            a = [x["lenient"] for x in arms.get("none", []) if x["truth_scenario"] == sc and x["compression_ratio"] == r]
+            b = [x["lenient"] for x in arms.get("rag", []) if x["truth_scenario"] == sc and x["compression_ratio"] == r]
             cells.append(f"{100 * sum(a) / len(a):.0f}% → {100 * sum(b) / len(b):.0f}%" if a and b else "-")
         lines.append(f"| {sc} | {n} | " + " | ".join(cells) + " |")
-    lines += ["", "## By source (diagnostic accuracy over all ratios, none → rag)", "", "| source | n | none | rag | scenario acc none → rag |", "|---|---|---|---|---|"]
+    lines += ["", "## By source (over all ratios, none → rag)", "", "| source | n | strict | lenient | scenario |", "|---|---|---|---|---|"]
     for src in sorted({c["source"] for c in cases}):
         a = [x for x in arms.get("none", []) if x["source"] == src]
         b = [x for x in arms.get("rag", []) if x["source"] == src]
-        lines.append(f"| {src} | {sum(1 for c in cases if c['source'] == src)} | {pct([x['correct'] for x in a])} | {pct([x['correct'] for x in b])} | "
-                     f"{pct([x['scenario_ok'] for x in a])} → {pct([x['scenario_ok'] for x in b])} |")
+        lines.append(f"| {src} | {sum(1 for c in cases if c['source'] == src)} | {pct([x['correct'] for x in a])} → {pct([x['correct'] for x in b])} | "
+                     f"{pct([x['lenient'] for x in a])} → {pct([x['lenient'] for x in b])} | {pct([x['scenario_ok'] for x in a])} → {pct([x['scenario_ok'] for x in b])} |")
     if "rag" in arms:
         rag = arms["rag"]
         lines += ["", "## What retrieval did (rag arm)", ""]
@@ -393,11 +436,13 @@ def report(args):
         target = [x for x in rag if x["truth_scenario"] != "other"]
         card_ok = [x["retrieval"].get("scenario") == x["truth_scenario"] for x in target]
         title_hit = [any(_label_correct(truths[x["id"]]["labels"], [t]) for t in x["retrieval"].get("case_titles", [])) for x in rag]
-        lines += [f"- `matched` (a remediation card cleared the 0.34 coverage bar): {pct(matched)} of inputs.",
+        ms = [x["retrieval"].get("summary_ms") for x in rag if x["retrieval"].get("summary_ms")]
+        lines += [f"- Query = a one-line symptom the model wrote from the telemetry (median {sorted(ms)[len(ms) // 2] / 1000:.1f} s extra per diagnosis)." if ms else "",
+                  f"- `matched` (a remediation card cleared the 0.34 coverage bar): {pct(matched)} of inputs.",
                   f"- Retrieval's scenario guess equals the truth scenario, target scenarios only: {pct(card_ok)}.",
                   f"- One of the three similar historical cases carries the true label in its title: {pct(title_hit)} of inputs.",
-                  f"- Gain from RAG when a similar case carried the label: {pct([x['correct'] for x, h in zip(rag, title_hit) if h])} vs "
-                  f"{pct([x['correct'] for x, h in zip(rag, title_hit) if not h])} when none did."]
+                  f"- Lenient accuracy when a similar case carried the label: {pct([x['lenient'] for x, h in zip(rag, title_hit) if h])} vs "
+                  f"{pct([x['lenient'] for x, h in zip(rag, title_hit) if not h])} when none did."]
     errs = {arm: sum(1 for x in recs if x.get("error")) for arm, recs in arms.items()}
     capped = {arm: sum(1 for x in recs if x.get("capped")) for arm, recs in arms.items()}
     lines += ["", f"Errors: {errs}. Prompts truncated to the window: {capped}. Predictions and the power trace: `logs/kb-eval/` on the Spark; "

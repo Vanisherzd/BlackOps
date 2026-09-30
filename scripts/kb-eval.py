@@ -89,8 +89,13 @@ def prepare(args):
     INPUTS.mkdir(parents=True, exist_ok=True)
     cases = select_cases()
     (OUT / "cases.json").write_text(json.dumps([{"id": t["id"], "scenario": t["scenario"], "source": t["source"]} for t in cases], indent=1))
-    if args.ids:                                   # top up specific cases into existing input files (after a loader fix)
+    if args.ids:                                   # redo specific cases inside existing input files (after a loader fix)
         cases = [t for t in cases if t["id"] in args.ids]
+        for r in args.ratios:
+            f = INPUTS / f"ratio_{r}.jsonl"
+            if f.exists():
+                kept = [line for line in f.read_text(encoding="utf-8").splitlines() if line and json.loads(line)["id"] not in args.ids]
+                f.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
     streams = {r: open(INPUTS / f"ratio_{r}.jsonl", "a" if args.ids else "w", encoding="utf-8") for r in args.ratios}
     skipped = []
     for i, t in enumerate(cases, 1):
@@ -109,12 +114,17 @@ def prepare(args):
         # Baseline-vs-window metric summaries (AIOps loader) are already a compressed representation, so the ratio
         # applies to the raw streams around them; otherwise the compressor's keyword bias drops the infra lines first.
         summary = [e for e in ev["events"] if e.get("kind") == "metric" and e.get("source_file") in ("apm", "infra")]
-        raw = [e for e in ev["events"] if e not in summary]
+        # Wide metric rows (one JSON row per timestamp) are thinned uniformly in time, 1 in <ratio>: the compressor
+        # scores them all alike and keeps the first rows in the byte budget, which for RCAEval meant only samples
+        # from before the injection, so the before/after pivot compared two slices of the quiet period.
+        wide = [e for e in ev["events"] if e not in summary and e.get("kind") in ("metrics", "metric") and str(e.get("message", "")).startswith("{\"time\"")]
+        raw = [e for e in ev["events"] if e not in summary and e not in wide]
         for r, s in streams.items():
             c = compress_events(raw, target_ratio=float(r), keywords=DEFAULT_KEYWORDS,
-                                window_start=window.get("start"), window_end=window.get("end"))
-            s.write(json.dumps({"id": t["id"], "compression_ratio": r, "window": window, "telemetry": summary + c["events"],
-                                "compression_metrics": dict(c["metrics"], summary_events=len(summary))}, ensure_ascii=False) + "\n")
+                                window_start=window.get("start"), window_end=window.get("end")) if raw else {"events": [], "metrics": {}}
+            thinned = wide[::max(1, int(r))]
+            s.write(json.dumps({"id": t["id"], "compression_ratio": r, "window": window, "telemetry": summary + thinned + c["events"],
+                                "compression_metrics": dict(c["metrics"], summary_events=len(summary), wide_rows=len(thinned))}, ensure_ascii=False) + "\n")
         print(f"[{i}/{len(cases)}] {t['id']} {t['source']} {t['scenario']} events={len(ev['events'])} {time.time() - t0:.1f}s", flush=True)
     for s in streams.values():
         s.close()

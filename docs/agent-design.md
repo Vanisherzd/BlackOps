@@ -654,6 +654,53 @@ the drills, thinking earns its cost because it chooses the next tool; on a singl
 guesses the obvious prior. For the tier plan this is the measured version of "escalate on evidence, not by default":
 Tier-1 is the working point for a one-shot read, and Tier-2 is for the loop that gathers more evidence.
 
+### The inputs were broken too (2026-09-30, late; run 4 is the reference)
+
+The numbers above came from prompts that starved the model, and the team lead's "too low to be right" was correct:
+
+- **AIOps2025 (17 of 63 cases) saw the wrong hour.** The pack's loader took the twelve smallest hourly slices of the
+  day instead of the fault window, the slices are named in UTC+8 while the windows are UTC, and the `@timestamp`
+  column was not recognised, so the compressor's time filter never ran. Every AIOps prompt held logs from other
+  hours. Rewritten (`kb/src/blackout_ops_kb/evidence.py`): one streaming pass, the slices covering the window, only
+  in-window log lines (symptom lines first), and every APM series plus a fixed set of infra KPIs summarised as
+  baseline (30 min before) versus window, never using the ground truth's key_metrics. Three cases whose window
+  falls after 16:00Z live in the next day's archive; the selector now uses the UTC+8 calendar day.
+- **RCAEval (27 of 63) lost its evidence twice.** The renderer cut each 58-column metric row at 600 characters,
+  leaving the CPU columns; and at any ratio above 1x the compressor kept the first rows in the byte budget, all from
+  before the injection, so a before/after pivot compared two slices of the quiet period. Wide rows are now pivoted
+  per column around the injection boundary and thinned uniformly in time, 1 in <ratio>.
+- **The metric that fits these benchmarks was missing.** RCAEval's label "disk" is not observable in its metrics
+  (a disk stress shows as CPU and latency on the injected service); the benchmark's own task is naming the service.
+  The prompt now asks for the failing component and the report scores it against the service, pod or node.
+
+Run 4, telemetry only, strict label / scenario / service accuracy, prompt tokens, latency, Wh per diagnosis:
+
+| ratio | strict | scenario | service | tokens | latency | Wh |
+|---|---|---|---|---|---|---|
+| 1x | 22 % | 41 % | 30 % | 20.1k | 12.2 s | 0.100 |
+| 8x | 24 % | 38 % | 30 % | 14.4k | 9.9 s | 0.081 |
+| 16x | 22 % | 33 % | 30 % | 10.6k | 7.9 s | 0.068 |
+| 32x | 22 % | 35 % | 24 % | 8.8k | 8.0 s | 0.060 |
+
+What changes in the reading above. The curve is flat: compression to 16x costs nothing on any metric and saves
+half the tokens and a third of the energy; run 2's "peak at 8x" was the model guessing "disk" on CPU-only RCAEval
+rows, where 19 of 27 truths happen to be disk. On the 35 target-scenario cases run 4 reads 37 % strict, 37 %
+scenario, 31 % service at 8x. Per source at 8x: RCAEval names the injected service 10 of 27 times (42 % over all
+ratios, up from 10 % with the broken pivot), AIOps 6 of 17, Cloud-OpsBench 3 of 15, RCA100 0 of 4. Retrieval still
+hurts (13 % strict, 22 % scenario, 19 % service at 8x against 24 / 38 / 30): the pack's cards clear the coverage bar
+on 37 % of inputs and are right about the scenario on 2 %. The thinking comparison (run 3) was measured on the
+broken inputs and has not been repeated.
+
+What limits the number now is no longer the harness. Half the AIOps cases show their fault only as the entry
+point's errors (frontend error ratio 0 to 7 when a backend pod dies), and the loader still carries no traces, which
+is where the failing edge is visible; the 28 "other" cases carry scheduling and quota faults a one-shot reading of
+logs and metrics cannot name; and a 3B-active model answering once, without tools, is the weakest form of the agent.
+Next round, in order of expected return: per-operation trace summaries in the AIOps loader (about 1.5 h plus a
+45-min run), the telemetry-indexed rebuild of the pack so retrieval stops hurting (2–3 h plus a run), and an agentic
+variant that lets the model pull one more series before answering (a day or two). The thinking pass should be
+re-measured on the fixed inputs (25 min) before any tier claim uses it.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of this host's own past incidents, NemoClaw skill
-packaging, a telemetry-indexed rebuild of the knowledge pack. Add each only when a fault case needs it.
+packaging, a telemetry-indexed rebuild of the knowledge pack, trace summaries in the AIOps loader. Add each only when
+a fault case needs it.

@@ -258,7 +258,7 @@ Agent 端是一個唯讀工具 `search_incident_knowledge`（`scripts/agent.py`�
 
 重建（只在有 raw 的機器）：`cd kb && PYTHONPATH=src python3 -m blackout_ops_kb build --datasets-root ../datasets/raw --out-dir artifacts && python3 scripts/build_linux_bundle.py`。
 
-**RAG 實測（`docs/kb-eval.md`，2026-09-30）**：`uv run --no-sync scripts/kb-eval.py all`（Spark 上 detach 跑，約 45 分鐘）——63 個知識庫的保留案例、1×–32× 六個壓縮比、兩組（只給 telemetry / 加上 `search_incident_knowledge` 的檢索結果），Nemotron 關 thinking、4 路併發，用知識庫自己的評分程式計分。結果：只給 telemetry 時 8× 最好（嚴格 32%、15k tokens、9 s、0.08 Wh/次），32× 掉到 22%；加檢索反而掉到 8–21%——知識庫對 45% 的輸入回 `matched`，但卡片場景對到真值的只有 1/210，相似案例標題含正確標籤的只有 4%，因為案例語料是由標籤產生的文字，跟 telemetry 的用語對不上。第一輪 0–8% 是量測本身的錯（prompt 列出的場景名被當成標籤、idle 基準取錯），修正後才是上面的數字。同樣 63 案在 8× 開 thinking（`docs/kb-eval-think.md`）：嚴格 10%、57 s、0.30 Wh/次——單發診斷開 thinking 不划算，thinking 的價值在迴圈裡選下一個工具。細節與對組員的建議見 `docs/agent-design.md`。
+**RAG 實測（`docs/kb-eval.md`，2026-09-30，run 4 為準）**：`uv run --no-sync scripts/kb-eval.py all`（Spark 上 detach 跑，約 50 分鐘）——63 個知識庫的保留案例、1×–32× 六個壓縮比、兩組（只給 telemetry / 加上 `search_incident_knowledge` 的檢索結果），Nemotron 關 thinking、4 路併發，用知識庫自己的評分程式計分，另加「服務定位正確率」（這些 benchmark 原本的指標）。前三輪的輸入有問題（prompt 把場景名當標籤；AIOps 讀錯小時且無時間戳；RCAEval 指標列被切到只剩 CPU、壓縮後只剩注入前的樣本），run 4 修完：只給 telemetry 時 1×–32× 嚴格 22–24%、場景 33–41%、服務 24–35%，曲線是平的——壓到 16× 不掉分、tokens 減半、能耗少三分之一（8×：14.4k tokens、9.9 s、0.08 Wh/次）；三個目標場景 35 案在 8× 為 37% / 37% / 31%。加檢索仍是負的（8×：13% / 22% / 19%）：知識庫對 37% 的輸入回 `matched`，卡片場景對到真值只有 2%，案例語料是標籤生成的文字，跟 telemetry 用語對不上。開 thinking 那輪（`docs/kb-eval-think.md`）是在壞輸入上量的，待重量。細節、每輪修了什麼、下一輪建議見 `docs/agent-design.md`。
 
 ## 6. 錯誤注入與自我修復 drill
 

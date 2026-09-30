@@ -89,7 +89,9 @@ def prepare(args):
     INPUTS.mkdir(parents=True, exist_ok=True)
     cases = select_cases()
     (OUT / "cases.json").write_text(json.dumps([{"id": t["id"], "scenario": t["scenario"], "source": t["source"]} for t in cases], indent=1))
-    streams = {r: open(INPUTS / f"ratio_{r}.jsonl", "w", encoding="utf-8") for r in args.ratios}
+    if args.ids:                                   # top up specific cases into existing input files (after a loader fix)
+        cases = [t for t in cases if t["id"] in args.ids]
+    streams = {r: open(INPUTS / f"ratio_{r}.jsonl", "a" if args.ids else "w", encoding="utf-8") for r in args.ratios}
     skipped = []
     for i, t in enumerate(cases, 1):
         t0 = time.time()
@@ -555,7 +557,9 @@ def main():
     ap.add_argument("--arms", default="none,rag")
     ap.add_argument("--think", type=int, default=0)
     ap.add_argument("--concurrency", type=int, default=4)
+    ap.add_argument("--ids", default="", help="prepare only these case ids, appending to the existing inputs")
     a = ap.parse_args()
+    a.ids = {x for x in a.ids.split(",") if x}
     a.ratios = [int(x) for x in a.ratios.split(",") if x]
     a.arms = [x for x in a.arms.split(",") if x]
     OUT.mkdir(parents=True, exist_ok=True)

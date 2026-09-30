@@ -264,8 +264,11 @@ def _load_itbench(record: dict[str, Any], root: Path, max_events: int) -> list[d
 
 
 def _select_aiops_archive(record: dict[str, Any], root: Path) -> Path:
+    """The daily archives run from 16:00Z to 15:59Z (a UTC+8 calendar day), so a window after 16:00Z lives in the
+    archive named for the next date."""
     archive_root = root / "AgenticOpsEval" / "AIOps2025"
-    start = str(record.get("metadata", {}).get("start_time") or "")[:10]
+    start_dt = _iso(record.get("metadata", {}).get("start_time"))
+    start = (start_dt + AIOPS_TZ_OFFSET).strftime("%Y-%m-%d") if start_dt else str(record.get("metadata", {}).get("start_time") or "")[:10]
     exact = archive_root / f"{start}.tar.gz"
     if exact.exists():
         return exact

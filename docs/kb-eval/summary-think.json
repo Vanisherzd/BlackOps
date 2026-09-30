@@ -1,0 +1,63 @@
+{
+ "curves": {
+  "none": {
+   "prediction_rows": 63,
+   "unknown_prediction_ids": [],
+   "curve": [
+    {
+     "compression_ratio": 8.0,
+     "cases": 63,
+     "diagnostic_accuracy": 0.095238,
+     "scenario_accuracy": 0.444444,
+     "avg_input_tokens": 15095.571,
+     "avg_latency_ms": 57454.873,
+     "avg_energy_wh": 0.299435
+    }
+   ],
+   "selected_working_point": {
+    "compression_ratio": 8.0,
+    "cases": 63,
+    "diagnostic_accuracy": 0.095238,
+    "scenario_accuracy": 0.444444,
+    "avg_input_tokens": 15095.571,
+    "avg_latency_ms": 57454.873,
+    "avg_energy_wh": 0.299435
+   },
+   "selection_rule": "lowest average input tokens within 1 percentage point of best diagnostic accuracy"
+  },
+  "rag": {
+   "prediction_rows": 63,
+   "unknown_prediction_ids": [],
+   "curve": [
+    {
+     "compression_ratio": 8.0,
+     "cases": 63,
+     "diagnostic_accuracy": 0.063492,
+     "scenario_accuracy": 0.412698,
+     "avg_input_tokens": 15344.635,
+     "avg_latency_ms": 54464.81,
+     "avg_energy_wh": 0.298047
+    }
+   ],
+   "selected_working_point": {
+    "compression_ratio": 8.0,
+    "cases": 63,
+    "diagnostic_accuracy": 0.063492,
+    "scenario_accuracy": 0.412698,
+    "avg_input_tokens": 15344.635,
+    "avg_latency_ms": 54464.81,
+    "avg_energy_wh": 0.298047
+   },
+   "selection_rule": "lowest average input tokens within 1 percentage point of best diagnostic accuracy"
+  }
+ },
+ "errors": {
+  "none": 0,
+  "rag": 0
+ },
+ "capped": {
+  "none": 5,
+  "rag": 5
+ },
+ "idle_w": 14.71
+}

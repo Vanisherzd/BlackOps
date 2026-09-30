@@ -1,0 +1,12 @@
+{
+  "platform": "kubernetes",
+  "namespace": "otel-demo",
+  "resource": "pod/product-catalog-7c7f8b68dc-prcsr",
+  "status": "CrashLoopBackOff",
+  "restart_count": 18,
+  "last_termination": {
+    "reason": "Error",
+    "exit_code": 127
+  },
+  "previous_log": "exec /app/product-catalog: executable file not found in $PATH"
+}

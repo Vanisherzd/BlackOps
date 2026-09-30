@@ -1,0 +1,7 @@
+{
+  "platform": "kubernetes",
+  "namespace": "boutique",
+  "service": "frontend",
+  "symptom": "upstream unavailable",
+  "log": "lookup paymentservice.boutique.svc.cluster.local: no such host"
+}

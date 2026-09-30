@@ -1,0 +1,9 @@
+{
+  "platform": "linux",
+  "host": "edge-node-01",
+  "resource": "systemd unit checkout-api.service",
+  "status": "failed; restart counter increasing",
+  "exit_status": 203,
+  "log": "checkout-api.service: Failed at step EXEC spawning /opt/checkout/bin/server: No such file or directory; Start request repeated too quickly",
+  "time_window": "last 15 minutes"
+}

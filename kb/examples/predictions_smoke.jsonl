@@ -1,0 +1,6 @@
+{"id":"eval-b4f50c12634cc07f","compression_ratio":1,"predicted_label":"code_excessive_file_writes","predicted_scenario":"disk_full","input_tokens":130065,"latency_ms":8200,"energy_wh":0.12}
+{"id":"eval-b9cf236cbd78a769","compression_ratio":1,"predicted_label":"container_memory_limit_too_low","predicted_scenario":"crashloop","input_tokens":22253,"latency_ms":3100,"energy_wh":0.05}
+{"id":"eval-83259184f78d9385","compression_ratio":1,"predicted_label":"service_dns_resolution_failure","predicted_scenario":"dns","input_tokens":19509,"latency_ms":2700,"energy_wh":0.04}
+{"id":"eval-b4f50c12634cc07f","compression_ratio":4,"predicted_label":"code_excessive_file_writes","predicted_scenario":"disk_full","input_tokens":32513,"latency_ms":2600,"energy_wh":0.05}
+{"id":"eval-b9cf236cbd78a769","compression_ratio":4,"predicted_label":"container_memory_limit_too_low","predicted_scenario":"crashloop","input_tokens":5552,"latency_ms":1100,"energy_wh":0.02}
+{"id":"eval-83259184f78d9385","compression_ratio":4,"predicted_label":"service_selector_mismatch","predicted_scenario":"dns","input_tokens":4870,"latency_ms":900,"energy_wh":0.02}

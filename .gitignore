@@ -4,3 +4,12 @@ __pycache__/
 *.pyc
 .env
 victim/conf.d/default.conf
+
+# kb/ (knowledge pack) and datasets/: the raw benchmark clones (39 GB, kept on the Spark disk and the TRANSCEND USB)
+# and regenerable build outputs stay out of git; kb/artifacts and kb/src/blackout_ops_kb/data are the tracked outputs
+datasets/raw/
+kb/build/
+kb/dist/
+kb/src/*.egg-info/
+kb/integrations/nemoclaw/blackout-ops-rag/vendor/
+kb/integrations/nemoclaw/blackout-ops-rag/data/

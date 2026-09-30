@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blackout-ops-kb"
+version = "0.3.0"
+description = "Offline incident case and remediation knowledge base for Blackout Ops"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+telemetry = ["pyarrow>=25,<26"]
+
+[project.scripts]
+blackout-kb = "blackout_ops_kb.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+blackout_ops_kb = ["data/*.json", "data/*.jsonl", "data/*.sqlite"]

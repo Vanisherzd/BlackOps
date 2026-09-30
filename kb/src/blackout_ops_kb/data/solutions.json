@@ -1,0 +1,406 @@
+[
+  {
+    "id": "solution-linux-disk-log-growth",
+    "title": "Linux disk full caused by logs or journal growth",
+    "scenario": "disk_full",
+    "platform": "linux",
+    "risk_tier": 2,
+    "symptoms": ["No space left on device", "filesystem usage near 100%", "logs growing rapidly"],
+    "root_causes": ["unbounded application logs", "systemd journal retention too large", "log rotation failed"],
+    "checks": [
+      {"level": "R", "command": "df -hT && df -i", "purpose": "separate block exhaustion from inode exhaustion"},
+      {"level": "R", "command": "du -x -d 2 /var 2>/dev/null | sort -n | tail", "purpose": "locate large directories without crossing filesystems"},
+      {"level": "R", "command": "journalctl --disk-usage", "purpose": "measure journal usage"},
+      {"level": "R", "command": "lsof +L1", "purpose": "find deleted files still held open"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "fix logrotate policy, then rotate affected application logs", "approval_required": true},
+      {"level": "W", "action": "journalctl --rotate followed by approved --vacuum-size or --vacuum-time limit", "approval_required": true},
+      {"level": "W", "action": "restart only process holding a confirmed deleted large file", "approval_required": true}
+    ],
+    "rollback": ["restore previous logrotate configuration", "restart affected logger/application if rotation handoff fails"],
+    "verify": ["df usage below recovery threshold", "application health check passes", "log growth rate returns to baseline"],
+    "safety": ["never delete unknown files by size alone", "journal vacuum removes archived journals only", "record reclaimed bytes and affected service"],
+    "tags": ["disk", "filesystem", "journalctl", "logrotate", "no space left", "inode"],
+    "source": "Blackout Ops curated runbook; systemd journalctl official behavior"
+  },
+  {
+    "id": "solution-linux-disk-inode-exhaustion",
+    "title": "Linux filesystem inode exhaustion",
+    "scenario": "disk_full",
+    "platform": "linux",
+    "risk_tier": 2,
+    "symptoms": ["No space left despite free GiB", "inode usage 100%", "large number of tiny files"],
+    "root_causes": ["runaway temporary files", "unbounded cache", "stale session or queue files"],
+    "checks": [
+      {"level": "R", "command": "df -i", "purpose": "confirm inode exhaustion"},
+      {"level": "R", "command": "find <approved-path> -xdev -type f -printf '.' | wc -c", "purpose": "count files only inside approved path"},
+      {"level": "R", "command": "find <approved-path> -xdev -type f -mtime +<days> -print", "purpose": "preview stale deletion candidates"}
+    ],
+    "remediation": [
+      {"level": "D", "action": "delete only previewed stale files covered by retention policy", "approval_required": true},
+      {"level": "W", "action": "add bounded retention or queue consumer fix", "approval_required": true}
+    ],
+    "rollback": ["restore deleted files from snapshot/backup when required", "restore previous retention configuration"],
+    "verify": ["inode availability recovered", "file creation succeeds", "producer and consumer rates stable"],
+    "safety": ["approved-path must be explicit", "no recursive delete against root, home, workspace, or unresolved variable"],
+    "tags": ["disk", "inode", "tiny files", "ENOSPC", "retention"],
+    "source": "Blackout Ops curated runbook"
+  },
+  {
+    "id": "solution-k8s-node-disk-pressure",
+    "title": "Kubernetes node DiskPressure",
+    "scenario": "disk_full",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["DiskPressure=True", "node.kubernetes.io/disk-pressure taint", "pod eviction", "image filesystem full"],
+    "root_causes": ["nodefs exhausted", "imagefs exhausted", "containerfs exhausted", "inode exhaustion"],
+    "checks": [
+      {"level": "R", "command": "kubectl describe node <node>", "purpose": "confirm DiskPressure condition, taint, capacity and eviction events"},
+      {"level": "R", "command": "kubectl get events -A --sort-by=.lastTimestamp", "purpose": "locate eviction and garbage-collection evidence"},
+      {"level": "R", "command": "crictl images && crictl ps -a", "purpose": "inspect runtime images and stopped containers on affected node"},
+      {"level": "R", "command": "df -hT && df -i", "purpose": "identify nodefs/imagefs/containerfs or inode pressure"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "allow kubelet garbage collection to reclaim dead containers and unused images; correct kubelet GC thresholds if misconfigured", "approval_required": true},
+      {"level": "W", "action": "fix workload ephemeral-storage requests/limits or runaway log source", "approval_required": true},
+      {"level": "D", "action": "manually remove only confirmed unused runtime artifacts when kubelet cannot recover", "approval_required": true}
+    ],
+    "rollback": ["restore prior kubelet configuration", "roll back workload resource configuration"],
+    "verify": ["DiskPressure=False", "disk-pressure taint cleared by controller", "pods schedule normally", "free space remains above threshold"],
+    "safety": ["do not use external garbage collection that can conflict with kubelet", "do not manually remove active container layers"],
+    "tags": ["DiskPressure", "nodefs", "imagefs", "containerfs", "eviction", "crictl"],
+    "source": "Kubernetes node-pressure eviction and garbage-collection documentation"
+  },
+  {
+    "id": "solution-k8s-crashloop-oomkilled",
+    "title": "CrashLoopBackOff caused by OOMKilled or low memory limit",
+    "scenario": "crashloop",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["CrashLoopBackOff", "OOMKilled", "exit code 137", "container restarts"],
+    "root_causes": ["memory limit too low", "memory leak", "startup memory spike", "node memory pressure"],
+    "checks": [
+      {"level": "R", "command": "kubectl get pod <pod> -n <ns> -o jsonpath='{.status.containerStatuses[*].lastState.terminated}'", "purpose": "confirm OOMKilled, exit code and time"},
+      {"level": "R", "command": "kubectl logs <pod> -n <ns> -c <container> --previous", "purpose": "read previous crashed container log"},
+      {"level": "R", "command": "kubectl describe pod <pod> -n <ns>", "purpose": "inspect limits, events and node pressure"},
+      {"level": "R", "command": "kubectl top pod <pod> -n <ns> --containers", "purpose": "compare observed memory with request and limit when metrics are available"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "raise memory request/limit only after measured requirement and capacity check", "approval_required": true},
+      {"level": "W", "action": "roll back release when memory regression began with current revision", "approval_required": true},
+      {"level": "W", "action": "fix memory leak or reduce startup concurrency", "approval_required": true}
+    ],
+    "rollback": ["kubectl rollout undo deployment/<name> -n <ns>", "restore previous resource requests and limits"],
+    "verify": ["new pod Ready", "restart count stops increasing", "memory stays below limit", "service error rate recovers"],
+    "safety": ["do not raise limits beyond node capacity", "check blast radius before rollout"],
+    "tags": ["CrashLoopBackOff", "OOMKilled", "exit 137", "memory limit", "pod failure"],
+    "source": "Kubernetes pod debugging documentation plus P0 case labels"
+  },
+  {
+    "id": "solution-k8s-crashloop-invalid-command",
+    "title": "CrashLoopBackOff caused by invalid command, args, or image",
+    "scenario": "crashloop",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["CrashLoopBackOff", "executable file not found", "permission denied", "exit code 126 or 127"],
+    "root_causes": ["invalid container command", "bad args", "wrong image tag", "binary missing or not executable"],
+    "checks": [
+      {"level": "R", "command": "kubectl logs <pod> -n <ns> -c <container> --previous", "purpose": "capture startup error"},
+      {"level": "R", "command": "kubectl get pod <pod> -n <ns> -o yaml", "purpose": "inspect resolved image, command and args"},
+      {"level": "R", "command": "kubectl rollout history deployment/<name> -n <ns>", "purpose": "compare failing revision with last healthy revision"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "correct image, command or args in source manifest and apply reviewed change", "approval_required": true},
+      {"level": "W", "action": "roll back to last healthy Deployment revision for rapid recovery", "approval_required": true}
+    ],
+    "rollback": ["kubectl rollout undo deployment/<name> -n <ns> --to-revision=<known-good>"],
+    "verify": ["rollout status succeeds", "pod remains Ready", "previous-log startup error absent", "service health check passes"],
+    "safety": ["record current revision before change", "never substitute an unverified mutable image tag"],
+    "tags": ["CrashLoopBackOff", "invalid command", "exit 126", "exit 127", "image", "args"],
+    "source": "Kubernetes pod debugging documentation; ITBench Scenario-105 pattern"
+  },
+  {
+    "id": "solution-k8s-crashloop-config-secret",
+    "title": "CrashLoopBackOff caused by missing or invalid ConfigMap/Secret",
+    "scenario": "crashloop",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["CrashLoopBackOff", "CreateContainerConfigError", "missing configuration", "authentication failure at startup"],
+    "root_causes": ["missing ConfigMap", "missing Secret", "wrong key name", "invalid mounted content"],
+    "checks": [
+      {"level": "R", "command": "kubectl describe pod <pod> -n <ns>", "purpose": "find missing object/key events"},
+      {"level": "R", "command": "kubectl get configmap,secret -n <ns>", "purpose": "confirm referenced object exists without exposing secret data"},
+      {"level": "R", "command": "kubectl get deployment/<name> -n <ns> -o yaml", "purpose": "inspect references and key names"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "restore expected ConfigMap/Secret from approved source or correct reference", "approval_required": true},
+      {"level": "W", "action": "restart rollout after configuration is restored", "approval_required": true}
+    ],
+    "rollback": ["restore previous object version from secret manager/config repository", "roll back Deployment revision"],
+    "verify": ["pod starts", "mount/env references resolve", "application authentication succeeds"],
+    "safety": ["never place secret values in RAG, logs, prompts or audit output", "compare names and hashes, not plaintext secret content"],
+    "tags": ["CrashLoopBackOff", "CreateContainerConfigError", "ConfigMap", "Secret", "missing key"],
+    "source": "Blackout Ops curated runbook plus P0 case labels"
+  },
+  {
+    "id": "solution-k8s-crashloop-dependency",
+    "title": "CrashLoopBackOff caused by unavailable dependency",
+    "scenario": "crashloop",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["CrashLoopBackOff", "connection refused", "timeout", "dependency not ready"],
+    "root_causes": ["database unavailable", "upstream Service has no endpoints", "startup ordering assumption", "network policy block"],
+    "checks": [
+      {"level": "R", "command": "kubectl logs <pod> -n <ns> --previous", "purpose": "identify dependency host, port and failure"},
+      {"level": "R", "command": "kubectl get svc,endpointslice -n <ns>", "purpose": "confirm dependency service and ready endpoints"},
+      {"level": "R", "command": "kubectl get networkpolicy -A", "purpose": "identify policy that may block traffic"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "restore dependency or correct endpoint/port configuration", "approval_required": true},
+      {"level": "W", "action": "add bounded retry/backoff or startup probe so transient dependency delay does not crash process", "approval_required": true}
+    ],
+    "rollback": ["restore previous endpoint, environment variable or NetworkPolicy", "roll back workload revision"],
+    "verify": ["dependency connection succeeds", "pod Ready", "restart count stable", "end-to-end request succeeds"],
+    "safety": ["do not delete NetworkPolicy as a diagnostic shortcut", "validate least-privilege connectivity"],
+    "tags": ["CrashLoopBackOff", "connection refused", "dependency", "EndpointSlice", "NetworkPolicy"],
+    "source": "Blackout Ops curated runbook plus P0 case labels"
+  },
+  {
+    "id": "solution-k8s-crashloop-probe",
+    "title": "Container restart caused by liveness or startup probe misconfiguration",
+    "scenario": "crashloop",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["repeated restarts", "Liveness probe failed", "Startup probe failed", "healthy process killed during warm-up"],
+    "root_causes": ["wrong probe port", "wrong protocol or path", "initial delay too short", "timeout too strict"],
+    "checks": [
+      {"level": "R", "command": "kubectl describe pod <pod> -n <ns>", "purpose": "confirm probe failure events"},
+      {"level": "R", "command": "kubectl get deployment/<name> -n <ns> -o yaml", "purpose": "inspect probe protocol, port, path and timing"},
+      {"level": "R", "command": "kubectl logs <pod> -n <ns> --previous", "purpose": "separate probe kill from application crash"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "correct probe endpoint/port/protocol", "approval_required": true},
+      {"level": "W", "action": "add startupProbe or tune timing from measured startup behavior", "approval_required": true}
+    ],
+    "rollback": ["restore previous probe definition", "kubectl rollout undo deployment/<name> -n <ns>"],
+    "verify": ["probe succeeds", "pod Ready", "restart count stable", "application endpoint independently healthy"],
+    "safety": ["do not remove health probes permanently", "avoid masking real application failure with excessive thresholds"],
+    "tags": ["liveness probe", "startup probe", "readiness probe", "restart", "CrashLoopBackOff"],
+    "source": "Cloud-OpsBench probe fault patterns"
+  },
+  {
+    "id": "solution-k8s-dns-service-name",
+    "title": "Kubernetes DNS failure from wrong Service name or namespace",
+    "scenario": "dns",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["no such host", "NXDOMAIN", "temporary failure in name resolution", "short name works only in one namespace"],
+    "root_causes": ["wrong Service name", "wrong namespace", "incorrect cluster domain", "stale environment variable"],
+    "checks": [
+      {"level": "R", "command": "kubectl exec <debug-pod> -n <ns> -- nslookup <service>.<namespace>.svc.cluster.local", "purpose": "test fully qualified service name from affected namespace"},
+      {"level": "R", "command": "kubectl get svc -A", "purpose": "confirm exact Service name and namespace"},
+      {"level": "R", "command": "kubectl exec <pod> -n <ns> -- cat /etc/resolv.conf", "purpose": "inspect search domains and nameserver"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "correct Service FQDN, namespace or application environment variable", "approval_required": true},
+      {"level": "W", "action": "roll out corrected workload configuration", "approval_required": true}
+    ],
+    "rollback": ["restore prior environment/config value", "roll back Deployment revision"],
+    "verify": ["FQDN lookup returns ClusterIP", "application connection succeeds", "DNS error rate returns to baseline"],
+    "safety": ["verify from affected namespace", "do not change cluster-wide DNS before proving cluster-wide impact"],
+    "tags": ["DNS", "NXDOMAIN", "no such host", "Service", "namespace", "FQDN"],
+    "source": "Kubernetes DNS debugging documentation"
+  },
+  {
+    "id": "solution-k8s-dns-coredns",
+    "title": "Cluster-wide DNS failure in CoreDNS",
+    "scenario": "dns",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["DNS fails across namespaces", "kube-dns unavailable", "SERVFAIL", "CoreDNS errors"],
+    "root_causes": ["CoreDNS pods unavailable", "kube-dns Service missing", "EndpointSlice empty", "Corefile forwarding loop or bad upstream"],
+    "checks": [
+      {"level": "R", "command": "kubectl get pods -n kube-system -l k8s-app=kube-dns", "purpose": "check DNS pod health"},
+      {"level": "R", "command": "kubectl get svc kube-dns -n kube-system", "purpose": "confirm DNS Service and ClusterIP"},
+      {"level": "R", "command": "kubectl get endpointslice -n kube-system -l kubernetes.io/service-name=kube-dns", "purpose": "confirm ready DNS endpoints"},
+      {"level": "R", "command": "kubectl logs -n kube-system -l k8s-app=kube-dns", "purpose": "inspect query and forwarding errors"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "restore reviewed CoreDNS ConfigMap/Corefile or upstream resolver", "approval_required": true},
+      {"level": "W", "action": "restart CoreDNS Deployment after configuration correction", "approval_required": true}
+    ],
+    "rollback": ["restore previous CoreDNS ConfigMap", "roll back CoreDNS Deployment revision"],
+    "verify": ["kubernetes.default resolves", "application Service resolves", "CoreDNS endpoints ready", "SERVFAIL stops"],
+    "safety": ["cluster-wide blast radius", "capture Corefile and current rollout revision before change"],
+    "tags": ["CoreDNS", "kube-dns", "SERVFAIL", "EndpointSlice", "Corefile", "cluster DNS"],
+    "source": "Kubernetes DNS debugging documentation"
+  },
+  {
+    "id": "solution-k8s-dns-service-endpoints",
+    "title": "Service resolves but has no ready endpoints",
+    "scenario": "dns",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["DNS lookup succeeds", "connection refused or timeout", "EndpointSlice has no endpoints", "Service unavailable"],
+    "root_causes": ["Service selector mismatch", "pods not Ready", "targetPort mismatch", "wrong protocol"],
+    "checks": [
+      {"level": "R", "command": "kubectl get svc <service> -n <ns> -o yaml", "purpose": "inspect selector, port and targetPort"},
+      {"level": "R", "command": "kubectl get endpointslice -n <ns> -l kubernetes.io/service-name=<service> -o yaml", "purpose": "inspect endpoint readiness and ports"},
+      {"level": "R", "command": "kubectl get pods -n <ns> --show-labels", "purpose": "compare pod labels with Service selector"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "correct Service selector, port, targetPort or protocol", "approval_required": true},
+      {"level": "W", "action": "repair backing pod readiness failure when selector is correct", "approval_required": true}
+    ],
+    "rollback": ["restore previous Service manifest", "roll back backing workload revision"],
+    "verify": ["EndpointSlice contains ready endpoint", "connection succeeds", "end-to-end health check passes"],
+    "safety": ["distinguish DNS resolution from Service routing", "preview selector matches before applying"],
+    "tags": ["DNS", "Service", "EndpointSlice", "selector mismatch", "targetPort", "connection refused"],
+    "source": "Kubernetes Service and DNS diagnostic practice; Cloud-OpsBench routing patterns"
+  },
+  {
+    "id": "solution-k8s-image-registry-dns",
+    "title": "Pod startup failure from image registry DNS resolution",
+    "scenario": "dns",
+    "platform": "kubernetes",
+    "risk_tier": 2,
+    "symptoms": ["ImagePullBackOff", "ErrImagePull", "registry lookup failed", "no such host"],
+    "root_causes": ["node resolver cannot resolve registry", "registry hostname incorrect", "proxy or egress DNS path broken"],
+    "checks": [
+      {"level": "R", "command": "kubectl describe pod <pod> -n <ns>", "purpose": "capture exact image pull and DNS event"},
+      {"level": "R", "command": "nslookup <registry-host>", "purpose": "test registry DNS from affected node context"},
+      {"level": "R", "command": "cat /etc/resolv.conf", "purpose": "inspect affected node resolver configuration"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "correct registry hostname or node resolver/upstream DNS configuration", "approval_required": true},
+      {"level": "W", "action": "retry rollout after DNS path is restored", "approval_required": true}
+    ],
+    "rollback": ["restore previous node resolver configuration", "restore prior working image reference"],
+    "verify": ["registry hostname resolves", "image pull succeeds", "pod reaches Ready"],
+    "safety": ["do not bypass TLS or switch to an untrusted registry", "do not expose registry credentials in diagnostics"],
+    "tags": ["ImagePullBackOff", "ErrImagePull", "registry", "DNS", "no such host"],
+    "source": "Cloud-OpsBench image_registry_dns_failure pattern"
+  },
+  {
+    "id": "solution-linux-systemd-restart-loop",
+    "title": "Linux systemd service restart loop or failed unit",
+    "scenario": "crashloop",
+    "platform": "linux",
+    "risk_tier": 2,
+    "symptoms": ["service entered failed state", "Start request repeated too quickly", "restart counter increasing", "process exits immediately"],
+    "root_causes": ["invalid ExecStart", "missing environment or file", "permission failure", "dependency unavailable", "Restart policy loop"],
+    "checks": [
+      {"level": "R", "command": "systemctl status <unit> --no-pager -l", "purpose": "capture unit state, exit status and recent messages"},
+      {"level": "R", "command": "journalctl -u <unit> --since '-15 min' --no-pager", "purpose": "read complete failure sequence"},
+      {"level": "R", "command": "systemctl show <unit> -p FragmentPath -p ExecMainStatus -p NRestarts -p Restart", "purpose": "inspect loaded unit, exit status and restart behavior"},
+      {"level": "R", "command": "systemd-analyze verify <unit-file>", "purpose": "validate unit syntax without starting service"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "correct reviewed unit, environment, permissions or dependency configuration, then run systemctl daemon-reload", "approval_required": true},
+      {"level": "W", "action": "restart only the affected unit after configuration validation", "approval_required": true}
+    ],
+    "rollback": ["restore previous unit or environment file", "run systemctl daemon-reload", "restart the known-good unit version"],
+    "verify": ["systemctl is-active returns active", "NRestarts stops increasing", "service health endpoint succeeds", "journal has no new startup error"],
+    "safety": ["capture FragmentPath and current file before editing", "do not disable Restart policy to hide an unresolved crash"],
+    "tags": ["systemd", "systemctl", "failed state", "restart loop", "Start request repeated too quickly", "journalctl"],
+    "source": "Blackout Ops curated Linux runbook"
+  },
+  {
+    "id": "solution-linux-oom-killed",
+    "title": "Linux process killed by kernel or systemd OOM policy",
+    "scenario": "crashloop",
+    "platform": "linux",
+    "risk_tier": 2,
+    "symptoms": ["Killed process", "Out of memory", "oom-kill", "exit code 137", "service restarts under memory load"],
+    "root_causes": ["host memory exhaustion", "cgroup MemoryMax too low", "application memory leak", "unbounded workload concurrency"],
+    "checks": [
+      {"level": "R", "command": "journalctl -k -g 'Out of memory|Killed process|oom-kill' --since '-30 min' --no-pager", "purpose": "confirm kernel OOM victim and timestamp"},
+      {"level": "R", "command": "systemctl show <unit> -p MemoryCurrent -p MemoryMax -p MemoryHigh -p OOMPolicy", "purpose": "inspect systemd cgroup memory policy"},
+      {"level": "R", "command": "cat /proc/meminfo && ps -eo pid,ppid,comm,rss,vsz --sort=-rss | head -20", "purpose": "measure host pressure and top consumers"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "fix application leak or bound concurrency; deploy reviewed change", "approval_required": true},
+      {"level": "W", "action": "adjust MemoryHigh or MemoryMax only after capacity and blast-radius checks", "approval_required": true},
+      {"level": "W", "action": "restart only the confirmed affected service after pressure is controlled", "approval_required": true}
+    ],
+    "rollback": ["restore prior systemd memory limits", "roll back application revision"],
+    "verify": ["service remains active", "memory stays below limit", "no new OOM event", "host available memory remains stable"],
+    "safety": ["do not disable memory controls globally", "do not raise limits beyond physical capacity"],
+    "tags": ["OOM", "oom-kill", "Killed process", "exit 137", "MemoryMax", "cgroup", "systemd"],
+    "source": "Blackout Ops curated Linux runbook"
+  },
+  {
+    "id": "solution-linux-dns-resolver",
+    "title": "Linux host DNS resolver failure",
+    "scenario": "dns",
+    "platform": "linux",
+    "risk_tier": 2,
+    "symptoms": ["Temporary failure in name resolution", "Name or service not known", "SERVFAIL", "NXDOMAIN", "no such host"],
+    "root_causes": ["wrong resolv.conf", "systemd-resolved unavailable", "bad upstream resolver", "search-domain error", "firewall blocks DNS"],
+    "checks": [
+      {"level": "R", "command": "getent ahosts <hostname>", "purpose": "test resolution through libc/NSS used by applications"},
+      {"level": "R", "command": "resolvectl status && resolvectl query <hostname>", "purpose": "inspect link-specific DNS and query result when systemd-resolved is used"},
+      {"level": "R", "command": "readlink -f /etc/resolv.conf && cat /etc/resolv.conf", "purpose": "inspect resolver ownership, nameservers and search domains"},
+      {"level": "R", "command": "dig +time=2 +tries=1 <hostname>", "purpose": "separate DNS protocol failure from application behavior"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "restore reviewed NetworkManager or systemd-resolved DNS configuration", "approval_required": true},
+      {"level": "W", "action": "restart the active resolver service after configuration validation", "approval_required": true},
+      {"level": "D", "action": "change firewall or routing rules only after proving DNS packets are blocked", "approval_required": true}
+    ],
+    "rollback": ["restore previous resolver configuration", "restore previous firewall rule set", "restart prior resolver service configuration"],
+    "verify": ["getent and resolvectl resolve expected address", "application lookup succeeds", "unrelated internal names still resolve"],
+    "safety": ["do not overwrite a managed resolv.conf symlink blindly", "test internal and external zones separately", "preserve air-gapped resolver policy"],
+    "tags": ["DNS", "systemd-resolved", "resolv.conf", "getent", "SERVFAIL", "NXDOMAIN", "Temporary failure in name resolution"],
+    "source": "Blackout Ops curated Linux runbook"
+  },
+  {
+    "id": "solution-linux-tls-certificate-expired",
+    "title": "Linux TLS service certificate expired or not yet valid",
+    "scenario": "other",
+    "platform": "linux",
+    "risk_tier": 3,
+    "symptoms": ["x509 certificate has expired", "certificate not yet valid", "TLS handshake failed", "certificate verify failed"],
+    "root_causes": ["expired leaf certificate", "expired intermediate certificate", "wrong certificate deployed", "host clock incorrect", "renewal job failed"],
+    "checks": [
+      {"level": "R", "command": "date -u && timedatectl status", "purpose": "rule out incorrect system time"},
+      {"level": "R", "command": "openssl s_client -connect <host>:<port> -servername <host> -showcerts </dev/null", "purpose": "capture served chain and verification result"},
+      {"level": "R", "command": "openssl x509 -in <certificate> -noout -subject -issuer -serial -dates", "purpose": "inspect local certificate identity and validity"},
+      {"level": "R", "command": "systemctl list-timers --all | grep -Ei 'cert|acme|renew'", "purpose": "inspect renewal scheduling without changing state"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "renew or restore the approved certificate chain through the configured CA/ACME workflow", "approval_required": true},
+      {"level": "W", "action": "validate service configuration, then reload only the affected TLS service", "approval_required": true}
+    ],
+    "rollback": ["restore previous certificate and key files from protected backup", "reload the prior known-good service configuration"],
+    "verify": ["served certificate serial matches intended deployment", "validity window includes current UTC time", "TLS verification succeeds", "service health check passes"],
+    "safety": ["never print or copy private keys into logs or prompts", "do not disable TLS verification", "treat certificate replacement as a scoped write action"],
+    "tags": ["x509", "certificate expired", "TLS handshake", "openssl", "ACME", "certificate verify failed"],
+    "source": "Blackout Ops curated Linux runbook"
+  },
+  {
+    "id": "solution-linux-connection-refused-port",
+    "title": "Linux service connection refused or expected port not listening",
+    "scenario": "other",
+    "platform": "linux",
+    "risk_tier": 2,
+    "symptoms": ["Connection refused", "port not listening", "upstream connect error", "service unavailable on expected socket"],
+    "root_causes": ["service stopped", "process bound wrong address", "wrong port configuration", "startup failure", "firewall rejection"],
+    "checks": [
+      {"level": "R", "command": "ss -lntup", "purpose": "identify listening address, port and owning process"},
+      {"level": "R", "command": "systemctl status <unit> --no-pager -l", "purpose": "inspect service state and exit status"},
+      {"level": "R", "command": "journalctl -u <unit> --since '-15 min' --no-pager", "purpose": "capture bind or startup error"},
+      {"level": "R", "command": "curl -v --connect-timeout 3 http://<host>:<port>/<health-path>", "purpose": "test exact address and port from approved network context"}
+    ],
+    "remediation": [
+      {"level": "W", "action": "correct reviewed bind address or port configuration and restart only affected service", "approval_required": true},
+      {"level": "D", "action": "change firewall policy only after listener and path are proven healthy and the required flow is approved", "approval_required": true}
+    ],
+    "rollback": ["restore previous service configuration", "restore prior firewall policy", "restart known-good unit configuration"],
+    "verify": ["ss shows expected listener", "local and approved remote health checks pass", "service error rate recovers"],
+    "safety": ["do not expose service on 0.0.0.0 without requirement", "do not flush firewall rules", "record affected interface and blast radius"],
+    "tags": ["connection refused", "ss", "port", "listener", "bind", "systemd", "firewall"],
+    "source": "Blackout Ops curated Linux runbook"
+  }
+]

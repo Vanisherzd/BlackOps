@@ -1,0 +1,192 @@
+{
+  "package": "blackout-ops-kb",
+  "version": "0.3.0",
+  "built_at": "2026-09-23T17:48:07.759849+00:00",
+  "runtime": {
+    "os": [
+      "Linux",
+      "Jetson Linux",
+      "DGX OS",
+      "Windows development only"
+    ],
+    "architectures": [
+      "aarch64",
+      "x86_64"
+    ],
+    "python": ">=3.10",
+    "cuda_required": false,
+    "network_required": false,
+    "raw_datasets_required": false
+  },
+  "rag": {
+    "schema": "blackout-ops-rag/v1",
+    "documents": 1668,
+    "by_type": {
+      "case": 1644,
+      "solution": 17,
+      "topology": 7
+    },
+    "by_platform": {
+      "kubernetes": 1661,
+      "linux": 7
+    },
+    "by_scenario": {
+      "crashloop": 63,
+      "disk_full": 145,
+      "dns": 44,
+      "other": 1416
+    },
+    "contains_eval_answers": false,
+    "contains_absolute_host_paths": false,
+    "output": "rag_documents.jsonl"
+  },
+  "validation": {
+    "status": "pass",
+    "normalized_cases": 2027,
+    "split_counts": {
+      "train": 1644,
+      "dev": 201,
+      "eval": 182,
+      "eval_truth": 182
+    },
+    "source_adapters": [
+      {
+        "source": "Cloud-OpsBench",
+        "id": "eval-a1658d52ae362425",
+        "events": 24,
+        "event_kinds": {
+          "log": 12,
+          "k8s_state": 12
+        },
+        "compression": {
+          "target_ratio": 4.0,
+          "actual_ratio": 4.72,
+          "original_events": 24,
+          "compressed_events": 3,
+          "original_bytes": 4564,
+          "compressed_bytes": 967,
+          "estimated_input_tokens": 241,
+          "noise_removed": 2,
+          "duplicates_collapsed": 1
+        },
+        "status": "pass"
+      },
+      {
+        "source": "AgenticOpsEval/AIOps2025",
+        "id": "eval-fed232102089a717",
+        "events": 48,
+        "event_kinds": {
+          "log": 48
+        },
+        "compression": {
+          "target_ratio": 4.0,
+          "actual_ratio": 4.272,
+          "original_events": 48,
+          "compressed_events": 8,
+          "original_bytes": 16478,
+          "compressed_bytes": 3857,
+          "estimated_input_tokens": 964,
+          "noise_removed": 0,
+          "duplicates_collapsed": 9
+        },
+        "status": "pass"
+      },
+      {
+        "source": "AgenticOpsEval/RCA100",
+        "id": "eval-d1d4321848fc6abe",
+        "events": 49,
+        "event_kinds": {
+          "alerts": 7,
+          "events": 7,
+          "logs": 7,
+          "metrics": 7,
+          "task": 7,
+          "topology": 7,
+          "traces": 7
+        },
+        "compression": {
+          "target_ratio": 4.0,
+          "actual_ratio": 4.032,
+          "original_events": 49,
+          "compressed_events": 3,
+          "original_bytes": 77750,
+          "compressed_bytes": 19283,
+          "estimated_input_tokens": 4820,
+          "noise_removed": 0,
+          "duplicates_collapsed": 11
+        },
+        "status": "pass"
+      },
+      {
+        "source": "RCAEval",
+        "id": "eval-7e1f17501288dff1",
+        "events": 50,
+        "event_kinds": {
+          "metrics": 50
+        },
+        "compression": {
+          "target_ratio": 4.0,
+          "actual_ratio": 4.408,
+          "original_events": 50,
+          "compressed_events": 6,
+          "original_bytes": 119736,
+          "compressed_bytes": 27164,
+          "estimated_input_tokens": 6791,
+          "noise_removed": 0,
+          "duplicates_collapsed": 0
+        },
+        "status": "pass"
+      },
+      {
+        "source": "ITBench-Lite/SRE",
+        "id": "itbench-scenario-105",
+        "events": 50,
+        "event_kinds": {
+          "alert": 50
+        },
+        "compression": {
+          "target_ratio": 4.0,
+          "actual_ratio": 4.152,
+          "original_events": 50,
+          "compressed_events": 8,
+          "original_bytes": 38344,
+          "compressed_bytes": 9234,
+          "estimated_input_tokens": 2308,
+          "noise_removed": 0,
+          "duplicates_collapsed": 31
+        },
+        "status": "pass"
+      }
+    ],
+    "eval_agent_visible_key_leaks": [],
+    "forbidden_dev_eval_rows_in_search_db": 0,
+    "indexed_documents": {
+      "case": 1644,
+      "solution": 17,
+      "topology": 7
+    },
+    "errors": []
+  },
+  "source_revisions": {
+    "Cloud-OpsBench": "d79f1526a4c3315004c09457fbec588eb257dd1c",
+    "AgenticOpsEval": "69cf36430b43024d02530c610b1a4738b5c9a7fb",
+    "RCAEval": "afeacb11bcc94dadfd1c8f483ee4377b2b8b614e",
+    "ITBench-Lite": "d0916b08ba421ce5e672e9ad68aa947d938dfef0"
+  },
+  "sha256": {
+    "blackout_ops_kb.sqlite": "258F6BB4A88B7E01AB3911BDA853582EA6A55FFAAE33951354026C2BBEA7DDC9",
+    "rag_documents.jsonl": "5D92F32711344909D4EEE79268C3890016EE7A3990216E3556E9B8E49AFC5180",
+    "rag_manifest.json": "1BE782922C8C95FAE78CCD2D74EE49F427C5792371E5C4B8F153DAB501870BCE",
+    "cases_train.jsonl": "CFFCC7C340A9CADAA5C31217DCB5D50B226C50B3D74C7FDE4003258006E7D9AE",
+    "cases_dev.jsonl": "6FB318015B49D10FFAB173BBCA7D4BD992027B2E2C18D465759BF6F27280979E",
+    "cases_eval.jsonl": "DD726D80A75C2C086432CA4BAB54A917A2C299C0C466AC657A1EE26A68B127BD",
+    "eval_ground_truth.jsonl": "89CE78087635E5C97C84A2D20CC41A8D7F9F3614BE0EC9F794051FC8D34997A2",
+    "solutions.json": "8E63A2E6B6B0996C106F751E28C450BE8361A865596357EA43C778208FB8D4FD",
+    "topologies.jsonl": "EDF299DBCCE18F6AAE83146A39C8646FB8CA262DF8749159481119DA2682AF19",
+    "dataset_validation.json": "7D2AC7F6BB53F3AA7A2D4AD6CDB27A5016CFF80EC8493DC0E8540F7A40E786E7"
+  },
+  "wheel": {
+    "name": "blackout_ops_kb-0.3.0-py3-none-any.whl",
+    "sha256": "46D2EAC5366CC9D92890D56AF49CCBDC0F432B8DB968E12598F78791B1C9DC13"
+  }
+}

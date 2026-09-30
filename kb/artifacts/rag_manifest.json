@@ -1,0 +1,22 @@
+{
+  "schema": "blackout-ops-rag/v1",
+  "documents": 1668,
+  "by_type": {
+    "case": 1644,
+    "solution": 17,
+    "topology": 7
+  },
+  "by_platform": {
+    "kubernetes": 1661,
+    "linux": 7
+  },
+  "by_scenario": {
+    "crashloop": 63,
+    "disk_full": 145,
+    "dns": 44,
+    "other": 1416
+  },
+  "contains_eval_answers": false,
+  "contains_absolute_host_paths": false,
+  "output": "rag_documents.jsonl"
+}

@@ -5,66 +5,66 @@
     {
       "compression_ratio": 1.0,
       "cases": 63,
-      "diagnostic_accuracy": 0.142857,
-      "scenario_accuracy": 0.269841,
-      "avg_input_tokens": 23712.238,
-      "avg_latency_ms": 14436.651,
-      "avg_energy_wh": 0.11371
+      "diagnostic_accuracy": 0.095238,
+      "scenario_accuracy": 0.238095,
+      "avg_input_tokens": 20335.54,
+      "avg_latency_ms": 12780.397,
+      "avg_energy_wh": 0.098719
     },
     {
       "compression_ratio": 2.0,
       "cases": 63,
-      "diagnostic_accuracy": 0.206349,
-      "scenario_accuracy": 0.301587,
-      "avg_input_tokens": 20995.571,
-      "avg_latency_ms": 12977.238,
-      "avg_energy_wh": 0.098329
+      "diagnostic_accuracy": 0.079365,
+      "scenario_accuracy": 0.190476,
+      "avg_input_tokens": 18799.746,
+      "avg_latency_ms": 11300.381,
+      "avg_energy_wh": 0.092835
     },
     {
       "compression_ratio": 4.0,
       "cases": 63,
-      "diagnostic_accuracy": 0.15873,
-      "scenario_accuracy": 0.269841,
-      "avg_input_tokens": 19163.857,
-      "avg_latency_ms": 12073.635,
-      "avg_energy_wh": 0.096769
+      "diagnostic_accuracy": 0.111111,
+      "scenario_accuracy": 0.222222,
+      "avg_input_tokens": 16726.397,
+      "avg_latency_ms": 11246.429,
+      "avg_energy_wh": 0.087266
     },
     {
       "compression_ratio": 8.0,
       "cases": 63,
-      "diagnostic_accuracy": 0.142857,
-      "scenario_accuracy": 0.174603,
-      "avg_input_tokens": 15352.873,
-      "avg_latency_ms": 11784.889,
-      "avg_energy_wh": 0.081043
+      "diagnostic_accuracy": 0.126984,
+      "scenario_accuracy": 0.222222,
+      "avg_input_tokens": 14663.556,
+      "avg_latency_ms": 10348.048,
+      "avg_energy_wh": 0.07787
     },
     {
       "compression_ratio": 16.0,
       "cases": 63,
-      "diagnostic_accuracy": 0.079365,
-      "scenario_accuracy": 0.126984,
-      "avg_input_tokens": 9371.111,
-      "avg_latency_ms": 6945.492,
-      "avg_energy_wh": 0.051214
+      "diagnostic_accuracy": 0.126984,
+      "scenario_accuracy": 0.222222,
+      "avg_input_tokens": 10842.81,
+      "avg_latency_ms": 9159.635,
+      "avg_energy_wh": 0.064924
     },
     {
       "compression_ratio": 32.0,
       "cases": 63,
-      "diagnostic_accuracy": 0.111111,
-      "scenario_accuracy": 0.253968,
-      "avg_input_tokens": 5319.159,
-      "avg_latency_ms": 5508.254,
-      "avg_energy_wh": 0.036519
+      "diagnostic_accuracy": 0.222222,
+      "scenario_accuracy": 0.301587,
+      "avg_input_tokens": 9034.587,
+      "avg_latency_ms": 7296.222,
+      "avg_energy_wh": 0.053958
     }
   ],
   "selected_working_point": {
-    "compression_ratio": 2.0,
+    "compression_ratio": 32.0,
     "cases": 63,
-    "diagnostic_accuracy": 0.206349,
+    "diagnostic_accuracy": 0.222222,
     "scenario_accuracy": 0.301587,
-    "avg_input_tokens": 20995.571,
-    "avg_latency_ms": 12977.238,
-    "avg_energy_wh": 0.098329
+    "avg_input_tokens": 9034.587,
+    "avg_latency_ms": 7296.222,
+    "avg_energy_wh": 0.053958
   },
   "selection_rule": "lowest average input tokens within 1 percentage point of best diagnostic accuracy"
 }

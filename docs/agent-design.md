@@ -599,6 +599,51 @@ other platforms, which is why the skill says to ask the pack only after `search_
 In the scorecard the tool counts as diagnostic and as evidence for evidence-first. The raw datasets (39 GB) stay out
 of git and out of the prompt; only the built index ships.
 
+## The knowledge pack, measured on its own benchmark (2026-09-30)
+
+The pack ships 182 held-out incidents whose answers never entered its index, a compressor that turns a case's raw
+telemetry into label-free inputs at a chosen ratio, and a scorer. `scripts/kb-eval.py` puts the local model on them:
+63 cases (every disk_full / crashloop / dns case plus a per-source slice of the rest, from AgenticOpsEval,
+Cloud-OpsBench, RCAEval), six ratios from 1x to 32x, and two arms per input, telemetry only and telemetry plus what
+`search_incident_knowledge` returns for a one-line symptom the model wrote from the telemetry. Thinking off, four
+calls in flight, prompt tokens from the server, GPU power at 1 Hz. 756 diagnoses in 37 minutes, no errors. The full
+tables are in `docs/kb-eval.md`.
+
+**The first run measured the harness, not the model.** Strict accuracy came back 0–8 %. Two defects, both ours:
+the prompt listed the scenario names, and the model used them as labels ("disk_full" where RCAEval's label is
+"disk"; the scorer wants an exact match below six characters), and the energy baseline was the 5th percentile of a
+trace in which the GPU never idles. With the label rule fixed ("copy one candidate label; a category is not a
+label") and the idle draw taken before the first call, the same inputs score 21–32 %. Same lesson as the drills:
+read what the model wrote before concluding anything about it.
+
+**Compression helps, then hurts.** Telemetry only: 25 % at 1x (23.5k tokens, 14 s, 0.12 Wh per diagnosis at
+4-way concurrency), 32 % at 8x (15k tokens, 9 s, 0.08 Wh), 22 % at 32x (5k tokens, 5 s, 0.04 Wh). Scenario
+accuracy stays near 40 % from 1x to 32x. The pack's own rule picks 8x as the working point: the compressor's noise
+and duplicate removal takes away what confuses a small model before it takes away evidence, and past 16x it takes
+the evidence. This is the "壓縮比 vs 正確率" row of the proposal's measurement plan, measured.
+
+**Retrieval as built makes the diagnosis worse.** The rag arm scores 8–21 % against 21–32 %; per (case, ratio)
+pair, retrieval turned 65 right answers wrong and 19 wrong answers right. The pack said `matched` on 45 % of
+inputs, yet the matched card's scenario equalled the truth on 1 of 210 target-scenario inputs and a similar case
+carried the true label in its title on 4 % of inputs. The cause is in the corpus, not the model: case documents are
+label-derived text ("Fault: cpu stress / Service: emailservice / Symptoms: high CPU...") while telemetry speaks in
+application log lines ("conversion request failed", "GetCart 500"), and the coverage bar is term overlap on the
+query, so a short query passes it on unrelated cards (a failed conversion request matched the systemd restart-loop
+and TLS cards). Raw telemetry lines never clear the bar (1 of 63 at any length); only the model's one-liner does,
+and then on the wrong cards. When retrieval did carry the label (14 inputs) the answer was right 29 % of the time
+against 13 % otherwise, so relevant retrieval helps; the pack rarely produces it.
+
+For the agent this confirms the three rules the tool shipped with: the pack never opens the runbook gate, its
+answers are hypotheses, and `insufficient` is the safe verdict. It adds a fourth for the teammate's next build:
+`matched` must mean the cards and the similar cases agree, and the case text must be indexed by what the telemetry
+says (AIOps key observations, Cloud-OpsBench milestone evidence, the anomalous metric names in RCAEval), not by the
+label. The AIOps loader also delivered logs only, no metrics or traces, which is where node-level faults show.
+
+**The model is confident whichever way it is wrong.** Median stated confidence 0.95 in both arms at every accuracy
+level. RCAEval's network loss and delay cases become "disk" (13 of 19 disk cases right, 6 non-disk cases also
+called disk); Cloud-OpsBench collapses onto `service_dns_resolution_failure` (7 of 15 at 8x). One more measured
+reason the destructive path keeps a deterministic key and a second reader: the model's confidence is not evidence.
+
 ## Not yet
 Host-level actions (systemctl on the Spark itself), memory of this host's own past incidents, NemoClaw skill
-packaging. Add each only when a fault case needs it.
+packaging, a telemetry-indexed rebuild of the knowledge pack. Add each only when a fault case needs it.

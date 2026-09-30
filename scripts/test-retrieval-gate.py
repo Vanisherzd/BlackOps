@@ -72,7 +72,9 @@ def main():
         out = agent.run_tool("recreate_stack", {"name": "edge-victim-app", "replace": True}, dry_run=False)
         assert out.startswith("review-rejected:") and calls == ["recreate_stack"], f"after a restart the reviewer decides: {out[:120]}"
     reviewer.review = real
-    assert agent._incident["trace"][-1]["tool"] in ("recreate_stack", "check_health"), "trace must record calls"
+    recorded = [t["tool"] for t in agent._incident["trace"]]
+    assert "search_incident_knowledge" in recorded and recorded[-1] == ("recreate_stack" if os.environ.get("LIVE_STACK") else "write_config"), \
+        f"trace must record calls, last three: {recorded[-3:]}"
 
     for marker, want in agent.STATE_RUNBOOKS:              # state markers map to fixed runbooks, never a guess
         got = agent.attach_named("x", want)

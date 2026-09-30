@@ -47,8 +47,9 @@ EVENT_CHARS = 600
 SCENARIOS = ("disk_full (disk, inode or filesystem exhaustion, DiskPressure, runaway file writes); "
              "crashloop (container or pod crash or restart loop, OOMKilled, pod failure or kill, invalid command); "
              "dns (any name-resolution failure: service DNS, CoreDNS, registry DNS, host resolver); other (anything else)")
-SYMPTOM_RE = re.compile(r"error|fail|fatal|exception|refused|timeout|timed out|unavailable|oom|killed|no space|restart|crash|"
-                        r"back-?off|pressure|not found|no such|denied|unreachable|evict|\b5\d\d\b", re.I)
+SYMPTOM_RE = re.compile(r"\b(error|fail(ed|ure|ing)?|fatal|exception|refused|timeout|timed out|unavailable|oom(killed)?|killed|no space|"
+                        r"restarting|crash(loop)?(backoff)?|back-?off|pressure|not found|no such|denied|unreachable|evict(ed|ion)?|5\d\d)\b", re.I)
+HEADER_RE = re.compile(r"^(NAME\s|Restart Count: 0|Liveness:|Readiness:)")     # kubectl table headers and healthy probes are not symptoms
 SYSTEM = ("You are the on-call SRE for a Kubernetes/Linux system with no internet and no colleague to ask. You get compressed "
           "telemetry from one incident (logs, metrics, traces, alerts, Kubernetes state) and sometimes retrieved knowledge from "
           f"an offline knowledge base. Name the root cause. Scenarios: {SCENARIOS}. Reply with exactly one JSON object and "
@@ -130,7 +131,7 @@ def symptom_query(events):
     seen = []
     for e in events:
         m = str(e.get("template") or e.get("message") or "").replace("\n", " ")[:160]
-        if SYMPTOM_RE.search(m) and m not in seen:
+        if SYMPTOM_RE.search(m) and not HEADER_RE.match(m) and m not in seen:
             seen.append(m)
         if len(seen) >= 25:
             break

@@ -104,11 +104,15 @@ def prepare(args):
             f = RAW / t["source_path"] / "inject_time.txt"
             if f.exists():
                 window["boundary"] = float(f.read_text().strip())
+        # Baseline-vs-window metric summaries (AIOps loader) are already a compressed representation, so the ratio
+        # applies to the raw streams around them; otherwise the compressor's keyword bias drops the infra lines first.
+        summary = [e for e in ev["events"] if e.get("kind") == "metric" and e.get("source_file") in ("apm", "infra")]
+        raw = [e for e in ev["events"] if e not in summary]
         for r, s in streams.items():
-            c = compress_events(ev["events"], target_ratio=float(r), keywords=DEFAULT_KEYWORDS,
+            c = compress_events(raw, target_ratio=float(r), keywords=DEFAULT_KEYWORDS,
                                 window_start=window.get("start"), window_end=window.get("end"))
-            s.write(json.dumps({"id": t["id"], "compression_ratio": r, "window": window, "telemetry": c["events"],
-                                "compression_metrics": c["metrics"]}, ensure_ascii=False) + "\n")
+            s.write(json.dumps({"id": t["id"], "compression_ratio": r, "window": window, "telemetry": summary + c["events"],
+                                "compression_metrics": dict(c["metrics"], summary_events=len(summary))}, ensure_ascii=False) + "\n")
         print(f"[{i}/{len(cases)}] {t['id']} {t['source']} {t['scenario']} events={len(ev['events'])} {time.time() - t0:.1f}s", flush=True)
     for s in streams.values():
         s.close()
@@ -141,8 +145,11 @@ def pivot(rows, boundary, top=30):
     which left the model the first dozen columns, all CPU, and it duly answered 'cpu'."""
     import math
     from statistics import mean
-    times = [d.get("time") for _, d in rows if isinstance(d.get("time"), (int, float))]
-    split = boundary if boundary is not None else (sorted(times)[len(times) // 2] if times else None)
+    times = sorted(d.get("time") for _, d in rows if isinstance(d.get("time"), (int, float)))
+    median = times[len(times) // 2] if times else None
+    split = boundary if boundary is not None else median
+    if split is not None and times and (times[0] >= split or times[-1] < split):
+        split = median                       # the compressed sample sits on one side of the boundary: compare its halves
     cols = {}
     for _, d in rows:
         after = split is None or not isinstance(d.get("time"), (int, float)) or d["time"] >= split

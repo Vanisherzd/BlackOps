@@ -3,6 +3,7 @@
   uv run --no-sync scripts/faults.py setup            create edge-victim (nginx front, 127.0.0.1:8880) + edge-victim-app (upstream)
   uv run --no-sync scripts/faults.py inject <case>    cases: nginx-stopped | bad-config | upstream-down | bad-upstream-name | container-removed
                                                           | crashloop | upstream-paused | upstream-detached | upstream-500
+                                                          | inode-exhausted
   uv run --no-sync scripts/faults.py verify           exit 0 when / and /api/ both return 200
   uv run --no-sync scripts/faults.py reset            restore config, start both containers
   uv run --no-sync scripts/faults.py run <case>       inject -> agent.py -> verify   (the end-to-end test)
@@ -25,6 +26,13 @@ GOOD_CONF = """server {
 }
 """
 FRONT, APP, NET = "edge-victim", "edge-victim-app", "edge-net"
+# The front end's /var/cache/nginx (temp files, created at start) is a small tmpfs volume with few inodes, so inode
+# exhaustion can be injected without touching the host's own filesystems. A tmpfs volume empties when no container
+# holds it, so a sidecar outside the agent's whitelist holds it: restarting the stack does not clear the fault by
+# accident, and the scratch tools reach the volume through the sidecar.
+CACHE, CACHE_VOL = "edge-victim-cache", "edge-cache"
+CACHE_VOL_CREATE = (f"docker volume create --driver local --opt type=tmpfs --opt device=tmpfs "
+                    f"--opt o=size=16m,nr_inodes=256 {CACHE_VOL}")
 BAD_CONF = GOOD_CONF.replace('return 200 "ok\\n";', 'return 200 "ok\\n"')  # drop one semicolon -> [emerg]
 # A fault the agent has not been drilled on: the upstream name is wrong, so nginx exits with "host not found in
 # upstream". Fixing it needs the runbook (or real reasoning), not the docker_start reflex that solves the other cases.
@@ -46,8 +54,13 @@ CASES = {
     "upstream-paused":   dict(min_actions=1, fix_tools={"docker_restart"}, cause=r"paus|frozen|504|timed? ?out", tier="seen"),
     "upstream-detached": dict(min_actions=1, fix_tools={"network_repair"}, cause=r"network|detach|disconnect|edge-net|unreachable", tier="seen"),
     "upstream-500":      dict(min_actions=1, fix_tools={"recreate_stack"}, cause=r"500|recreat|rebuil|upstream.*(config|broken|misconfig)", tier="seen"),
+    # 2026-10-13: no runbook covers it on purpose; the knowledge pack has an inode-exhaustion card. Tests whether the
+    # agent reaches for the pack and whether it helps.
+    "inode-exhausted":   dict(min_actions=2, fix_tools={"clear_scratch_volume", "docker_start", "docker_restart"}, cause=r"inode|scratch|edge-cache|/var/cache/nginx|tiny files|too many files", tier="unseen",
+                              diag_tools={"disk_usage", "docker_exec"}),
 }
-MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk", "kill_process"}
+MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk", "kill_process",
+            "clear_scratch_volume"}
 DIAGNOSTIC = {"check_health", "docker_ps", "docker_logs", "read_config", "search_runbooks", "search_incident_knowledge", "http_check"}
 
 
@@ -72,7 +85,8 @@ def http(path):
 SPECS = {
     APP: f"docker run -d --name {APP} --network {NET} --restart no nginx:latest",
     FRONT: (f"docker run -d --name {FRONT} --network {NET} --restart no -p 127.0.0.1:8880:80 "
-            f"-v {CONF_DIR}:/etc/nginx/conf.d:ro nginx:latest"),
+            f"-v {CONF_DIR}:/etc/nginx/conf.d:ro -v {CACHE_VOL}:/var/cache/nginx nginx:latest"),
+    CACHE: f"docker run -d --name {CACHE} --network none --restart no -v {CACHE_VOL}:/cache nginx:latest sleep infinity",
 }
 
 
@@ -91,6 +105,7 @@ def ensure(name):
         if not (CONF_DIR / "default.conf").exists():
             (CONF_DIR / "default.conf").write_text(GOOD_CONF)
     sh(f"docker network create {NET} 2>/dev/null")
+    sh(f"{CACHE_VOL_CREATE} >/dev/null 2>&1")
     r = sh(SPECS[name])
     return f"created {name}" if not r.returncode else f"failed to create {name}: {(r.stderr or r.stdout).strip()[:300]}"
 
@@ -99,8 +114,10 @@ def setup():
     CONF_DIR.mkdir(parents=True, exist_ok=True)
     (CONF_DIR / "default.conf").write_text(GOOD_CONF)   # the file is not tracked by git; drills rewrite it
     sh(f"docker network create {NET} 2>/dev/null")
-    sh(f"docker rm -f {FRONT} {APP} >/dev/null 2>&1")
-    for name in (APP, FRONT):
+    sh(f"docker rm -f {FRONT} {APP} {CACHE} >/dev/null 2>&1")
+    sh(f"docker volume rm {CACHE_VOL} >/dev/null 2>&1")
+    sh(CACHE_VOL_CREATE, check=True)
+    for name in (CACHE, APP, FRONT):
         sh(SPECS[name], check=True)
     time.sleep(2)
     print("setup:", "/", http("/"), "/api/", http("/api/"))
@@ -110,6 +127,9 @@ def reset():
     """Undo every injection this file knows how to make, whatever order the drills ran in."""
     CONF_DIR.mkdir(parents=True, exist_ok=True)
     (CONF_DIR / "default.conf").write_text(GOOD_CONF)
+    ensure(CACHE)
+    sh(f"docker start {CACHE} >/dev/null 2>&1")
+    sh(f"docker exec {CACHE} sh -c 'find /cache -mindepth 1 -maxdepth 1 -name \".sess_*\" -delete' >/dev/null 2>&1")
     for name in (APP, FRONT):       # a previous drill may have removed one; start cannot bring back what is gone
         ensure(name)
         sh(f"docker unpause {name} >/dev/null 2>&1")
@@ -150,6 +170,12 @@ def inject(case):
         # restart does not help; the container has to be recreated from its definition.
         sh(f"docker exec {APP} sh -c \"printf 'server {{ listen 80; return 500; }}\\n' > /etc/nginx/conf.d/default.conf "
            f"&& nginx -s reload\"", check=True)
+    elif case == "inode-exhausted":
+        # Small session files fill every inode of the front end's temp volume while bytes stay free; the front end
+        # then restarts (as after a crash or a deploy) and cannot create its temp directories.
+        sh(f"docker exec {CACHE} sh -c 'rm -rf /cache/*_temp; i=0; while touch /cache/.sess_$i 2>/dev/null; "
+           f"do i=$((i+1)); done'", check=True)
+        sh(f"docker restart -t 1 {FRONT}")
     elif case == "bad-upstream-name":
         (CONF_DIR / "default.conf").write_text(BAD_NAME_CONF)
         sh(f"docker restart -t 1 {FRONT}")  # nginx cannot resolve the name and exits

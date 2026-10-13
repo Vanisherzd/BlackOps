@@ -704,3 +704,23 @@ re-measured on the fixed inputs (25 min) before any tier claim uses it.
 Host-level actions (systemctl on the Spark itself), memory of this host's own past incidents, NemoClaw skill
 packaging, a telemetry-indexed rebuild of the knowledge pack, trace summaries in the AIOps loader. Add each only when
 a fault case needs it.
+
+## A tenth case, inode exhaustion, and the reviewer's evidence (2026-10-13)
+
+`inode-exhausted` (tier `unseen`): the front end's `/var/cache/nginx` is a small tmpfs volume (`edge-cache`, 256
+inodes) held by a sidecar outside the whitelist, because a tmpfs volume empties when no container holds it and a
+restart would otherwise clear the fault by accident (probed before the case was written). Small files take every
+inode while bytes stay free; the front end exits with `mkdir() ... (28: No space left on device)`. `disk_usage` now
+reports that volume's space and inodes first, and the host's inodes; `clear_scratch_volume` empties it (destructive;
+code key: measured at 95 % or more). No runbook: the nearest one, `disk-full.md`, points at docker images, which is
+the wrong lead here, and the Spark's root filesystem really is at 94 %.
+
+First drill: FAIL. The agent read the logs, ran `disk_usage`, saw inodes at 100 % and called `clear_scratch_volume`;
+the reviewer rejected it as "a connectivity issue, not disk-related". The incident trace kept the first 300 characters
+of every result, and a nginx log starts with worker-exit notices: the one `[emerg]` line at the end never reached the
+reviewer, whose only "symptom" was the first health check, "unreachable". `trace_summary` now keeps the end of a log
+(without the attached runbook) and the head plus tail of other long results, and the reviewer is given the error lines
+of the logs read alongside the first health check. Replayed on the same incident, the model key approves, quoting
+the inode figure and the log line. After the fix: 3/3 fixed, 2 autonomous (85-100 s), 1 via `self_heal`; the code key
+correctly refused one clear attempted before the volume was measured.
+

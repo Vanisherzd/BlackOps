@@ -37,11 +37,12 @@ UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / jour
 # of it. So the rule lives in the tool layer. Evidence tools push the matching runbook into the answer, and an action
 # refuses once until a runbook has been seen for this incident. An incident ends when health comes back green.
 MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
+            "clear_scratch_volume",
             "kill_process"}
 SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
                         r"not found|exit(ed)? \(?\d|restarting|paused|oom|killed|no space|\b50[0-9]\b", re.I)
 _incident = {"runbook_seen": False, "refusals": 0, "trace": []}
-DESTRUCTIVE = {"kill_process", "cleanup_disk"}          # plus recreate_stack with replace=true; see reviewed()
+DESTRUCTIVE = {"kill_process", "cleanup_disk", "clear_scratch_volume"}          # plus recreate_stack with replace=true; see reviewed()
 
 
 def reviewed(name, args):
@@ -199,7 +200,7 @@ TOOLS = [
     {"name": "write_config", "description": "Replace the nginx config with the given full content. The file lives on the host and is mounted read-only into edge-victim, so this tool is the only way to change it (the container's own 'read-only file system' warning is expected). docker_restart edge-victim afterwards to apply", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
     {"name": "search_runbooks", "description": "Search the IT runbooks for a symptom in your own words or with the exact error text (502 upstream, nginx emerg config, disk full, exit 137, crash loop); returns the best matching procedures, or the catalogue if nothing matches", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "search_incident_knowledge", "description": "Offline knowledge base of 1,644 historical incidents and 17 Linux/Kubernetes remediation cards (disk full, inode exhaustion, systemd restart loop, OOM, DNS resolver, TLS expiry, port not listening, CrashLoopBackOff). Use it for a symptom no runbook covers. Answers 'matched' with checks and fixes to verify on this host, or 'insufficient', which means gather more evidence or escalate; never repair from a weak candidate", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "symptom or exact error text"}, "scenario": {"type": "string", "enum": ["disk_full", "crashloop", "dns"]}}, "required": ["query"]}},
-    {"name": "disk_usage", "description": "Host filesystem usage (df) and docker disk usage; use for disk-full symptoms", "parameters": {"type": "object", "properties": {}}},
+    {"name": "disk_usage", "description": "Disk usage, space and inodes: this stack's scratch volume, the host filesystems, and docker; use for disk-full symptoms", "parameters": {"type": "object", "properties": {}}},
     {"name": "service_status", "description": "Whether a host systemd unit is active, plus its last status line (read-only)", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}}, "required": ["unit"]}},
     {"name": "journal_tail", "description": "Last lines of a host systemd unit's journal", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}, "lines": {"type": "integer", "default": 30}}, "required": ["unit"]}},
     {"name": "port_check", "description": "Whether a TCP port accepts connections", "parameters": {"type": "object", "properties": {"host": {"type": "string", "default": "127.0.0.1"}, "port": {"type": "integer"}}, "required": ["port"]}},
@@ -208,6 +209,7 @@ TOOLS = [
     {"name": "recreate_stack", "description": "Recreate a container of this stack from its definition: one that no longer exists at all, or with replace=true one whose own state is corrupt and survives a restart (e.g. a broken config inside the upstream). Start/restart first if it merely exited", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "replace": {"type": "boolean", "default": False}}}},
     {"name": "network_repair", "description": "Make sure the stack network exists and both containers are attached to it; use when the front end cannot resolve or reach the upstream", "parameters": {"type": "object", "properties": {}}},
     {"name": "cleanup_disk", "description": "Free space by deleting this project's own old log files (never images, volumes, or anyone else's data)", "parameters": {"type": "object", "properties": {}}},
+    {"name": "clear_scratch_volume", "description": "Delete every file in this stack's scratch volume edge-cache (mounted as /var/cache/nginx in edge-victim: nginx's temp files). Its contents are disposable; nginx recreates its temp directories when it starts", "parameters": {"type": "object", "properties": {}}},
     {"name": "kill_process", "description": "Terminate a runaway host process by pid; only processes owned by this user and not part of the platform itself", "parameters": {"type": "object", "properties": {"pid": {"type": "integer"}, "force": {"type": "boolean", "default": False}}, "required": ["pid"]}},
     {"name": "finish", "description": "End the run with a verdict", "parameters": {"type": "object", "properties": {"status": {"type": "string", "enum": ["resolved", "unresolved", "escalate"]}, "root_cause": {"type": "string"}, "actions": {"type": "string"}}, "required": ["status", "root_cause", "actions"]}},
 ]
@@ -254,6 +256,10 @@ def search_runbooks(query):
 
 
 KB_DB = ROOT / "kb" / "artifacts" / "blackout_ops_kb.sqlite"
+# v3 (2026-10-13, docs/kb-retrieval-v2.md): cases indexed by their own incident's telemetry, word-boundary IDF
+# scoring, no substring `matched`. On the held-out benchmark it turned retrieval from harmful (50 answers broken, 16
+# fixed) to helpful (16 broken, 53 fixed). KB_RETRIEVAL=v1 restores the pack as shipped.
+KB_V3 = ROOT / "kb" / "artifacts" / "corpus_v3.jsonl"
 _kb = None
 
 
@@ -267,8 +273,12 @@ def search_incident_knowledge(query, scenario=None):
     try:
         if _kb is None:
             sys.path.insert(0, str(ROOT / "kb" / "src"))
-            from blackout_ops_kb import KnowledgeBase
-            _kb = KnowledgeBase(KB_DB)
+            if os.environ.get("KB_RETRIEVAL", "v3") == "v3" and KB_V3.exists():
+                from blackout_ops_kb.retrieval_v2 import AGENT_DEFAULTS, KnowledgeBaseV2
+                _kb = KnowledgeBaseV2(KB_V3, **AGENT_DEFAULTS)
+            else:
+                from blackout_ops_kb import KnowledgeBase
+                _kb = KnowledgeBase(KB_DB)
         incident = {"query": query, "scenario": scenario} if scenario in ("disk_full", "crashloop", "dns") else {"query": query}
         bundle = _kb.retrieve(incident, case_k=3, solution_k=3)
     except Exception as e:
@@ -298,12 +308,26 @@ def search_incident_knowledge(query, scenario=None):
     return out if len(out) <= 2500 else out[:2500] + "\n...(cut)"
 
 
+def trace_summary(name, result):
+    """What the incident trace (the reviewer's evidence) keeps of a result. A blind first-300-characters cut kept nginx's
+    startup notices and dropped the one [emerg] line at the end of a log, and the reviewer then judged an inode
+    exhaustion "a connectivity issue": logs keep their end (without the attached runbook), other results their head
+    and, when long, their tail, where the appended health check is."""
+    text = str(result)
+    if name == "docker_logs":
+        body = text.split("\n\n--- matching runbook")[0]
+        text = body if len(body) <= 300 else "… " + body[-300:]
+    elif len(text) > 450:
+        text = text[:300] + " … " + text[-150:]
+    return text[:460].replace("\n", " ")
+
+
 def run_tool(name, args, dry_run):
     """Dispatch one tool call and record it in the incident trace (the reviewer's evidence)."""
     result = _run_tool(name, args, dry_run)
     try:
         shown = {k: (v if len(str(v)) < 80 else str(v)[:77] + "...") for k, v in (args or {}).items()} if isinstance(args, dict) else str(args)[:80]
-        _incident["trace"].append(dict(tool=name, args=json.dumps(shown, ensure_ascii=False), result=str(result)[:300].replace("\n", " ")))
+        _incident["trace"].append(dict(tool=name, args=json.dumps(shown, ensure_ascii=False), result=trace_summary(name, result)))
         del _incident["trace"][:-30]
     except Exception:
         pass
@@ -426,7 +450,17 @@ def _run_tool(name, args, dry_run):
     if name == "search_incident_knowledge":
         return search_incident_knowledge(str(args["query"]), args.get("scenario"))
     if name == "disk_usage":
-        return sh("df -h -x tmpfs -x devtmpfs -x efivarfs | head -12") + "\n\n" + sh("docker system df")
+        # The scratch volume comes first: the incident trace keeps 300 characters of a result, and the reviewer's
+        # precondition for clearing it is read from there.
+        import faults
+        vol = sh(f"docker exec {faults.CACHE} sh -c 'df -h /cache | tail -1; df -i /cache | tail -1'")
+        lines = vol.strip().splitlines()
+        scratch = (f"scratch volume edge-cache (/var/cache/nginx in edge-victim): space {lines[0].split()[4]}, "
+                   f"inodes {lines[1].split()[4]}" if len(lines) == 2 and len(lines[1].split()) >= 5
+                   else f"scratch volume edge-cache: unreadable ({vol.strip()[:120]})")
+        return (scratch + "\n\nhost, space:\n" + sh("df -h -x tmpfs -x devtmpfs -x efivarfs | head -12")
+                + "\nhost, inodes:\n" + sh("df -i -x tmpfs -x devtmpfs -x efivarfs | head -12")
+                + "\n" + sh("docker system df"))
     if name in ("service_status", "journal_tail"):
         unit = str(args["unit"]).strip()
         if not UNIT_RE.match(unit):
@@ -527,6 +561,16 @@ def _run_tool(name, args, dry_run):
                 f"(skipped {skipped} still held open by a running service); "
                 f"/ is now {100 * usage.used / usage.total:.0f}% full with {usage.free / 1e9:.0f} GB free. "
                 "Images and volumes were not touched: report disk pressure instead of deleting shared data.")
+    if name == "clear_scratch_volume":
+        import faults
+        if dry_run:
+            return "DRY-RUN: would delete every file in the scratch volume edge-cache"
+        refusal = reviewed(name, {})
+        if refusal:
+            return refusal
+        out = sh(f"docker exec {faults.CACHE} sh -c 'n=$(find /cache -mindepth 1 | wc -l); "
+                 f"find /cache -mindepth 1 -delete; echo deleted $n entries; df -i /cache | tail -1'")
+        return with_health(out.strip() + "\nThe front end creates its temp directories when it starts; start it if it is down.")
     if name == "kill_process":
         pid = int(args["pid"])
         if pid in (os.getpid(), os.getppid(), 1):

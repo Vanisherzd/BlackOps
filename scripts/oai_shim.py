@@ -51,6 +51,17 @@ def normalize(body: dict) -> dict:
             m.clear(); m.update(keep)
     for k in DROP:
         body.pop(k, None)
+    # Output floor. One turn arrived with room for a single token (10.7k input, 32k window, stopReason=length, out=1)
+    # and the drill ended on it; where the client's budget came from is not pinned down. Only when the request asks
+    # for less than MIN_OUTPUT and the prompt, over-estimated at 3 characters a token, leaves room for the floor.
+    asked = body.get("max_tokens") or body.get("max_completion_tokens")
+    if "messages" in body:
+        est = len(json.dumps(body.get("messages"), ensure_ascii=False)) // 3 + len(json.dumps(body.get("tools") or [])) // 3
+        raised = isinstance(asked, int) and asked < MIN_OUTPUT and est + FLOOR_OUTPUT < SERVER_WINDOW
+        if raised:
+            body.pop("max_completion_tokens", None)
+            body["max_tokens"] = FLOOR_OUTPUT
+        log(max_tokens=asked, prompt_est=est, raised_to=FLOOR_OUTPUT if raised else None)
     if THINK and "messages" in body:               # same switch scripts/agent.py uses; OpenClaw cannot send it itself
         kw = body.setdefault("chat_template_kwargs", {})
         kw.setdefault("enable_thinking", True)   # the template's own default; set explicitly so it survives upgrades
@@ -61,6 +72,13 @@ def normalize(body: dict) -> dict:
 
 
 TOOLCALL_RE = re.compile(r"<tool_call>\s*<function=([A-Za-z0-9_.\-]+)>(.*?)</function>\s*</tool_call>", re.S)
+# The same block with its <tool_call> opener (or closer) dropped: seen 2026-10-14, a turn ended empty on
+# "<function=ops__clear_scratch_volume>\n</function>\n</tool_call>" in the thinking. Only the last such block is
+# taken, because deliberation can quote earlier calls.
+LOOSE_CALL_RE = re.compile(r"<function=([A-Za-z0-9_.\-]+)>(.*?)</function>", re.S)
+MIN_OUTPUT = 1024              # below this the turn cannot hold a thought and a call
+FLOOR_OUTPUT = 4096
+SERVER_WINDOW = int(os.environ.get("SHIM_WINDOW", "32768"))   # trtllm-serve max_seq_len (trt/nano.yaml)
 PARAM_RE = re.compile(r"<parameter=([A-Za-z0-9_.\-]+)>(.*?)</parameter>", re.S)
 
 
@@ -93,7 +111,11 @@ def salvage_calls(text, tools):
         props = ((fn.get("parameters") or {}).get("properties") or {})
         types[fn.get("name")] = {k: (v or {}).get("type") for k, v in props.items() if isinstance(v, dict)}
     calls = []
-    for name, inner in TOOLCALL_RE.findall(text or ""):
+    found = TOOLCALL_RE.findall(text or "")
+    if not found:
+        loose = LOOSE_CALL_RE.findall(text or "")
+        found = [loose[-1]] if loose and loose[-1][0] in types else []
+    for name, inner in found:
         args = {}
         for k, v in PARAM_RE.findall(inner):
             v, ty = v.strip(), types.get(name, {}).get(k)

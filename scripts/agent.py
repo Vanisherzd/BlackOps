@@ -120,7 +120,7 @@ def attach_runbook(result, query):
     name = ranked[0][0]
     body = {n: t for n, _, t in rag.documents()}[name]
     _incident["runbook_seen"] = True
-    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}"
+    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}" + knowledge_note(query)
 
 
 # --- host layer -------------------------------------------------------------------------------------------------
@@ -135,6 +135,25 @@ def attach_runbook(result, query):
 # the record of what it did.
 CLEANUP_GLOBS = (str(ROOT / "logs" / "*.log"), str(ROOT / "logs" / "*.out"), "/tmp/edge-agent-*")
 CLEANUP_MIN_AGE_S = 600        # never delete a file something is probably still writing
+# Evidence is not a log to rotate. On 2026-10-14 an inode-exhaustion drill ran cleanup_disk (the host's / really is at
+# 94 %, so it looked justified) and deleted every earlier drills-*.log, the raw record behind docs/scorecard.md.
+EVIDENCE_GLOBS = (str(ROOT / "logs" / "drills-*.log"),)
+
+
+def cleanup_candidates(now=None):
+    """(path, size) of the files cleanup_disk would delete, and how many it skips because a process holds them."""
+    now = now or time.time()
+    keep = {os.path.realpath(f) for pattern in EVIDENCE_GLOBS for f in glob.glob(pattern)}
+    open_files, victims, skipped = held_open(), [], 0
+    for pattern in CLEANUP_GLOBS:
+        for f in glob.glob(pattern):
+            if not os.path.isfile(f) or now - os.path.getmtime(f) <= CLEANUP_MIN_AGE_S or os.path.realpath(f) in keep:
+                continue
+            if os.path.realpath(f) in open_files:   # a live service still writes here; unlinking it loses the log
+                skipped += 1
+                continue
+            victims.append((f, os.path.getsize(f)))
+    return victims, skipped
 PROTECTED_CMD = re.compile(r"sshd?\b|systemd|dockerd|containerd|trtllm|tensorrt|openclaw|openshell|nemoclaw|"
                            r"ops_api|oai_shim|uv run|/init\b", re.I)
 
@@ -200,7 +219,7 @@ TOOLS = [
     {"name": "write_config", "description": "Replace the nginx config with the given full content. The file lives on the host and is mounted read-only into edge-victim, so this tool is the only way to change it (the container's own 'read-only file system' warning is expected). docker_restart edge-victim afterwards to apply", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
     {"name": "search_runbooks", "description": "Search the IT runbooks for a symptom in your own words or with the exact error text (502 upstream, nginx emerg config, disk full, exit 137, crash loop); returns the best matching procedures, or the catalogue if nothing matches", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "search_incident_knowledge", "description": "Offline knowledge base of 1,644 historical incidents and 17 Linux/Kubernetes remediation cards (disk full, inode exhaustion, systemd restart loop, OOM, DNS resolver, TLS expiry, port not listening, CrashLoopBackOff). Use it for a symptom no runbook covers. Answers 'matched' with checks and fixes to verify on this host, or 'insufficient', which means gather more evidence or escalate; never repair from a weak candidate", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "symptom or exact error text"}, "scenario": {"type": "string", "enum": ["disk_full", "crashloop", "dns"]}}, "required": ["query"]}},
-    {"name": "disk_usage", "description": "Disk usage, space and inodes: this stack's scratch volume, the host filesystems, and docker; use for disk-full symptoms", "parameters": {"type": "object", "properties": {}}},
+    {"name": "disk_usage", "description": "Disk usage: this stack's scratch volume, the host filesystems, and docker; use for disk-full symptoms", "parameters": {"type": "object", "properties": {"inodes": {"type": "boolean", "default": False, "description": "also report inode usage per filesystem (df -i)"}}}},
     {"name": "service_status", "description": "Whether a host systemd unit is active, plus its last status line (read-only)", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}}, "required": ["unit"]}},
     {"name": "journal_tail", "description": "Last lines of a host systemd unit's journal", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}, "lines": {"type": "integer", "default": 30}}, "required": ["unit"]}},
     {"name": "port_check", "description": "Whether a TCP port accepts connections", "parameters": {"type": "object", "properties": {"host": {"type": "string", "default": "127.0.0.1"}, "port": {"type": "integer"}}, "required": ["port"]}},
@@ -252,7 +271,7 @@ def http_status(url):
 def search_runbooks(query):
     """Retrieval lives in scripts/rag.py: hybrid keyword + dense, with its own fallback when the index is absent."""
     import rag
-    return rag.search(query)
+    return rag.search(query) + knowledge_note(query)
 
 
 KB_DB = ROOT / "kb" / "artifacts" / "blackout_ops_kb.sqlite"
@@ -263,24 +282,57 @@ KB_V3 = ROOT / "kb" / "artifacts" / "corpus_v3.jsonl"
 _kb = None
 
 
+def knowledge_base():
+    """The pack, opened once: v3 unless KB_RETRIEVAL=v1."""
+    global _kb
+    if _kb is None:
+        sys.path.insert(0, str(ROOT / "kb" / "src"))
+        if os.environ.get("KB_RETRIEVAL", "v3") == "v3" and KB_V3.exists():
+            from blackout_ops_kb.retrieval_v2 import AGENT_DEFAULTS, KnowledgeBaseV2
+            _kb = KnowledgeBaseV2(KB_V3, **AGENT_DEFAULTS)
+        else:
+            from blackout_ops_kb import KnowledgeBase
+            _kb = KnowledgeBase(KB_DB)
+    return _kb
+
+
+def knowledge_note(query):
+    """A knowledge card pushed next to a runbook, only when the pack is confident (v3: one of the card's own symptom
+    phrases is in the query whole and specific). Pulling it was left to the model and never happened: the skill said
+    to ask the pack when runbook search returns the catalogue, and dense search never does ("printer toner low"
+    returns disk-full.md), so in every drill the pack went unread. A score floor to detect "no runbook covers this"
+    was measured and does not separate (covered 0.66-0.88, uncovered up to 0.73), so the card rides along instead.
+    Measured on 24 uncovered symptoms: 6 cards pushed, 5 right, 14 correct silences, 4 missed; on 38 covered ones 3
+    cards, each consistent with the runbook. Never counts as a runbook: the gate is unchanged."""
+    try:
+        kb = knowledge_base()
+        if type(kb).__name__ != "KnowledgeBaseV2" or not query:
+            return ""                                      # v1's `matched` was wrong 20 times in 21; push nothing
+        b = kb.retrieve({"query": query}, case_k=0, solution_k=3)
+    except Exception:                                      # the note is an extra; it must never break the tool
+        return ""
+    if b["knowledge_match"]["status"] != "matched" or not b["solutions"]:
+        return ""
+    s = b["solutions"][0]
+    m = s.get("metadata") or {}
+    lines = [f"\n\n--- knowledge card (from other systems' incidents: a hypothesis to confirm here, not this stack's "
+             f"procedure) ---\n{s['id']}: {m.get('title', s.get('title', ''))} [matched on: {' '.join(s.get('matched_terms') or [])}]"]
+    lines += [f"CHECK {c.get('command', '')} :: {c.get('purpose', '')}" for c in m.get("checks", [])[:3]]
+    lines += [f"FIX {f.get('action', '')}" for f in m.get("remediation", [])[:2]]
+    lines.append("If the runbook above does not fit what you see, test the card's CHECK lines with your read-only tools.")
+    return "\n".join(lines)[:1200]
+
+
 def search_incident_knowledge(query, scenario=None):
     """A teammate's offline knowledge pack (kb/): historical cases from four public AIOps benchmarks plus curated
     Linux/Kubernetes remediation cards in SQLite FTS5, stdlib only. Its verdict is kept (`matched` = a card covers
     the symptom, `insufficient` = nothing does, so no repair may be derived from the weak candidates) but its size
     is not: the raw bundle is 14-24 KB of JSON and the model has a 32k window, so only the lines the agent can act
     on come back. It never counts as having read this stack's runbook; the gate still wants search_runbooks."""
-    global _kb
     try:
-        if _kb is None:
-            sys.path.insert(0, str(ROOT / "kb" / "src"))
-            if os.environ.get("KB_RETRIEVAL", "v3") == "v3" and KB_V3.exists():
-                from blackout_ops_kb.retrieval_v2 import AGENT_DEFAULTS, KnowledgeBaseV2
-                _kb = KnowledgeBaseV2(KB_V3, **AGENT_DEFAULTS)
-            else:
-                from blackout_ops_kb import KnowledgeBase
-                _kb = KnowledgeBase(KB_DB)
+        kb = knowledge_base()
         incident = {"query": query, "scenario": scenario} if scenario in ("disk_full", "crashloop", "dns") else {"query": query}
-        bundle = _kb.retrieve(incident, case_k=3, solution_k=3)
+        bundle = kb.retrieve(incident, case_k=3, solution_k=3)
     except Exception as e:
         return f"knowledge base unavailable ({type(e).__name__}: {str(e)[:100]}); use search_runbooks"
     km = bundle["knowledge_match"]
@@ -453,13 +505,18 @@ def _run_tool(name, args, dry_run):
         # The scratch volume comes first: the incident trace keeps 300 characters of a result, and the reviewer's
         # precondition for clearing it is read from there.
         import faults
+        # OPS_INODES=on-request (the knowledge A/B, docs/kb-retrieval-v2.md): inode figures only when asked for, so
+        # whether the agent thinks of inodes is part of what is measured. Default: always shown.
+        inodes = os.environ.get("OPS_INODES", "always") != "on-request" or bool(args.get("inodes"))
         vol = sh(f"docker exec {faults.CACHE} sh -c 'df -h /cache | tail -1; df -i /cache | tail -1'")
         lines = vol.strip().splitlines()
-        scratch = (f"scratch volume edge-cache (/var/cache/nginx in edge-victim): space {lines[0].split()[4]}, "
-                   f"inodes {lines[1].split()[4]}" if len(lines) == 2 and len(lines[1].split()) >= 5
-                   else f"scratch volume edge-cache: unreadable ({vol.strip()[:120]})")
+        if len(lines) == 2 and len(lines[1].split()) >= 5:
+            scratch = f"scratch volume edge-cache (/var/cache/nginx in edge-victim): space {lines[0].split()[4]}"
+            scratch += f", inodes {lines[1].split()[4]}" if inodes else ""
+        else:
+            scratch = f"scratch volume edge-cache: unreadable ({vol.strip()[:120]})"
         return (scratch + "\n\nhost, space:\n" + sh("df -h -x tmpfs -x devtmpfs -x efivarfs | head -12")
-                + "\nhost, inodes:\n" + sh("df -i -x tmpfs -x devtmpfs -x efivarfs | head -12")
+                + ("\nhost, inodes:\n" + sh("df -i -x tmpfs -x devtmpfs -x efivarfs | head -12") if inodes else "")
                 + "\n" + sh("docker system df"))
     if name in ("service_status", "journal_tail"):
         unit = str(args["unit"]).strip()
@@ -535,16 +592,7 @@ def _run_tool(name, args, dry_run):
         time.sleep(1)
         return with_health("\n".join(out))
     if name == "cleanup_disk":
-        now, victims, skipped = time.time(), [], 0
-        open_files = held_open()
-        for pattern in CLEANUP_GLOBS:
-            for f in glob.glob(pattern):
-                if not os.path.isfile(f) or now - os.path.getmtime(f) <= CLEANUP_MIN_AGE_S:
-                    continue
-                if os.path.realpath(f) in open_files:   # a live service still writes here; unlinking it loses the log
-                    skipped += 1
-                    continue
-                victims.append((f, os.path.getsize(f)))
+        victims, skipped = cleanup_candidates()
         freed = sum(n for _, n in victims)
         if dry_run:
             return f"DRY-RUN: would delete {len(victims)} project log file(s), {freed / 1e6:.1f} MB"

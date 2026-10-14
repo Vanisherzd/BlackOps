@@ -724,3 +724,17 @@ of the logs read alongside the first health check. Replayed on the same incident
 the inode figure and the log line. After the fix: 3/3 fixed, 2 autonomous (85-100 s), 1 via `self_heal`; the code key
 correctly refused one clear attempted before the volume was measured.
 
+## The knowledge card rides along, and evidence is not a log (2026-10-14)
+
+The pack was unreachable: the skill asked for it only when runbook search returned the catalogue, which dense search
+never does. A relevance floor could not tell covered from uncovered symptoms (0.66-0.88 vs up to 0.73); the pack's
+own phrase match could (6 cards on 24 uncovered symptoms, 5 right). `knowledge_note` now appends a confident card next
+to every attached runbook, as a hypothesis; the gate is unchanged. Details in `docs/kb-retrieval-v2.md`.
+
+In the drills that followed, one inode run called `cleanup_disk` alongside the right fix; the reviewer approved
+(`/` at 94 % is above the 85 % bar and the log said "No space left on device") and it deleted every earlier
+`logs/drills-*.log`. The precondition was true on this host and irrelevant to the incident, which is the gap a
+second key is for and the model key did not close. Now: drill logs are excluded from cleanup like the incident
+trajectories, and the code key refuses a host cleanup when the full filesystem in the incident is the scratch
+volume. Rerun: inode 2/2 autonomous, no cleanup.
+

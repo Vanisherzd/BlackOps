@@ -178,7 +178,59 @@ in drills, the skill's trigger has to change (e.g. a runbook-relevance floor bel
 or "consult the pack when the attached runbook's steps do not match what you see"); that is a design decision, not
 made here.
 
+## The pack reaches the agent: cards ride along with runbooks (2026-10-14)
+
+Two ways to make the pack reachable were measured before choosing. A runbook-relevance floor ("below it, no runbook
+covers this, ask the pack") does not separate: covered symptoms score 0.66-0.88 against their runbook, uncovered ones
+up to 0.73 (12 calibration and 12 test symptoms written before scoring), and the inode log line scores 0.75 against
+`disk-full.md`. The pack's own confidence does: on the 24 uncovered symptoms its phrase rule pushed 6 cards, 5 right
+(TLS x2, systemd, DNS x2; the wrong one, "permission denied" -> the invalid-command card, is adjacent), stayed silent
+14 times correctly and missed 4; on 38 covered symptoms it added 3 cards, each consistent with the runbook.
+
+So `agent.knowledge_note` appends the pack's card, labelled a hypothesis from other systems, wherever a runbook is
+attached (`docker_logs`, `search_runbooks`), only when v3 says `matched` (nothing under `KB_RETRIEVAL=v1`, whose
+`matched` was wrong 20 times in 21). The gate is unchanged: a card never counts as a runbook. The skill's step 4 says
+what the card is and to test its CHECK lines when the runbook does not fit. On the inode case the card is
+`solution-linux-disk-log-growth`, whose first check is `df -hT && df -i :: separate block exhaustion from inode
+exhaustion`; the sandbox session transcripts show it in the agent's context.
+
+Drills after the change (`logs/drills-20261014-012027.log`, `-014114.log`): the nine seen cases 9/9 autonomous, the
+inode case 4/4 autonomous (median 92-108 s), no fallback, nothing made worse.
+
+**An incident during those drills.** In one inode run the agent also called `cleanup_disk`, and the reviewer approved
+it: the log said "No space left on device" and the Spark's `/` is genuinely at 94 %, above the 85 % precondition. It
+deleted seven project logs, among them every earlier `logs/drills-*.log` (2026-09-27 to 2026-10-13); `logs/` is not
+in git and no copy exists. What remains of those runs: `docs/scorecard.md`, the numbers quoted in this file and in
+`docs/agent-design.md`, and the agent-side transcripts in the sandbox. Two fixes: `cleanup_disk` never touches
+`logs/drills-*.log` (evidence, like `logs/agent/`), and the reviewer's code key refuses `cleanup_disk` when the full
+filesystem measured in the incident is the scratch volume. Both are asserted in `scripts/test-retrieval-gate.py`.
+
+## Does the card help? A/B on the inode case (2026-10-14)
+
+To measure the card, the tools must not hand over the answer: with `OPS_INODES=on-request` (experiment only; the
+default still shows inodes) `disk_usage` reports inode figures only when called with `inodes: true`, so whether the
+agent thinks of inodes is part of what is measured. The two arms differ only in the card: A = v3 (the card on the
+inode log line is `solution-linux-disk-log-growth`, first check `df -hT && df -i :: separate block exhaustion from
+inode exhaustion`), B = `KB_RETRIEVAL=v1` (no card). Five runs each, alternating A/B, ops API restarted with each
+arm's environment before every drill (`scripts/ab-drill.sh`; `logs/ab-20261014-015134-{A,B}.log`).
+
+| | A: card | B: no card |
+|---|---|---|
+| autonomous | **4/5** | 1/5 (+1 via self_heal) |
+| failed | 1 | 3 |
+| first `disk_usage` asked for inodes | **3/5** | 1/5 |
+| median seconds | **94** | 353 |
+| `search_incident_knowledge` called | 0 | 0 |
+
+The mechanism is the expected one: runs that asked for inodes before trying to clear the volume passed, and the card
+made that first ask more frequent. The size is not established: 4/5 vs 1/5 autonomous is p = 0.21 (Fisher, two-sided).
+
+A confound that amplified the difference, the same in both arms: when the agent tried `clear_scratch_volume` after a
+space-only reading, the reviewer's code key refused with "scratch volume at space 0%, below 95 % — it is not what is
+full", a conclusion the measurement did not support; four of the five runs that met it failed. It now says what was
+measured ("its inode usage was not measured"), asserted in `scripts/test-retrieval-gate.py`. A rerun with the honest
+message and more runs per arm is what would size the card's effect.
+
 ## Not changed, deliberately
 
-- The agent's skill rule is unchanged: ask the pack only after `search_runbooks` returned the catalogue, and the
-  pack never opens the runbook gate. In every drill log since the pack was added the agent never called it.
+- The pack never opens the runbook gate; a fault no runbook covers still needs one consulted (or two refusals).

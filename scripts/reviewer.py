@@ -88,10 +88,16 @@ def computed_facts(action, args, trace):
         facts["top_processes lists this pid"] = line or "NO"
     elif action == "clear_scratch_volume":
         du = [t["result"] for t in trace if t["tool"] == "disk_usage"]
-        m = re.search(r"scratch volume edge-cache[^:]*: space (\d+)%, inodes (\d+)%", du[-1]) if du else None
-        facts["scratch volume from disk_usage"] = f"space {m.group(1)}%, inodes {m.group(2)}%" if m else "not measured in this incident"
+        # the last measurement that reported inodes, else the last one (space only, when inodes were not asked for)
+        found = [m for m in (re.search(r"scratch volume edge-cache[^:]*: space (\d+)%(?:, inodes (\d+)%)?", r) for r in du) if m]
+        m = next((x for x in reversed(found) if x.group(2)), found[-1] if found else None)
+        facts["scratch volume from disk_usage"] = ((f"space {m.group(1)}%" + (f", inodes {m.group(2)}%" if m.group(2) else ""))
+                                                   if m else "not measured in this incident")
     elif action == "cleanup_disk":
         du = [t["result"] for t in trace if t["tool"] == "disk_usage"]
+        sv = re.search(r"scratch volume edge-cache[^:]*: space (\d+)%(?:, inodes (\d+)%)?", du[-1]) if du else None
+        if sv:
+            facts["scratch volume from disk_usage"] = f"space {sv.group(1)}%" + (f", inodes {sv.group(2)}%" if sv.group(2) else "")
         m = re.search(r"(\d+)% /(?:\s|$)", du[-1]) if du else None
         facts["root filesystem usage from disk_usage"] = f"{m.group(1)}%" if m else "not measured in this incident"
     return facts
@@ -111,16 +117,25 @@ def sufficient(action, args, facts):
             return False, "top_processes in this incident does not list this pid — measure before killing"
         return True, line
     if action == "clear_scratch_volume":
-        m = re.match(r"space (\d+)%, inodes (\d+)%", facts.get("scratch volume from disk_usage", ""))
+        m = re.match(r"space (\d+)%(?:, inodes (\d+)%)?", facts.get("scratch volume from disk_usage", ""))
         if not m:
             return False, "disk_usage was not run in this incident — measure the scratch volume before clearing it"
-        if max(int(m.group(1)), int(m.group(2))) < 95:
-            return False, f"scratch volume at {m.group(0)}, below 95 % — it is not what is full"
+        if max(int(m.group(1)), int(m.group(2) or 0)) < 95:
+            # Say what was measured, not a conclusion it does not support: "it is not what is full", given after a
+            # space-only reading, sent the agent away from an inode-exhausted volume in 4 of the 5 A/B runs it met it.
+            unmeasured = "" if m.group(2) else "; its inode usage was not measured"
+            return False, f"scratch volume measured at {m.group(0)}, below 95 %{unmeasured}"
         return True, m.group(0)
     if action == "cleanup_disk":
         pct = facts.get("root filesystem usage from disk_usage", "")
         if not pct.endswith("%"):
             return False, "disk_usage was not run in this incident — measure before deleting"
+        sv = re.match(r"space (\d+)%(?:, inodes (\d+)%)?", facts.get("scratch volume from disk_usage", ""))
+        if sv and max(int(sv.group(1)), int(sv.group(2) or 0)) >= 95:
+            # The model key approved this once: "No space left on device" plus / at 94 % read as a host disk problem,
+            # while the full filesystem was the scratch volume. Deleting host logs frees nothing there.
+            return False, (f"the full filesystem in this incident is the scratch volume ({sv.group(0)}), not / — "
+                           "deleting host logs does not free it; use clear_scratch_volume")
         if int(pct[:-1]) < 85:
             return False, f"root filesystem at {pct}, below the 85 % threshold — nothing to free"
         return True, f"root filesystem at {pct}"

@@ -5,6 +5,7 @@ Asserts the property the prompt could not buy: no action reaches the stack befor
 import os
 import pathlib
 import sys
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import agent  # noqa: E402
@@ -50,6 +51,28 @@ def main():
     assert "insufficient" in kb.splitlines()[0] and "not a basis for repair" in kb, kb[:200]
     assert agent.run_tool("search_incident_knowledge", {}, dry_run=True).startswith("error:")
     assert agent.run_tool("write_config", {"content": CONF}, dry_run=True).startswith("refused:"), "knowledge alone must not open the gate"
+
+    # A confident knowledge card rides along with the runbook (the model never pulled it on its own); a vague or
+    # stack-specific symptom gets no card; the card is never what opens the gate.
+    with_card = agent.search_runbooks("x509: certificate has expired or is not yet valid")
+    assert "--- knowledge card" in with_card and "tls-certificate-expired" in with_card, with_card[-300:]
+    assert "--- knowledge card" not in agent.search_runbooks("nginx emerg invalid directive in the config")
+    assert "--- knowledge card" not in agent.search_runbooks("printer toner low in tray two")
+    assert agent.knowledge_note("upstream connect error connection refused") == "", "a generic phrase is not a match"
+
+    # Evidence survives a cleanup, and a full scratch volume is not a reason to delete host logs.
+    victims, _ = agent.cleanup_candidates(now=time.time() + 10 ** 6)          # as if everything were old
+    assert not [f for f, _ in victims if "/drills-" in f], "drill logs are evidence, never cleanup victims"
+    import reviewer as _rv
+    tr = [{"tool": "disk_usage", "args": "{}", "result": "scratch volume edge-cache (/var/cache/nginx in edge-victim): "
+           "space 0%, inodes 100%  host, space: /dev/nvme0n1p2 916G 812G 58G 94% /"}]
+    ok, why = _rv.sufficient("cleanup_disk", {}, _rv.computed_facts("cleanup_disk", {}, tr))
+    assert not ok and "scratch volume" in why, why
+    ok, _ = _rv.sufficient("clear_scratch_volume", {}, _rv.computed_facts("clear_scratch_volume", {}, tr))
+    assert ok, "a measured full scratch volume is the condition for clearing it"
+    space_only = [{"tool": "disk_usage", "args": "{}", "result": "scratch volume edge-cache (/var/cache/nginx in edge-victim): space 0%"}]
+    ok, why = _rv.sufficient("clear_scratch_volume", {}, _rv.computed_facts("clear_scratch_volume", {}, space_only))
+    assert not ok and "not measured" in why and "not what is full" not in why, why
 
     assert agent.symptom_query("all fine\nstarting up") is None, "clean output must not trigger an attachment"
     assert agent.symptom_query('nginx: [emerg] invalid number of arguments in "return" directive'), \

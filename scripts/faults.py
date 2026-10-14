@@ -4,6 +4,8 @@
   uv run --no-sync scripts/faults.py inject <case>    cases: nginx-stopped | bad-config | upstream-down | bad-upstream-name | container-removed
                                                           | crashloop | upstream-paused | upstream-detached | upstream-500
                                                           | inode-exhausted
+                                                          blind (tier "blind", 2026-10-14): upstream-oom | upstream-wrong-port
+                                                          | api-path-404 | config-empty | upstream-renamed
   uv run --no-sync scripts/faults.py verify           exit 0 when / and /api/ both return 200
   uv run --no-sync scripts/faults.py reset            restore config, start both containers
   uv run --no-sync scripts/faults.py run <case>       inject -> agent.py -> verify   (the end-to-end test)
@@ -37,6 +39,8 @@ BAD_CONF = GOOD_CONF.replace('return 200 "ok\\n";', 'return 200 "ok\\n"')  # dro
 # A fault the agent has not been drilled on: the upstream name is wrong, so nginx exits with "host not found in
 # upstream". Fixing it needs the runbook (or real reasoning), not the docker_start reflex that solves the other cases.
 BAD_NAME_CONF = GOOD_CONF.replace("http://edge-victim-app:80/", "http://edge-victim-backend:80/")
+# Blind cases: valid config, wrong upstream path (the upstream answers 404 for /v2/).
+BAD_PATH_CONF = GOOD_CONF.replace("http://edge-victim-app:80/", "http://edge-victim-app:80/v2/")
 assert BAD_CONF != GOOD_CONF and BAD_NAME_CONF != GOOD_CONF
 
 
@@ -56,6 +60,13 @@ CASES = {
     "upstream-500":      dict(min_actions=1, fix_tools={"recreate_stack"}, cause=r"500|recreat|rebuil|upstream.*(config|broken|misconfig)", tier="seen"),
     # 2026-10-13: no runbook covers it on purpose; the knowledge pack has an inode-exhaustion card. Tests whether the
     # agent reaches for the pack and whether it helps.
+    # Blind test (2026-10-14): written after the agent was frozen; nothing in the agent, tools, runbooks or prompts was
+    # changed because of them. Ground truth written with the injections, before any run.
+    "upstream-oom":        dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"oom|out of memory|memory|137|killed", tier="blind"),
+    "upstream-wrong-port": dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"8080|port|listen|refused|upstream.*(config|layer)", tier="blind"),
+    "api-path-404":        dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"404|/v2|path|proxy_pass", tier="blind"),
+    "config-empty":        dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"empty|no server|missing.*(config|server)|config.*(empty|blank|missing)", tier="blind"),
+    "upstream-renamed":    dict(min_actions=2, fix_tools={"recreate_stack", "docker_start", "docker_restart"}, cause=r"renam|missing|edge-victim-app-old|not found|no such container|resolv", tier="blind"),
     "inode-exhausted":   dict(min_actions=2, fix_tools={"clear_scratch_volume", "docker_start", "docker_restart"}, cause=r"inode|scratch|edge-cache|/var/cache/nginx|tiny files|too many files", tier="unseen",
                               diag_tools={"disk_usage", "docker_exec"}),
 }
@@ -129,6 +140,10 @@ def reset():
     (CONF_DIR / "default.conf").write_text(GOOD_CONF)
     ensure(CACHE)
     sh(f"docker start {CACHE} >/dev/null 2>&1")
+    if exists(f"{APP}-old"):                    # upstream-renamed: drop the renamed one, recreate the real one below
+        sh(f"docker rm -f {APP}-old >/dev/null 2>&1")
+    if exists(APP) and sh(f"docker inspect -f '{{{{.HostConfig.Memory}}}}' {APP}").stdout.strip() not in ("", "0"):
+        sh(f"docker rm -f {APP} >/dev/null 2>&1")    # upstream-oom: a memory limit is only undone by a rebuild
     sh(f"docker exec {CACHE} sh -c 'find /cache -mindepth 1 -maxdepth 1 -name \".sess_*\" -delete' >/dev/null 2>&1")
     for name in (APP, FRONT):       # a previous drill may have removed one; start cannot bring back what is gone
         ensure(name)
@@ -176,6 +191,24 @@ def inject(case):
         sh(f"docker exec {CACHE} sh -c 'rm -rf /cache/*_temp; i=0; while touch /cache/.sess_$i 2>/dev/null; "
            f"do i=$((i+1)); done'", check=True)
         sh(f"docker restart -t 1 {FRONT}")
+    elif case == "upstream-oom":
+        # 8 MB is far below what nginx with a worker per core needs; the kernel kills it on start.
+        sh(f"docker update --memory 8m --memory-swap 8m {APP}", check=True)
+        sh(f"docker restart -t 1 {APP}")
+    elif case == "upstream-wrong-port":
+        # The upstream's own config, in its writable layer, moves it to 8080; the front end still proxies to :80.
+        sh(f"docker exec {APP} sh -c \"sed -i -E 's/listen( +)80;/listen\\18080;/; s/listen( +)\\[::\\]:80;/listen\\1[::]:8080;/' "
+           f"/etc/nginx/conf.d/default.conf && nginx -s reload\"", check=True)
+    elif case == "api-path-404":
+        (CONF_DIR / "default.conf").write_text(BAD_PATH_CONF)
+        sh(f"docker restart -t 1 {FRONT}")
+    elif case == "config-empty":
+        # nginx starts with no server block: the container is Up, nothing listens, no error in the log.
+        (CONF_DIR / "default.conf").write_text("")
+        sh(f"docker restart -t 1 {FRONT}")
+    elif case == "upstream-renamed":
+        sh(f"docker rename {APP} {APP}-old", check=True)
+        sh(f"docker restart -t 1 {FRONT}")      # nginx resolves the upstream name at start and exits
     elif case == "bad-upstream-name":
         (CONF_DIR / "default.conf").write_text(BAD_NAME_CONF)
         sh(f"docker restart -t 1 {FRONT}")  # nginx cannot resolve the name and exits

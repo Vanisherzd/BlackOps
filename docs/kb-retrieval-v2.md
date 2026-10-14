@@ -231,6 +231,54 @@ full", a conclusion the measurement did not support; four of the five runs that 
 measured ("its inode usage was not measured"), asserted in `scripts/test-retrieval-gate.py`. A rerun with the honest
 message and more runs per arm is what would size the card's effect.
 
+### Rerun, ten per arm, with the honest refusal (2026-10-14 afternoon): no effect
+
+Same design, ten runs per arm alternating, the reviewer's refusal now "its inode usage was not measured", and
+`cleanup_disk` limited to an allowlist (see below). `logs/ab-20261014-123940-{A,B}.log`; analysis script output:
+
+| | A: card | B: no card |
+|---|---|---|
+| fixed (all autonomous) | 4/10 | **6/10** |
+| first `disk_usage` asked for inodes | 4/10 | 6/10 |
+| median seconds | 234 | 147 |
+| `search_incident_knowledge` called | 0 | 0 |
+
+Fisher two-sided p = 0.66. The first round's 4/5 vs 1/5 was chance; the card has no measurable effect on this case.
+The agent reads the log with the card on it and then calls `disk_usage` without inodes as often as without the card.
+
+What does decide the outcome, pooled over the twenty runs: a run whose **first** `disk_usage` asked for inodes was
+fixed 10/10; a run whose first did not was fixed 0/10. None recovered, not even after the reviewer said in words that
+the inode usage had not been measured. For this model the lever is the tool surface (the production default shows
+inodes, and then this case is fixed every time) and refusals that name the next measurement, not a hypothesis card
+next to the evidence. The card stays: it is accurate, cheap and harmless, but it is not shown to change behaviour.
+
+### Third run: a refusal that names the next measurement (2026-10-14, 14:00-14:57)
+
+The reviewer's refusal after a space-only reading now says what to do: "scratch volume measured at space 0% only; its
+inode usage was not measured. Next: call disk_usage with {"inodes": true}, then retry if inodes are at 95 % or more"
+(asserted in the gate self-test). Same A/B, ten per arm, `logs/ab-20261014-135959-{A,B}.log`:
+
+| | previous run (refusal: "not measured") | this run (refusal names the next call) |
+|---|---|---|
+| asked for inodes after the refusal | 0 | **11 of 11** |
+| fixed after a first `disk_usage` without inodes | 0/10 | **8/12** |
+| fixed overall | 10/20 (50 %) | **16/20 (80 %)** |
+| A (card) vs B (no card) | 4/10 vs 6/10 | 8/10 vs 8/10 (p = 1.00) |
+
+The agent does come back, when it is told which call to make. The four failures: three recovered (inodes measured,
+in one run the volume already cleared) and then ended the turn empty or garbled ("Agent couldn't generate a
+response") before the last step, the long-incident failure of a 3B-active model; one wandered into the sandbox's own
+files before any diagnosis. The card still makes no difference. For this agent the levers, in measured order: a tool
+that shows the decisive figure (production default; this case 4/4), a refusal that names the next call (50 -> 80 %),
+a knowledge card (no effect).
+
+**Evidence lost a second time, and the cleanup allowlist.** In the first ten-per-arm attempt (12:29) the agent's
+`cleanup_disk` deleted the first A/B's three logs: the morning's fix protected `drills-*.log` only, and the A/B logs
+were new files under the same `logs/*.log` pattern. The numbers of that round survive here and in commit ea129b3;
+the raw logs do not. `cleanup_disk` now deletes only an allowlist of regenerable service output (`logs/*.out`,
+`logs/trt-serve.log`, `/tmp/edge-agent-*`), with drill, A/B, shim and ops-API logs also listed as evidence; the
+self-test asserts that every candidate is on the allowlist. That attempt was stopped and restarted from zero.
+
 ## Not changed, deliberately
 
 - The pack never opens the runbook gate; a fault no runbook covers still needs one consulted (or two refusals).

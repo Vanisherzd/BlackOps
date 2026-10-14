@@ -738,3 +738,55 @@ second key is for and the model key did not close. Now: drill logs are excluded 
 trajectories, and the code key refuses a host cleanup when the full filesystem in the incident is the scratch
 volume. Rerun: inode 2/2 autonomous, no cleanup.
 
+## Why turns ended empty, refusals that name the next call, and a blind test (2026-10-14, evening)
+
+**Empty last turns.** In the inode A/B, three runs recovered and then ended without the last step. The sandbox
+transcripts show three different causes: a request that arrived with room for one output token (10.7k input, 32k
+window, `stopReason=length`, out=1; where the client's budget came from is not pinned down); a tool call written in
+the thinking channel without its `<tool_call>` opener, which the salvage regex required; and an agent that read "the
+change reviewer did not approve" as a request for a human and answered `/approve`. Fixes: the shim raises a request
+below 1,024 output tokens to 4,096 when an over-estimate of the prompt leaves room, and logs every request's budget;
+salvage accepts the last `<function=...>...</function>` block without its wrapper, for a tool the request offered.
+
+**Every refusal names who refused and the next call.** The reviewer's refusals start "review-rejected: refused by the
+automatic change reviewer (no human approval exists: do not ask for one or send /approve)", the gate's and the code
+key's end in `Next:` with the tool and its JSON arguments, and the self-test asserts it for every code-key refusal.
+Prefixes (`refused:`, `denied:`, `review-rejected:`) are unchanged; the scorer and the self-test read them.
+
+Measured after both changes: the ten cases three times each, 29/30 autonomous (the one failure upstream-detached),
+no fallback, nothing made worse, no false health claim; the output floor fired three times and salvage once. The inode
+experiment (`OPS_INODES=on-request`): 9/10, and both runs that met the refusal measured inodes and were fixed.
+
+**Blind test.** Five faults written after the agent was frozen (`logs/blind-freeze-20261014.txt` holds the hashes of
+every file that shapes the agent; nothing was changed because of these cases), each injection and reset checked once
+without the agent, then three drills each (tier `blind` in `faults.CASES`):
+
+| case | fault | fixed |
+|---|---|---|
+| upstream-renamed | upstream container renamed, front end restarted: `host not found in upstream` | 3/3 |
+| upstream-wrong-port | upstream's own config moved to 8080 (writable layer): 502 | 2/3 |
+| api-path-404 | front end proxies to `/v2/`: 404 | 1/3 |
+| upstream-oom | upstream memory limit 8 MB: `Exited (137)`, 504 | 0/3 |
+| config-empty | front-end config emptied: container Up, nothing listening, no error logged | 0/3 |
+| **total** | | **6/15 (40 %)** against 29/30 on the cases the agent was tuned on |
+
+Failure shapes. upstream-oom: the state marker attaches `oom-killed.md`, the agent starts the container (killed
+again), kills host processes, never reaches restart-then-rebuild; nothing it can call shows a container memory
+limit. config-empty: the agent cannot know the stack's canonical config and guesses (`listen 8880`, an `events {}
+http {}` wrapper), searches the sandbox's own filesystem for a copy, and every run ends in OpenClaw's "Context
+overflow". api-path-404: the upstream's log line `"GET /v2/" 404` names the fault and was missed twice.
+
+What the numbers say: on faults it was tuned on the agent is reliable; on new ones it fixes about two in five, and
+the misses are knowledge it has no way to obtain (a memory limit, a known-good config) more than reasoning. The
+cheapest next levers, in that order: a last-known-good config the agent can restore (write_config keeps a backup;
+`restore_config`), and `docker_ps` showing a container's memory limit and OOM-killed flag.
+
+**Harness defects found on the way.** (1) A drill killed by its timeout does not stop the sandbox agent: after
+"Context overflow" OpenClaw compacts and continues in another transcript, and its calls landed in the next two drills
+(compared call by call against each drill's own transcript: runs 5, 6, 10, 11, 15; in run 15 a stray `recreate_stack`
+built the container that run was credited for). Those runs are excluded above and the affected cases rerun;
+`drill-all.sh` and `ab-drill.sh` now wait until the ops API has been quiet for 60 s before the next reset, and the
+reruns started clean. (2) `score.py` dropped killed drills from the table (config-empty did not appear at all); a
+drill with an agent turn and no verify now counts as a silent failure (self-check asserts it). With both, `score.py`
+over all 19 blind drills reads 8/19 (42 %), the same picture.
+

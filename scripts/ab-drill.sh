@@ -8,6 +8,13 @@ cd ~/edge-agent || exit 1
 CASE="$1"; N="$2"; ENV_A="$3"; ENV_B="$4"
 TS=$(date +%Y%m%d-%H%M%S); BASE="logs/ab-$TS"
 setsid nohup bash -c '
+  quiesce() {   # see drill-all.sh: a killed drill can keep calling the ops API
+    for i in $(seq 1 60); do
+      age=$(( $(date +%s) - $(stat -c %Y logs/ops-api.log 2>/dev/null || echo 0) ))
+      [ $age -ge 60 ] && return
+      sleep 10
+    done
+  }
   restart_ops() {
     [ -f logs/ops-api.pid ] && kill "$(cat logs/ops-api.pid)" 2>/dev/null; sleep 2
     env $1 setsid nohup .venv/bin/python scripts/ops_api.py > logs/ops-api.out 2>&1 < /dev/null &
@@ -17,7 +24,7 @@ setsid nohup bash -c '
   for i in $(seq 1 '"$N"'); do
     for arm in A B; do
       [ $arm = A ] && E="'"$ENV_A"'" || E="'"$ENV_B"'"
-      restart_ops "$E"; echo "run $i arm $arm env [$E] $(date +%T)"
+      quiesce; restart_ops "$E"; echo "run $i arm $arm env [$E] $(date +%T)"
       timeout 600 bash scripts/nemoclaw-drill.sh '"$CASE"' >> '"$BASE"'-$arm.log 2>&1; echo "########" >> '"$BASE"'-$arm.log
     done
   done

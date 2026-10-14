@@ -17,6 +17,7 @@ def main():
     agent._incident.update(runbook_seen=False, refusals=0)
     first = agent.run_tool("write_config", {"content": CONF}, dry_run=True)
     assert first.startswith("refused:"), f"a cold write_config must be refused, got: {first[:120]}"
+    assert "Next:" in first and "docker_logs" in first, "a refusal names the next call"
     assert "nginx-config-error.md" in first, "the refusal must list the catalogue"
     assert not agent._incident["runbook_seen"], "a refusal alone must not count as having read anything"
 
@@ -62,7 +63,9 @@ def main():
 
     # Evidence survives a cleanup, and a full scratch volume is not a reason to delete host logs.
     victims, _ = agent.cleanup_candidates(now=time.time() + 10 ** 6)          # as if everything were old
-    assert not [f for f, _ in victims if "/drills-" in f], "drill logs are evidence, never cleanup victims"
+    assert not [f for f, _ in victims if "/drills-" in f or "/ab-" in f], "drill and A/B logs are evidence, never cleanup victims"
+    allowed = (".out", "/trt-serve.log", "/tmp/edge-agent-")
+    assert all(f.endswith(allowed[:2]) or allowed[2] in f for f, _ in victims), [f for f, _ in victims]
     import reviewer as _rv
     tr = [{"tool": "disk_usage", "args": "{}", "result": "scratch volume edge-cache (/var/cache/nginx in edge-victim): "
            "space 0%, inodes 100%  host, space: /dev/nvme0n1p2 916G 812G 58G 94% /"}]
@@ -72,7 +75,18 @@ def main():
     assert ok, "a measured full scratch volume is the condition for clearing it"
     space_only = [{"tool": "disk_usage", "args": "{}", "result": "scratch volume edge-cache (/var/cache/nginx in edge-victim): space 0%"}]
     ok, why = _rv.sufficient("clear_scratch_volume", {}, _rv.computed_facts("clear_scratch_volume", {}, space_only))
-    assert not ok and "not measured" in why and "not what is full" not in why, why
+    assert not ok and "not measured" in why and '{"inodes": true}' in why and "not what is full" not in why, why
+    # Every code-key refusal names its next call, and the wrapper says no human approval exists (an agent once
+    # answered "the change reviewer did not approve" with "/approve" and stopped).
+    for action, a in (("recreate_stack", {"name": "edge-victim-app", "replace": True}), ("kill_process", {"pid": 4242}),
+                      ("clear_scratch_volume", {}), ("cleanup_disk", {})):
+        ok, why = _rv.sufficient(action, a, _rv.computed_facts(action, a, []))
+        assert not ok and "Next:" in why, (action, why)
+    real_review = _rv.review
+    _rv.review = lambda *a, **k: (False, "x. Next: do y")
+    msg = agent.reviewed("cleanup_disk", {})
+    _rv.review = real_review
+    assert msg.startswith("review-rejected:") and "no human approval" in msg and "/approve" in msg and "Next:" in msg, msg
 
     assert agent.symptom_query("all fine\nstarting up") is None, "clean output must not trigger an attachment"
     assert agent.symptom_query('nginx: [emerg] invalid number of arguments in "return" directive'), \

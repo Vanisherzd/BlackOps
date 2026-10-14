@@ -107,29 +107,35 @@ def sufficient(action, args, facts):
     """(met: bool, why: str). The deterministic key: which fact is missing, if any."""
     if action == "recreate_stack":
         if facts.get("restart of this container in this incident") != "yes":
-            return False, "no docker_restart of this container in this incident yet — restart first"
+            return False, ('no docker_restart of this container in this incident yet. Next: docker_restart {"name": "'
+                           + str(args.get("name", "")) + '"}, then check_health; rebuild only if /api/ still fails')
         if facts.get("/api/ still failing after the restart") != "yes":
-            return False, "after the restart /api/ was not seen failing — check health before rebuilding"
+            return False, "after the restart /api/ was not seen failing. Next: check_health; rebuild only if /api/ still fails"
         return True, "restarted, and /api/ still failing afterwards"
     if action == "kill_process":
         line = facts.get("top_processes lists this pid", "NO")
         if line == "NO":
-            return False, "top_processes in this incident does not list this pid — measure before killing"
+            return False, "top_processes in this incident does not list this pid. Next: top_processes, then kill_process with a pid it lists at high CPU or memory"
         return True, line
     if action == "clear_scratch_volume":
         m = re.match(r"space (\d+)%(?:, inodes (\d+)%)?", facts.get("scratch volume from disk_usage", ""))
         if not m:
-            return False, "disk_usage was not run in this incident — measure the scratch volume before clearing it"
+            return False, ('the scratch volume was not measured in this incident. Next: disk_usage {"inodes": true}, '
+                           'then clear_scratch_volume again if space or inodes are at 95 % or more')
         if max(int(m.group(1)), int(m.group(2) or 0)) < 95:
-            # Say what was measured, not a conclusion it does not support: "it is not what is full", given after a
-            # space-only reading, sent the agent away from an inode-exhausted volume in 4 of the 5 A/B runs it met it.
-            unmeasured = "" if m.group(2) else "; its inode usage was not measured"
-            return False, f"scratch volume measured at {m.group(0)}, below 95 %{unmeasured}"
+            # Name the next measurement, not only what is missing. "it is not what is full" (unsupported) and then
+            # "its inode usage was not measured" (true, not actionable) were both followed by 0 recoveries in 20 A/B
+            # runs: a run whose first disk_usage skipped inodes never came back to them.
+            if not m.group(2):
+                return False, (f"scratch volume measured at {m.group(0)} only; its inode usage was not measured. "
+                               'Next: call disk_usage with {"inodes": true}, then retry if inodes are at 95 % or more')
+            return False, (f"scratch volume measured at {m.group(0)}, both below 95 %: it is not what is full. Next: "
+                           'docker_logs {"name": "<the failing container>"} for the real error')
         return True, m.group(0)
     if action == "cleanup_disk":
         pct = facts.get("root filesystem usage from disk_usage", "")
         if not pct.endswith("%"):
-            return False, "disk_usage was not run in this incident — measure before deleting"
+            return False, 'disk_usage was not run in this incident. Next: disk_usage {"inodes": true}, then decide'
         sv = re.match(r"space (\d+)%(?:, inodes (\d+)%)?", facts.get("scratch volume from disk_usage", ""))
         if sv and max(int(sv.group(1)), int(sv.group(2) or 0)) >= 95:
             # The model key approved this once: "No space left on device" plus / at 94 % read as a host disk problem,
@@ -137,7 +143,8 @@ def sufficient(action, args, facts):
             return False, (f"the full filesystem in this incident is the scratch volume ({sv.group(0)}), not / — "
                            "deleting host logs does not free it; use clear_scratch_volume")
         if int(pct[:-1]) < 85:
-            return False, f"root filesystem at {pct}, below the 85 % threshold — nothing to free"
+            return False, (f"root filesystem at {pct}, below the 85 % threshold: nothing to free. Next: "
+                           'docker_logs {"name": "<the failing container>"} for the real error')
         return True, f"root filesystem at {pct}"
     return True, "no precondition defined"
 
@@ -198,9 +205,11 @@ def review(action, args, trace, runbook_seen):
                 reason = text[m.end():].strip().lstrip(":.-— \n")[:600] or "(no reason given)"
                 break
         if not verdict:
-            verdict, reason = "REJECT", "reviewer gave no verdict in two passes; destructive action withheld"
+            verdict, reason = "REJECT", ("reviewer gave no verdict in two passes; destructive action withheld. "
+                                         "Next: call the same tool once more; if refused again, escalate in your final report")
     except Exception as e:                      # fail closed
-        verdict, reason = "REJECT", f"reviewer unavailable ({type(e).__name__}: {str(e)[:120]}); destructive action withheld"
+        verdict, reason = "REJECT", (f"reviewer unavailable ({type(e).__name__}: {str(e)[:120]}); destructive action withheld. "
+                                     "Next: call the same tool once more; if refused again, escalate in your final report")
     _log(dict(action=action, args=args, verdict=verdict, reason=reason, ms=int(1000 * (time.time() - t0)),
               evidence_items=len(trace), facts=facts, key="model"))
     return verdict == "APPROVE", reason

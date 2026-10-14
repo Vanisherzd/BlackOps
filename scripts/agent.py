@@ -51,8 +51,11 @@ def reviewed(name, args):
     ok, reason = reviewer.review(name, args, _incident["trace"], _incident["runbook_seen"])
     if ok:
         return None
-    return (f"review-rejected: the change reviewer did not approve {name}. Reason: {reason}\n"
-            "Choose a less invasive action, gather the evidence the reviewer asked for, or escalate.")
+    # Every refusal names who refused and the next call. "the change reviewer did not approve" once read as a request
+    # for a human: the agent answered "/approve" and the drill ended (2026-10-14).
+    return (f"review-rejected: refused by the automatic change reviewer (no human approval exists: do not ask for one or send /approve). "
+            f"Reason: {reason}\nNext: make the call the reason names, then call {name} again; if there is none, choose "
+            "a less invasive action, or stop and escalate in your final report.")
 
 
 ACCESS_5XX_RE = re.compile(r'"(?:GET|POST|HEAD) [^"]*" (5\d\d) ')
@@ -133,11 +136,14 @@ def attach_runbook(result, query):
 #   images and volumes           - shared with the rest of the lab; the agent reports pressure, a human decides.
 # logs/agent/*.jsonl is the incident audit trail and is deliberately not cleanable: an ops agent does not delete
 # the record of what it did.
-CLEANUP_GLOBS = (str(ROOT / "logs" / "*.log"), str(ROOT / "logs" / "*.out"), "/tmp/edge-agent-*")
+# An allowlist of service output that can be regenerated, not "logs/*.log": a pattern over a directory also catches
+# whatever is written there later, and it did twice (drill logs on 2026-10-14 01:37, the first A/B's logs at 12:29).
+CLEANUP_GLOBS = (str(ROOT / "logs" / "*.out"), str(ROOT / "logs" / "trt-serve.log"), "/tmp/edge-agent-*")
 CLEANUP_MIN_AGE_S = 600        # never delete a file something is probably still writing
 # Evidence is not a log to rotate. On 2026-10-14 an inode-exhaustion drill ran cleanup_disk (the host's / really is at
 # 94 %, so it looked justified) and deleted every earlier drills-*.log, the raw record behind docs/scorecard.md.
-EVIDENCE_GLOBS = (str(ROOT / "logs" / "drills-*.log"),)
+EVIDENCE_GLOBS = (str(ROOT / "logs" / "drills-*.log"), str(ROOT / "logs" / "ab-*.log"), str(ROOT / "logs" / "oai-shim.log"),
+                  str(ROOT / "logs" / "ops-api.log"), str(ROOT / "logs" / "reviews.jsonl"))   # belt and braces
 
 
 def cleanup_candidates(now=None):
@@ -227,7 +233,7 @@ TOOLS = [
     {"name": "top_processes", "description": "Top host processes by CPU with memory usage", "parameters": {"type": "object", "properties": {}}},
     {"name": "recreate_stack", "description": "Recreate a container of this stack from its definition: one that no longer exists at all, or with replace=true one whose own state is corrupt and survives a restart (e.g. a broken config inside the upstream). Start/restart first if it merely exited", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "replace": {"type": "boolean", "default": False}}}},
     {"name": "network_repair", "description": "Make sure the stack network exists and both containers are attached to it; use when the front end cannot resolve or reach the upstream", "parameters": {"type": "object", "properties": {}}},
-    {"name": "cleanup_disk", "description": "Free space by deleting this project's own old log files (never images, volumes, or anyone else's data)", "parameters": {"type": "object", "properties": {}}},
+    {"name": "cleanup_disk", "description": "Free space by deleting this project's own old service output (*.out, the inference server's startup log); never images, volumes, records, or anyone else's data", "parameters": {"type": "object", "properties": {}}},
     {"name": "clear_scratch_volume", "description": "Delete every file in this stack's scratch volume edge-cache (mounted as /var/cache/nginx in edge-victim: nginx's temp files). Its contents are disposable; nginx recreates its temp directories when it starts", "parameters": {"type": "object", "properties": {}}},
     {"name": "kill_process", "description": "Terminate a runaway host process by pid; only processes owned by this user and not part of the platform itself", "parameters": {"type": "object", "properties": {"pid": {"type": "integer"}, "force": {"type": "boolean", "default": False}}, "required": ["pid"]}},
     {"name": "finish", "description": "End the run with a verdict", "parameters": {"type": "object", "properties": {"status": {"type": "string", "enum": ["resolved", "unresolved", "escalate"]}, "root_cause": {"type": "string"}, "actions": {"type": "string"}}, "required": ["status", "root_cause", "actions"]}},
@@ -429,13 +435,14 @@ def _run_tool(name, args, dry_run):
         if _incident["refusals"] <= 2:
             import rag
             catalogue = "\n".join(f"- {n}: {t}" for n, t, _ in rag.documents())
-            return (f"refused: no runbook consulted yet for this incident, so {name} is premature. "
-                    "Get the symptom first (docker_logs of the failing container attaches the matching procedure), "
-                    "or call search_runbooks with the error text. Runbooks available:\n" + catalogue)
+            return (f"refused: (automatic rule) no runbook consulted yet for this incident, so {name} is premature. "
+                    'Next: call docker_logs {"name": "<the failing container>"} (it attaches the matching runbook), or '
+                    'search_runbooks {"query": "<the error text>"}; then call ' + name + " again. Runbooks available:\n"
+                    + catalogue)
 
     def guard(n):
         if n not in NAMES:
-            return f"denied: container {n!r} is outside the allowed set {sorted(NAMES)}"
+            return f"denied: container {n!r} is outside the allowed set {sorted(NAMES)}. Next: the same call with one of those names."
     if name == "check_health":
         health = {k: http_status(u) for k, u in HEALTH.items()}
         if all(v == 200 for v in health.values()):
@@ -469,7 +476,10 @@ def _run_tool(name, args, dry_run):
     if name == "docker_exec":
         cmd = args["cmd"].strip()
         if not cmd.startswith(EXEC_ALLOW) or any(t in cmd for t in (";", "&&", "|", ">", "`", "$(")):
-            return "denied: only read-only diagnostics are allowed here"
+            return ("denied: docker_exec runs one read-only command (nginx -t, cat, ls, ps, curl, df, du, tail, head, "
+                    "grep, id, env) with no ; && | > ` or $(. Next: one such command, e.g. "
+                    '{"name": "edge-victim-app", "cmd": "df -h /"}; to change state use the action tools '
+                    "(write_config, docker_start/docker_restart, network_repair, recreate_stack, clear_scratch_volume).")
         return guard(args["name"]) or sh(f"docker exec {args['name']} sh -c {json.dumps(cmd)}")
     if name in ("docker_start", "docker_restart"):
         d = guard(args["name"])
@@ -491,7 +501,8 @@ def _run_tool(name, args, dry_run):
     if name == "write_config":
         content = args["content"]
         if len(content) > 20000 or "proxy_pass" not in content:
-            return "denied: config must stay under 20 KB and keep the /api/ proxy_pass"
+            return ("denied: config must stay under 20 KB and keep the /api/ proxy_pass. Next: read_config, keep its "
+                    "proxy_pass line, and write_config the complete corrected file.")
         if dry_run:
             return "DRY-RUN: would write default.conf"
         (CONF_DIR / "default.conf").write_text(content)
@@ -558,7 +569,8 @@ def _run_tool(name, args, dry_run):
             if t not in faults.SPECS:
                 return f"denied: {t!r} is not part of this stack"
         if args.get("replace") and not args.get("name"):
-            return "denied: replace=true needs an explicit name; it destroys that container and builds it again"
+            return ("denied: replace=true needs an explicit name; it destroys that container and builds it again. "
+                    'Next: recreate_stack {"name": "edge-victim-app", "replace": true}.')
         if args.get("replace") and args.get("name") == "edge-victim":
             return ("denied: edge-victim's nginx config is a host file mounted into the container; rebuilding the "
                     "container keeps the same file and the same fault. Fix the file with write_config, then "
@@ -622,15 +634,15 @@ def _run_tool(name, args, dry_run):
     if name == "kill_process":
         pid = int(args["pid"])
         if pid in (os.getpid(), os.getppid(), 1):
-            return "denied: that pid is this agent or init"
+            return "denied: that pid is this agent or init. Next: top_processes, and pick the runaway pid it lists."
         info = sh(f"ps -o uid=,args= -p {pid}").strip()
         if not info or "exit " in info:
             return f"no such process: {pid}"
         uid, cmd = info.split(None, 1)
         if int(uid) != os.getuid():
-            return f"denied: pid {pid} belongs to uid {uid}, not this agent"
+            return f"denied: pid {pid} belongs to uid {uid}, not this agent. Next: report it in your final report; it is not yours to kill."
         if PROTECTED_CMD.search(cmd):
-            return f"denied: pid {pid} is part of the platform ({cmd[:120]})"
+            return f"denied: pid {pid} is part of the platform ({cmd[:120]}). Next: report it; the platform is not killed from here."
         if dry_run:
             return f"DRY-RUN: would signal {pid} ({cmd[:80]})"
         refusal = reviewed(name, {"pid": pid, "cmd": cmd[:80], "force": bool(args.get("force"))})

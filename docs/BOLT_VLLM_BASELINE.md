@@ -1,0 +1,100 @@
+# Bolt vLLM baseline
+
+This is the reproducible Phase 1 service definition for
+`nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB` on the DGX Spark. Run all commands from the repository root. Docker,
+the NVIDIA Container Toolkit, GPU access, and enough local storage for the image and model cache are prerequisites.
+`HF_TOKEN` is optional and is read only from the launch environment.
+
+## Reproduce
+
+1. Build the pinned derived image. This is the networked step that installs `b12x` and downloads the vLLM kernels:
+
+   ```sh
+   make bolt-build
+   ```
+
+2. If the model is gated, export `HF_TOKEN` in the current shell, then start the service:
+
+   ```sh
+   make bolt-up
+   ```
+
+3. Wait through the multi-minute model load and verify both `/health` and `/v1/models`:
+
+   ```sh
+   make bolt-wait
+   ```
+
+4. Run the repository tests, then run the existing inference smoke test against Bolt:
+
+   ```sh
+   uv run --no-sync -m unittest discover -s tests
+   VLLM_URL=http://127.0.0.1:8200 SERVED_NAME=bolt uv run --no-sync scripts/smoke.py
+   ```
+
+5. When measurement is complete, stop and remove only the Bolt container:
+
+   ```sh
+   make bolt-down
+   ```
+
+The effective vLLM argument vector is recorded one argument per line in `$BOLT_LOG_DIR/bolt-args.txt`. The baseline
+deliberately excludes speculative decoding and media flags.
+
+## Variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `BLACKBOX_INFERENCE_BASE_URL` | `http://127.0.0.1:8200` | OpenAI-compatible endpoint read by application clients. |
+| `BLACKBOX_INFERENCE_MODEL` | `bolt` | Model alias read by application clients. |
+| `BLACKBOX_INFERENCE_TIMEOUT_S` | `300` | Client request timeout in seconds. |
+| `BOLT_IMAGE_TAG` | `nightly-77154ca6116ae34cbfe314beef1016bde9b63989` | Pinned upstream vLLM image tag. |
+| `BOLT_IMAGE` | `blackbox-vllm-bolt:77154ca` | Local derived image name. |
+| `BOLT_CONTAINER` | `vllm-bolt` | Docker container name. |
+| `MODEL_ID` | `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB` | Hugging Face model identifier. |
+| `MODEL_REVISION` | empty (`main`) | Optional Hugging Face revision; the plan documents `c6cc2e8f`. |
+| `SERVED_MODEL_NAME` | `bolt` | Stable API model alias. |
+| `BOLT_HOST` | `0.0.0.0` | vLLM bind address. |
+| `BOLT_PORT` | `8200` | vLLM service port. |
+| `MAX_MODEL_LEN` | `32768` | Maximum context length. |
+| `MAX_NUM_SEQS` | `1` | Baseline concurrent sequence limit. |
+| `GPU_MEMORY_UTILIZATION` | `0.45` | vLLM GPU-memory reservation fraction. |
+| `HF_HOME` | `$HOME/.cache/huggingface` | Host Hugging Face cache mounted into the container. |
+| `VLLM_CACHE_DIR` | `$HOME/.cache/vllm-bolt` | Host vLLM cache mounted into the container. |
+| `BOLT_LOG_DIR` | `./logs` | Host directory for launch metadata. |
+| `BOLT_EXTRA_ARGS` | empty | Additional whitespace-delimited vLLM arguments. |
+| `HF_TOKEN` | unset | Optional Hugging Face token inherited only when exported. |
+| `HF_HUB_OFFLINE` | unset | Optional Hugging Face offline-mode setting inherited only when exported. |
+
+## Results
+
+### OFFICIAL_REFERENCE
+
+Source: [NVIDIA Nemotron 3.5 Bolt 74B A9B 24GB model card](https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB), accessed 2026-10-16.
+
+The model card's installation recipe states:
+
+> `pip install b12x`
+>
+> `vllm download-kernels`
+
+Those commands and the card's vLLM serve flags are baked into this baseline image and launcher. This section records
+reference instructions only; it does not treat model-card statements as local measurements.
+
+### LOCAL_MEASUREMENT
+
+No local measurement has been run yet.
+
+| startup_time_s | TTFT_ms | output_tok_s | ITL_ms | peak_memory | prompt_tokens | completion_tokens | wall_time | environment |
+|---:|---:|---:|---:|---|---:|---:|---:|---|
+| | | | | | | | | |
+
+### NOT_YET_TESTED
+
+- Image build on Ubuntu aarch64.
+- Container startup and model loading on the DGX Spark.
+- `/health` and `/v1/models` responses.
+- Plain completion, reasoning, and parsed tool-call smoke tests.
+- Startup time, TTFT, output throughput, ITL, peak memory, token counts, and wall time.
+- Behavior with `HF_HUB_OFFLINE=1` after caches are populated.
+- Co-residency with the existing TensorRT-LLM service.

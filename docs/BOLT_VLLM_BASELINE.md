@@ -25,12 +25,22 @@ the NVIDIA Container Toolkit, GPU access, and enough local storage for the image
    make bolt-wait
    ```
 
-4. Run the repository tests, then run the existing inference smoke test against Bolt:
+4. Run the repository tests (33, all against the in-process mock server, no GPU needed), then the smoke tests,
+   the tool-call benchmark and the performance baseline against Bolt. `BLACKBOX_INFERENCE_BASE_URL` defaults to
+   `http://127.0.0.1:8200` and the model name to `bolt` (`config/inference.env.example`):
 
    ```sh
    uv run --no-sync -m unittest discover -s tests
-   VLLM_URL=http://127.0.0.1:8200 SERVED_NAME=bolt uv run --no-sync scripts/smoke.py
+   uv run --no-sync -m blackbox.benchmarks.inference_smoke   --out artifacts/bolt_inference_smoke.json
+   uv run --no-sync -m blackbox.benchmarks.tool_call_smoke   --out artifacts/bolt_tool_call_smoke.json
+   uv run --no-sync -m blackbox.benchmarks.multi_turn_smoke  --out artifacts/bolt_multi_turn_smoke.json
+   uv run --no-sync -m blackbox.benchmarks.concurrency_smoke --out artifacts/bolt_concurrency_smoke.json
+   uv run --no-sync -m blackbox.benchmarks.tool_eval --out-json artifacts/bolt_tool_eval.json --out-md artifacts/bolt_tool_eval.md
+   uv run --no-sync -m blackbox.benchmarks.perf_baseline --concurrency 1 --startup-log logs/bolt-startup.log --out artifacts/bolt_perf_c1.json
+   uv run --no-sync -m blackbox.benchmarks.perf_baseline --concurrency 2 --out artifacts/bolt_perf_c2.json
    ```
+
+   The existing engine smoke test also runs unchanged: `VLLM_URL=http://127.0.0.1:8200 SERVED_NAME=bolt uv run --no-sync scripts/smoke.py`.
 
 5. When measurement is complete, stop and remove only the Bolt container:
 

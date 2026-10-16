@@ -49,7 +49,7 @@ def run_incident(
     verdict: dict[str, str] = {}
 
     def finish(arguments: JsonObject) -> str:
-        raw_status = arguments.get("status", "resolved")
+        raw_status = arguments.get("status")
         status = raw_status if isinstance(raw_status, str) else ""
         if status not in {"resolved", "escalated", "failed"}:
             raise InvalidFinishStatusError(status)
@@ -68,13 +68,12 @@ def run_incident(
                     "status": {
                         "type": "string",
                         "enum": ["resolved", "escalated", "failed"],
-                        "default": "resolved",
                     },
                     "root_cause": {"type": "string"},
                     "actions": {"type": "string"},
                 },
-                # The status default lets the deterministic mock exercise finish safely.
-                "required": ["root_cause", "actions"],
+                # No default: a verdict the model did not state is not a verdict.
+                "required": ["status", "root_cause", "actions"],
             },
             handler=finish,
             risk="read",

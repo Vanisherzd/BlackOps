@@ -212,11 +212,16 @@ def _required_arguments(tool: JsonObject | None, message: str) -> JsonObject:
         return {}
     subject_match = re.search(r"\b(?:service|container)\s+([^\s,.!?]+)", message, re.IGNORECASE)
     subject = subject_match.group(1).strip("'\"") if subject_match else None
-    return {
-        key: subject or key
-        for key in required
-        if isinstance(key, str)
-    }
+    properties = parameters.get("properties") if isinstance(parameters, dict) else None
+    filled: JsonObject = {}
+    for key in required:
+        if not isinstance(key, str):
+            continue
+        schema = properties.get(key) if isinstance(properties, dict) else None
+        enum = schema.get("enum") if isinstance(schema, dict) else None
+        # An enum's first value is a valid choice; the parameter name would not be (finish.status).
+        filled[key] = enum[0] if isinstance(enum, list) and enum else (subject or key)
+    return filled
 
 
 def _tool_call(name: str, arguments: JsonObject) -> JsonObject:

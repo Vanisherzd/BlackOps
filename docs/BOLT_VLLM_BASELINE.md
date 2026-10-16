@@ -66,6 +66,21 @@ deliberately excludes speculative decoding and media flags.
 | `HF_TOKEN` | unset | Optional Hugging Face token inherited only when exported. |
 | `HF_HUB_OFFLINE` | unset | Optional Hugging Face offline-mode setting inherited only when exported. |
 
+## Running on the Spark from the feature worktree
+
+The branch is checked out on the Spark as a separate git worktree, `~/edge-agent-bolt`, so the main checkout
+(`~/edge-agent`) can stay on whatever branch the team is drilling with. A worktree has no `.venv` of its own and
+`uv run --no-sync` would otherwise create an empty one; link the project environment once:
+
+```bash
+cd ~/edge-agent-bolt && ln -s ~/edge-agent/.venv .venv
+uv run --no-sync -m unittest discover -s tests        # 12 gateway tests, measured 2026-10-16: OK
+```
+
+The derived image is built on the Spark with `make bolt-build` (measured 2026-10-16: `blackbox-vllm-bolt:77154ca`,
+24.7 GB). `vllm download-kernels` cannot run inside `docker build` (no GPU to probe), so the Dockerfile performs the
+two pip installs it stands for, pinned.
+
 ## Results
 
 ### OFFICIAL_REFERENCE

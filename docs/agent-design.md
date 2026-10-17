@@ -790,3 +790,36 @@ reruns started clean. (2) `score.py` dropped killed drills from the table (confi
 drill with an agent turn and no verify now counts as a silent failure (self-check asserts it). With both, `score.py`
 over all 19 blind drills reads 8/19 (42 %), the same picture.
 
+## Nano against Bolt on the same drills (2026-10-17)
+
+Same agent, tools, prompts, sandbox and cases (the agent files unchanged since `logs/blind-freeze-20261014.txt`);
+only the model behind the shim changes. Bolt is `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB` on vLLM (branch
+`feat/blackbox-bolt-vllm`, `~/edge-agent-bolt`), served on 127.0.0.1:8200 as `edge-agent`; the shim ran with
+`UPSTREAM=http://127.0.0.1:8200` and the ops API with `VLLM_URL` pointing there, so the reviewer and `self_heal` used
+Bolt too (otherwise the reviewer, unreachable on :8000, would fail closed and refuse every destructive action). Nano is
+the 2026-10-14 runs. Bolt: `logs/drills-20261017-160900.log` (seen x2, blind x3, interleaved) and `-183544.log`.
+
+| | Nano-30B-A3B (TRT-LLM) | Bolt-74B-A9B (vLLM) |
+|---|---|---|
+| seen cases (ten, incl. inode) | 29/30, median 84 s, 6 calls | **20/20**, median **57 s**, 7 calls |
+| upstream-renamed | 3/3 | 2/3 (one via self_heal) |
+| upstream-wrong-port | 2/3 | **3/3** |
+| api-path-404 | 1/3 | **3/3** |
+| upstream-oom | 0/3 | 0/3 |
+| config-empty | 0/3 | 0/3 |
+| **blind total** | **6/15 (40 %)** | **8/15 (53 %)** (Fisher p ≈ 0.7) |
+| false health claims | 0 | 0 |
+
+Bolt decodes slower (32.8 against 57.9 tok/s single stream) and still finishes the drills faster: fewer and shorter
+thoughts. It gains where reading the evidence decides the case: the upstream's `"GET /v2/" 404` line, the upstream
+listening on 8080. The two cases that need information no tool provides (a container memory limit, a known-good
+config) stay at 0/3 for both models, which is the measured version of "information, not reasoning" for them. The
+blind difference is two runs out of fifteen and not significant on its own.
+
+Harness, again: the quiet-API wait from 2026-10-14 was not enough. After a config-empty run was killed, its agent
+had been silent for 73 s (thinking), passed the 60 s check, and its calls landed in the next two drills; in one a
+stray `recreate_stack` built the container that run passed on. Compared call by call against each run's own
+transcript, runs 31 and 35 are excluded (stray actions executed) and rerun clean; run 30 had stray reads only and
+stands. `drill-all.sh` now restarts the sandbox gateway whenever the timeout kills a drill, which ends every
+in-flight agent run, and then waits for the quiet API as before.
+

@@ -37,7 +37,7 @@ UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / jour
 # of it. So the rule lives in the tool layer. Evidence tools push the matching runbook into the answer, and an action
 # refuses once until a runbook has been seen for this incident. An incident ends when health comes back green.
 MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
-            "clear_scratch_volume",
+            "clear_scratch_volume", "restore_config",
             "kill_process"}
 SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
                         r"not found|exit(ed)? \(?\d|restarting|paused|oom|killed|no space|\b50[0-9]\b", re.I)
@@ -84,6 +84,7 @@ def with_health(result):
     health = {k: http_status(u) for k, u in HEALTH.items()}
     if all(v == 200 for v in health.values()):
         _incident.update(runbook_seen=False, refusals=0, trace=[])
+        snapshot_known_good()
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
     state = docker_ps()
     hint = ""
@@ -173,8 +174,43 @@ def docker_ps():
     listed = dict(line.split("\t", 1) for line in
                   sh("docker ps -a --filter name=edge-victim --format '{{.Names}}\t{{.Status}}'").splitlines()
                   if "\t" in line)
-    return "\n".join(f"{n}\t{listed.get(n, 'MISSING (no such container: it was removed, not stopped)')}"
+    # A container's own memory limit and the kernel's OOM verdict are not in `docker ps`; without them an
+    # "Exited (137)" upstream read as host memory pressure, and both models went 0/3 on it (2026-10-17).
+    extra = {}
+    present = [n for n in sorted(NAMES) if n in listed]
+    if present:
+        for line in sh("docker inspect -f '{{.Name}}\t{{.HostConfig.Memory}}\t{{.State.OOMKilled}}' "
+                       + " ".join(present)).splitlines():
+            parts = line.strip().lstrip("/").split("\t")
+            if len(parts) == 3:
+                name, mem, oom = parts
+                notes = []
+                if mem.isdigit() and int(mem) > 0:
+                    notes.append(f"memory limit {int(mem) / 2**20:.0f} MiB")
+                if oom == "true":
+                    notes.append("OOMKilled: yes (the kernel killed it at its memory limit)")
+                if notes:
+                    extra[name] = " | " + " | ".join(notes)
+    return "\n".join(f"{n}\t{listed.get(n, 'MISSING (no such container: it was removed, not stopped)')}{extra.get(n, '')}"
                       for n in sorted(NAMES))
+
+
+# Last known-good config: recorded at deploy (faults.reset/setup) and whenever both health URLs are 200, outside the
+# directory nginx reads. write_config keeps the file it replaces. Without one, an emptied config left the agent
+# guessing a server block from nothing (config-empty, 0/3 for both models on 2026-10-17).
+KNOWN_GOOD_DIR = ROOT / "victim" / "known-good"
+KNOWN_GOOD = KNOWN_GOOD_DIR / "default.conf"
+PREVIOUS = KNOWN_GOOD_DIR / "previous.conf"
+
+
+def snapshot_known_good():
+    try:
+        cur = (CONF_DIR / "default.conf").read_text()
+        if cur.strip() and "proxy_pass" in cur:
+            KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)
+            KNOWN_GOOD.write_text(cur)
+    except OSError:
+        pass
 
 
 def held_open():
@@ -216,13 +252,14 @@ directory. Call `finish` once both health URLs return 200 or when you cannot fix
 
 TOOLS = [
     {"name": "check_health", "description": "HTTP status of the front-end and /api/ health URLs", "parameters": {"type": "object", "properties": {}}},
-    {"name": "docker_ps", "description": "State of the two containers (docker ps -a)", "parameters": {"type": "object", "properties": {}}},
+    {"name": "docker_ps", "description": "State of the two containers (docker ps -a), with any memory limit and whether the kernel OOM-killed them", "parameters": {"type": "object", "properties": {}}},
     {"name": "docker_logs", "description": "Last lines of a container's logs", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "tail": {"type": "integer", "default": 40}}, "required": ["name"]}},
     {"name": "docker_exec", "description": "Run a read-only diagnostic command inside a running container (nginx -t, cat, ls, ps, curl, df, du, tail, head, grep)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "cmd": {"type": "string"}}, "required": ["name", "cmd"]}},
     {"name": "docker_start", "description": "Start a stopped container", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "docker_restart", "description": "Restart a container (needed after a config change)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "read_config", "description": "Read victim/conf.d/default.conf", "parameters": {"type": "object", "properties": {}}},
     {"name": "write_config", "description": "Replace the nginx config with the given full content. The file lives on the host and is mounted read-only into edge-victim, so this tool is the only way to change it (the container's own 'read-only file system' warning is expected). docker_restart edge-victim afterwards to apply", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
+    {"name": "restore_config", "description": "Put back the last known-good nginx config (saved when both health URLs returned 200), or with source=previous the file the last write replaced; then docker_restart edge-victim to apply", "parameters": {"type": "object", "properties": {"source": {"type": "string", "enum": ["known-good", "previous"], "default": "known-good"}}}},
     {"name": "search_runbooks", "description": "Search the IT runbooks for a symptom in your own words or with the exact error text (502 upstream, nginx emerg config, disk full, exit 137, crash loop); returns the best matching procedures, or the catalogue if nothing matches", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "search_incident_knowledge", "description": "Offline knowledge base of 1,644 historical incidents and 17 Linux/Kubernetes remediation cards (disk full, inode exhaustion, systemd restart loop, OOM, DNS resolver, TLS expiry, port not listening, CrashLoopBackOff). Use it for a symptom no runbook covers. Answers 'matched' with checks and fixes to verify on this host, or 'insufficient', which means gather more evidence or escalate; never repair from a weak candidate", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "symptom or exact error text"}, "scenario": {"type": "string", "enum": ["disk_full", "crashloop", "dns"]}}, "required": ["query"]}},
     {"name": "disk_usage", "description": "Disk usage: this stack's scratch volume, the host filesystems, and docker; use for disk-full symptoms", "parameters": {"type": "object", "properties": {"inodes": {"type": "boolean", "default": False, "description": "also report inode usage per filesystem (df -i)"}}}},
@@ -447,6 +484,7 @@ def _run_tool(name, args, dry_run):
         health = {k: http_status(u) for k, u in HEALTH.items()}
         if all(v == 200 for v in health.values()):
             _incident.update(runbook_seen=False, refusals=0, trace=[])   # incident over; the next one starts clean
+            snapshot_known_good()
         return json.dumps(health)
     if name == "docker_ps":
         out = docker_ps()
@@ -497,7 +535,13 @@ def _run_tool(name, args, dry_run):
         time.sleep(2)
         return with_health(out + "\n" + docker_ps())
     if name == "read_config":
-        return (CONF_DIR / "default.conf").read_text()
+        cur = (CONF_DIR / "default.conf").read_text()
+        out = cur if cur.strip() else "(the file is empty: nginx starts with no server block and listens nowhere)"
+        if KNOWN_GOOD.exists() and KNOWN_GOOD.read_text() != cur:
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(KNOWN_GOOD.stat().st_mtime))
+            out += (f"\n\n--- note: a known-good copy of this file (saved {when}, while both health URLs returned 200) "
+                    "differs from it. restore_config puts it back; then docker_restart edge-victim.")
+        return out
     if name == "write_config":
         content = args["content"]
         if len(content) > 20000 or "proxy_pass" not in content:
@@ -505,8 +549,22 @@ def _run_tool(name, args, dry_run):
                     "proxy_pass line, and write_config the complete corrected file.")
         if dry_run:
             return "DRY-RUN: would write default.conf"
+        KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)
+        PREVIOUS.write_text((CONF_DIR / "default.conf").read_text())
         (CONF_DIR / "default.conf").write_text(content)
         return "written, but not applied: nginx only reads it on start. Call docker_restart {\"name\": \"edge-victim\"} now."
+    if name == "restore_config":
+        src = KNOWN_GOOD if args.get("source", "known-good") != "previous" else PREVIOUS
+        if not src.exists():
+            return (f"error: no {args.get('source', 'known-good')} copy exists. Next: read_config, then write_config the "
+                    "complete corrected file.")
+        if dry_run:
+            return f"DRY-RUN: would restore {src.name}"
+        KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)
+        PREVIOUS.write_text((CONF_DIR / "default.conf").read_text())
+        (CONF_DIR / "default.conf").write_text(src.read_text())
+        return (f"restored {src.name} into default.conf (the replaced file is kept as previous.conf), not applied yet: "
+                'nginx reads it on start. Next: docker_restart {"name": "edge-victim"}.')
     if name == "search_runbooks":
         _incident["runbook_seen"] = True
         return search_runbooks(args["query"])
@@ -580,9 +638,13 @@ def _run_tool(name, args, dry_run):
         if args.get("replace"):
             # Known precondition, checked in code: a rebuild is never a first move. The runbook says restart first,
             # and the reviewer once approved a premature rebuild because "the runbook was consulted".
-            if not any(t["tool"] == "docker_restart" and args["name"] in t["args"] for t in _incident["trace"]):
-                return (f"denied: recreate_stack replace=true on {args['name']} before it was restarted in this incident. "
-                        f"docker_restart it first; rebuild only if it still fails afterwards.")
+            # A start of an exited container is the same evidence as a restart: it ran again and still failed. Only
+            # docker_restart counted, and an agent that had read "OOMKilled: yes", started the container and seen it
+            # killed again was still refused the rebuild (2026-10-17).
+            if not any(t["tool"] in ("docker_restart", "docker_start") and args["name"] in t["args"] for t in _incident["trace"]):
+                return (f"denied: recreate_stack replace=true on {args['name']} before it was started or restarted in this "
+                        f'incident. Next: docker_restart {{"name": "{args["name"]}"}}; if it still fails, call '
+                        f'recreate_stack {{"name": "{args["name"]}", "replace": true}} again.')
             refusal = reviewed(name, {"name": args["name"], "replace": True})
             if refusal:
                 return refusal

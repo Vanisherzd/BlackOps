@@ -88,6 +88,16 @@ def main():
     _rv.review = real_review
     assert msg.startswith("review-rejected:") and "no human approval" in msg and "/approve" in msg and "Next:" in msg, msg
 
+    # restore_config is an action: gated like write_config, and a dry run names the copy it would restore.
+    saved_trace = list(agent._incident["trace"])
+    agent._incident.update(runbook_seen=False, refusals=0)
+    assert agent.run_tool("restore_config", {}, dry_run=True).startswith("refused:"), "restore_config must be gated"
+    agent._incident.update(runbook_seen=True, refusals=0)
+    out = agent.run_tool("restore_config", {}, dry_run=True)
+    assert out.startswith("DRY-RUN") or out.startswith("error: no known-good"), out
+    assert "memory limit" in agent.TOOLS[[t["name"] for t in agent.TOOLS].index("docker_ps")]["description"]
+    agent._incident["trace"] = saved_trace
+
     assert agent.symptom_query("all fine\nstarting up") is None, "clean output must not trigger an attachment"
     assert agent.symptom_query('nginx: [emerg] invalid number of arguments in "return" directive'), \
         "an emerg line is a symptom"

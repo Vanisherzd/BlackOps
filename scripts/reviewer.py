@@ -34,7 +34,7 @@ narrower and yours alone: (1) is the action relevant to this incident's symptom,
 contradict the diagnosis. To REJECT you must quote such a line. Do not demand proof of causes that cannot be observed.
 
 Sufficient conditions, for reference:
-- recreate_stack replace=true on edge-victim-app: a docker_restart of edge-victim-app happened in this incident AND
+- recreate_stack replace=true on edge-victim-app: a docker_restart or docker_start of edge-victim-app happened in this incident AND
   the health check after it still shows /api/ failing (5xx). The underlying cause (its writable layer) is inferred,
   not observable; do not demand proof of it. Never for edge-victim (its config is a host file; a rebuild changes
   nothing). Never as a first move.
@@ -69,7 +69,7 @@ def computed_facts(action, args, trace):
     facts = {}
     if action == "recreate_stack":
         name = str(args.get("name", ""))
-        idx = [i for i, t in enumerate(trace) if t["tool"] == "docker_restart" and name in t["args"]]
+        idx = [i for i, t in enumerate(trace) if t["tool"] in ("docker_restart", "docker_start") and name in t["args"]]
         facts["restart of this container in this incident"] = "yes" if idx else "NO"
         if idx:
             after = trace[idx[-1]]["result"]
@@ -107,7 +107,7 @@ def sufficient(action, args, facts):
     """(met: bool, why: str). The deterministic key: which fact is missing, if any."""
     if action == "recreate_stack":
         if facts.get("restart of this container in this incident") != "yes":
-            return False, ('no docker_restart of this container in this incident yet. Next: docker_restart {"name": "'
+            return False, ('no start or restart of this container in this incident yet. Next: docker_restart {"name": "'
                            + str(args.get("name", "")) + '"}, then check_health; rebuild only if /api/ still fails')
         if facts.get("/api/ still failing after the restart") != "yes":
             return False, "after the restart /api/ was not seen failing. Next: check_health; rebuild only if /api/ still fails"

@@ -823,3 +823,25 @@ transcript, runs 31 and 35 are excluded (stray actions executed) and rerun clean
 stands. `drill-all.sh` now restarts the sandbox gateway whenever the timeout kills a drill, which ends every
 in-flight agent run, and then waits for the quiet API as before.
 
+## The two missing pieces of information, as tools (2026-10-17, evening)
+
+Both models were 0/3 on upstream-oom and config-empty, the two blind cases that need information no tool gave.
+
+- **`docker_ps` shows each container's memory limit and the kernel's OOM verdict** (`docker inspect`
+  `HostConfig.Memory`, `State.OOMKilled`): `Exited (137) | memory limit 8 MiB | OOMKilled: yes (the kernel killed it at
+  its memory limit)`. `oom-killed.md` gained the branch for it: a container that hit its own limit is restarted once
+  to confirm, then rebuilt from the stack definition, which sets no limit.
+- **A last known-good config and `restore_config`.** The deploy (`faults.reset`/`setup`) records what it deployed, and
+  a health check with both URLs at 200 records the current file, in `victim/known-good/` (outside the directory nginx
+  reads). `write_config` keeps the file it replaces as `previous.conf`. `read_config` says when the file is empty and
+  when a known-good copy differs from it. `restore_config` (gated like any action) puts the copy back; restart applies it.
+
+First runs with Nano: config-empty 3/3 (33-72 s: read_config, restore_config, restart), upstream-oom 1/3. The two
+upstream-oom misses read `OOMKilled: yes` and went straight for the rebuild, were refused because no restart had
+happened, then started the exited container, which the precondition did not count. A start of an exited container
+is the same evidence as a restart, so the code key and the reviewer now accept either. Then upstream-oom 3/3
+(restart, rebuild). Regression over the ten tuned cases: 10/10 autonomous, median 45 s (84 s before), because the
+config cases now restore instead of rewriting (crashloop 45 s, was 161 s); bad-config also 3/3 in the first batch.
+
+These two cases are no longer blind: they drove these tools. The blind measure now needs new faults.
+

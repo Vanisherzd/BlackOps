@@ -19,7 +19,7 @@ Look first, and never guess a state you can read:
 | Tool | Arguments | Use it for |
 | --- | --- | --- |
 | `ops__check_health` | – | the two health URLs; this is the definition of healthy |
-| `ops__docker_ps` | – | container state and exit code |
+| `ops__docker_ps` | – | container state and exit code, any memory limit, and whether the kernel OOM-killed it |
 | `ops__docker_logs` | `name`, `tail` | why a container exited |
 | `ops__docker_exec` | `name`, `cmd` | a read-only command inside a container (`nginx -t`, `cat`, `ls`, `df`, `du`, `ps`, `curl`) |
 | `ops__read_config` | – | the current nginx config |
@@ -39,6 +39,7 @@ Actions, least invasive first:
 | `ops__docker_start` | `name` | a container that is Exited |
 | `ops__docker_restart` | `name` | after a config change, or a container that is up but wedged |
 | `ops__write_config` | `content` | the complete corrected nginx config, then restart the front end |
+| `ops__restore_config` | `source` | put back the last known-good nginx config (`read_config` says when one differs), then restart the front end |
 | `ops__self_heal` | – | runs this whole loop on the host in one call; use it only if you are stuck |
 
 ## Procedure

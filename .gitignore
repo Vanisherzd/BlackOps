@@ -13,3 +13,4 @@ kb/dist/
 kb/src/*.egg-info/
 kb/integrations/nemoclaw/blackout-ops-rag/vendor/
 kb/integrations/nemoclaw/blackout-ops-rag/data/
+victim/known-good/

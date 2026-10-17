@@ -50,11 +50,11 @@ assert BAD_CONF != GOOD_CONF and BAD_NAME_CONF != GOOD_CONF
 # are "seen" today. A new case stays "unseen" until something is changed because of it.
 CASES = {
     "nginx-stopped":     dict(min_actions=1, fix_tools={"docker_start", "docker_restart"}, cause=r"edge-victim\b.*(stop|exit|down|not running)|(stop|exit)[a-z]* .*edge-victim\b", tier="seen"),
-    "bad-config":        dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"config|semicolon|syntax|emerg|return directive", tier="seen"),
+    "bad-config":        dict(min_actions=2, fix_tools={"write_config", "docker_restart", "restore_config"}, cause=r"config|semicolon|syntax|emerg|return directive", tier="seen"),
     "upstream-down":     dict(min_actions=1, fix_tools={"docker_start", "docker_restart"}, cause=r"(edge-victim-app|upstream|backend).*(exit|stop|down|not running)", tier="seen"),
-    "bad-upstream-name": dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"edge-victim-backend|resolv|proxy_pass|upstream name|host not found|wrong (host|name)", tier="seen"),
+    "bad-upstream-name": dict(min_actions=2, fix_tools={"write_config", "docker_restart", "restore_config"}, cause=r"edge-victim-backend|resolv|proxy_pass|upstream name|host not found|wrong (host|name)", tier="seen"),
     "container-removed": dict(min_actions=1, fix_tools={"recreate_stack"}, cause=r"missing|removed|deleted|does not exist|no such container|recreat", tier="seen"),
-    "crashloop":         dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"config|emerg|syntax|return directive|restart(ing)? loop|crash", tier="seen"),
+    "crashloop":         dict(min_actions=2, fix_tools={"write_config", "docker_restart", "restore_config"}, cause=r"config|emerg|syntax|return directive|restart(ing)? loop|crash", tier="seen"),
     "upstream-paused":   dict(min_actions=1, fix_tools={"docker_restart"}, cause=r"paus|frozen|504|timed? ?out", tier="seen"),
     "upstream-detached": dict(min_actions=1, fix_tools={"network_repair"}, cause=r"network|detach|disconnect|edge-net|unreachable", tier="seen"),
     "upstream-500":      dict(min_actions=1, fix_tools={"recreate_stack"}, cause=r"500|recreat|rebuil|upstream.*(config|broken|misconfig)", tier="seen"),
@@ -64,14 +64,14 @@ CASES = {
     # changed because of them. Ground truth written with the injections, before any run.
     "upstream-oom":        dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"oom|out of memory|memory|137|killed", tier="blind"),
     "upstream-wrong-port": dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"8080|port|listen|refused|upstream.*(config|layer)", tier="blind"),
-    "api-path-404":        dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"404|/v2|path|proxy_pass", tier="blind"),
-    "config-empty":        dict(min_actions=2, fix_tools={"write_config", "docker_restart"}, cause=r"empty|no server|missing.*(config|server)|config.*(empty|blank|missing)", tier="blind"),
+    "api-path-404":        dict(min_actions=2, fix_tools={"write_config", "docker_restart", "restore_config"}, cause=r"404|/v2|path|proxy_pass", tier="blind"),
+    "config-empty":        dict(min_actions=2, fix_tools={"write_config", "docker_restart", "restore_config"}, cause=r"empty|no server|missing.*(config|server)|config.*(empty|blank|missing)", tier="blind"),
     "upstream-renamed":    dict(min_actions=2, fix_tools={"recreate_stack", "docker_start", "docker_restart"}, cause=r"renam|missing|edge-victim-app-old|not found|no such container|resolv", tier="blind"),
     "inode-exhausted":   dict(min_actions=2, fix_tools={"clear_scratch_volume", "docker_start", "docker_restart"}, cause=r"inode|scratch|edge-cache|/var/cache/nginx|tiny files|too many files", tier="unseen",
                               diag_tools={"disk_usage", "docker_exec"}),
 }
 MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk", "kill_process",
-            "clear_scratch_volume"}
+            "clear_scratch_volume", "restore_config"}
 DIAGNOSTIC = {"check_health", "docker_ps", "docker_logs", "read_config", "search_runbooks", "search_incident_knowledge", "http_check"}
 
 
@@ -124,6 +124,7 @@ def ensure(name):
 def setup():
     CONF_DIR.mkdir(parents=True, exist_ok=True)
     (CONF_DIR / "default.conf").write_text(GOOD_CONF)   # the file is not tracked by git; drills rewrite it
+    record_deployed()
     sh(f"docker network create {NET} 2>/dev/null")
     sh(f"docker rm -f {FRONT} {APP} {CACHE} >/dev/null 2>&1")
     sh(f"docker volume rm {CACHE_VOL} >/dev/null 2>&1")
@@ -134,10 +135,18 @@ def setup():
     print("setup:", "/", http("/"), "/api/", http("/api/"))
 
 
+def record_deployed():
+    """The deploy records what it deployed: the agent's restore_config puts this back (scripts/agent.py)."""
+    kg = ROOT / "victim" / "known-good"
+    kg.mkdir(parents=True, exist_ok=True)
+    (kg / "default.conf").write_text(GOOD_CONF)
+
+
 def reset():
     """Undo every injection this file knows how to make, whatever order the drills ran in."""
     CONF_DIR.mkdir(parents=True, exist_ok=True)
     (CONF_DIR / "default.conf").write_text(GOOD_CONF)
+    record_deployed()
     ensure(CACHE)
     sh(f"docker start {CACHE} >/dev/null 2>&1")
     if exists(f"{APP}-old"):                    # upstream-renamed: drop the renamed one, recreate the real one below

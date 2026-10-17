@@ -393,7 +393,7 @@ def _run_case(gateway: InferenceGateway, case: EvalCase, effort: str) -> JsonObj
             },
             {"role": "user", "content": case.prompt},
         ],
-        max_turns=3 if case.category == "malformed_argument_resistance" else 4,
+        max_turns=3 if case.category == "malformed_argument_resistance" else MAX_TURNS,
         reasoning_effort=effort,
         on_turn=capture,
     )
@@ -704,6 +704,13 @@ def _number_list(value: JsonValue) -> list[int | float]:
     )
 
 
+# Turn cap for every category but malformed_argument_resistance (3). 4 on the first Spark run (2026-10-17): two
+# continuation cases had read, restarted and were reading health back when the cap ended them before a final
+# answer, which a read -> write -> verify -> finish cycle needs at least four turns plus the answer for. 6 since;
+# --max-turns 4 reproduces the first run.
+MAX_TURNS = 6
+
+
 def _rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4) if denominator else 0.0
 
@@ -726,11 +733,15 @@ def main() -> int:
         "--out-md", type=Path, default=Path("artifacts/bolt_tool_eval.md")
     )
     parser.add_argument("--cases", type=int)
+    parser.add_argument("--max-turns", type=int, default=MAX_TURNS,
+                        help="turn cap per case (malformed-argument cases keep 3)")
     args = parser.parse_args()
+    globals()["MAX_TURNS"] = args.max_turns
     selected = CASES[: max(0, args.cases)] if args.cases is not None else CASES
     gateway = InferenceGateway(base_url=args.base_url, model=args.model)
     payload = run(gateway, selected, args.reasoning_effort)
     payload["measurement"] = "LOCAL_MEASUREMENT"
+    payload["config"] = {"max_turns": args.max_turns, "max_turns_malformed": 3, "reasoning_effort": args.reasoning_effort}
     payload["environment"] = environment(gateway)
     write_artifact(args.out_json, payload, gateway)
     write_markdown(args.out_md, payload)

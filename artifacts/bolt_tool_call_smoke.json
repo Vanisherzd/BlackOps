@@ -1,0 +1,36 @@
+{
+  "benchmark": "tool_call_smoke",
+  "environment": {
+    "blackbox_inference_env": {},
+    "git_sha": "e059a1c",
+    "hostname": "DGX-spark",
+    "models": [
+      "bolt"
+    ],
+    "nvidia_smi": "NVIDIA GB10, 580.126.09",
+    "platform": "Linux-6.17.0-1008-nvidia-aarch64-with-glibc2.39",
+    "python": "3.12.14",
+    "timestamp": "2026-10-17T06:35:39.019633+00:00"
+  },
+  "measurement": "LOCAL_MEASUREMENT",
+  "results": [
+    {
+      "arguments": {
+        "service": "api"
+      },
+      "latency_ms": 4751,
+      "name": "single_tool_call",
+      "passed": true,
+      "source": "parser",
+      "tool_call_count": 1,
+      "tool_name": "get_service_health",
+      "usage": {
+        "completion_tokens": 26,
+        "final_tokens": 26,
+        "prompt_tokens": 337,
+        "reasoning_tokens": 0,
+        "total_tokens": 363
+      }
+    }
+  ]
+}

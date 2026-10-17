@@ -108,18 +108,27 @@ reference instructions only; it does not treat model-card statements as local me
 
 ### LOCAL_MEASUREMENT
 
-No local measurement has been run yet.
+Measured 2026-10-17 on the DGX Spark (`artifacts/bolt_perf_c1.json`, `artifacts/bolt_perf_c2.json`; medians over six
+requests, all six successful at each concurrency).
 
-| startup_time_s | TTFT_ms | output_tok_s | ITL_ms | peak_memory | prompt_tokens | completion_tokens | wall_time | environment |
-|---:|---:|---:|---:|---|---:|---:|---:|---|
-| | | | | | | | | |
+| C | startup_time_s | TTFT_ms | output_tok_s | ITL_ms | peak_memory | prompt_tokens | completion_tokens | wall_time_ms | environment |
+|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| 1 | 300 ¹ | 742 (p90 753) | 32.8 | 33.3 | n/a ² | 1368 | 24 | 1506 | GB10, `blackbox-vllm-bolt:77154ca`, model rev `c6cc2e8f`, `HF_HUB_OFFLINE=1`, `BOLT_HOST=127.0.0.1`, util 0.45, 32k ctx |
+| 2 | 295 ¹ | 1420 (p90 5254) | 25.0 per request | 46.0 | n/a ² | 1368 | 24 | 2232 | same, `MAX_NUM_SEQS=2` |
+
+¹ From `make bolt-wait` (start to healthy, weights already in the cache); the artifacts' `startup_time_s` is empty
+because `perf_baseline` did not parse it from `logs/bolt-startup.log`.
+² `nvidia-smi` reports memory as `[N/A]` on GB10 unified memory, so `peak_gpu_memory_mib` is empty in both artifacts.
+
+Gate results on this run: 1 ✓ (healthy after 300 s); 2–3 ✓ (6/6 inference smoke); 4 ✓ (single parsed tool call);
+6 ✓ (`api_down` resolved: logs → `restart_container` → health read → finish, 7 turns); 7 ✓ (27/27 cases ran, 23
+passed, `artifacts/bolt_tool_eval.md`); 8–9 ✓ for the request rows, with the two empty fields above. Gate 5 is not
+closed: `multi_turn_smoke` passes, but `tool_eval` continuation is 1/3 and verification 2/3. Two of those failures did
+the work (logs → restart → health read) and ran out of the 4-turn case cap before the final answer; one never found
+the database container; `unsupported_rotate_cert` kept investigating instead of saying no tool can rotate a
+certificate. Phase 7 (DFlash) was not run, since it waits on Gates 1–9.
 
 ### NOT_YET_TESTED
 
-- Image build on Ubuntu aarch64.
-- Container startup and model loading on the DGX Spark.
-- `/health` and `/v1/models` responses.
-- Plain completion, reasoning, and parsed tool-call smoke tests.
-- Startup time, TTFT, output throughput, ITL, peak memory, token counts, and wall time.
-- Behavior with `HF_HUB_OFFLINE=1` after caches are populated.
+- Peak memory on GB10 (not readable through `nvidia-smi`).
 - Co-residency with the existing TensorRT-LLM service.

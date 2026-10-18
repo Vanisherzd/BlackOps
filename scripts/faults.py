@@ -6,6 +6,8 @@
                                                           | inode-exhausted
                                                           blind (tier "blind", 2026-10-14): upstream-oom | upstream-wrong-port
                                                           | api-path-404 | config-empty | upstream-renamed
+                                                          blind2 (2026-10-17): upstream-sigkill | front-paused
+                                                          | upstream-index-deleted | network-removed | front-include-missing
   uv run --no-sync scripts/faults.py verify           exit 0 when / and /api/ both return 200
   uv run --no-sync scripts/faults.py reset            restore config, start both containers
   uv run --no-sync scripts/faults.py run <case>       inject -> agent.py -> verify   (the end-to-end test)
@@ -41,6 +43,9 @@ BAD_CONF = GOOD_CONF.replace('return 200 "ok\\n";', 'return 200 "ok\\n"')  # dro
 BAD_NAME_CONF = GOOD_CONF.replace("http://edge-victim-app:80/", "http://edge-victim-backend:80/")
 # Blind cases: valid config, wrong upstream path (the upstream answers 404 for /v2/).
 BAD_PATH_CONF = GOOD_CONF.replace("http://edge-victim-app:80/", "http://edge-victim-app:80/v2/")
+# Blind batch 2: a valid-looking config that includes a file the image does not have.
+BAD_INCLUDE_CONF = GOOD_CONF.replace("    server_name _;\n", "    server_name _;\n    include /etc/nginx/snippets/proxy.conf;\n")
+assert BAD_INCLUDE_CONF != GOOD_CONF
 assert BAD_CONF != GOOD_CONF and BAD_NAME_CONF != GOOD_CONF
 
 
@@ -67,6 +72,15 @@ CASES = {
     "api-path-404":        dict(min_actions=2, fix_tools={"write_config", "docker_restart", "restore_config"}, cause=r"404|/v2|path|proxy_pass", tier="blind"),
     "config-empty":        dict(min_actions=2, fix_tools={"write_config", "docker_restart", "restore_config"}, cause=r"empty|no server|missing.*(config|server)|config.*(empty|blank|missing)", tier="blind"),
     "upstream-renamed":    dict(min_actions=2, fix_tools={"recreate_stack", "docker_start", "docker_restart"}, cause=r"renam|missing|edge-victim-app-old|not found|no such container|resolv", tier="blind"),
+    # Blind batch 2 (2026-10-17, after the memory-limit and restore_config tools): written with the agent frozen
+    # (logs/blind2-freeze-20261017.txt); nothing in the agent, tools, runbooks or prompts changes because of them.
+    "upstream-sigkill":       dict(min_actions=1, fix_tools={"docker_start", "docker_restart"}, cause=r"kill|sigkill|137|stopped|exited|not running", tier="blind2"),
+    # scratch-space-full (the volume's bytes filled) was dropped before any run: on tmpfs a directory costs an inode
+    # and no data page, so nginx still created its temp directories and the stack stayed 200/200.
+    "front-paused":           dict(min_actions=1, fix_tools={"docker_restart"}, cause=r"paus|frozen|freez|unresponsive", tier="blind2"),
+    "upstream-index-deleted": dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"index|403|html|deleted|missing|layer|forbidden", tier="blind2"),
+    "network-removed":        dict(min_actions=1, fix_tools={"network_repair", "docker_start", "docker_restart"}, cause=r"network|edge-net|removed|deleted|detach", tier="blind2"),
+    "front-include-missing":  dict(min_actions=2, fix_tools={"write_config", "restore_config", "docker_restart"}, cause=r"include|snippet|proxy\.conf|no such file|config", tier="blind2"),
     "inode-exhausted":   dict(min_actions=2, fix_tools={"clear_scratch_volume", "docker_start", "docker_restart"}, cause=r"inode|scratch|edge-cache|/var/cache/nginx|tiny files|too many files", tier="unseen",
                               diag_tools={"disk_usage", "docker_exec"}),
 }
@@ -147,13 +161,14 @@ def reset():
     CONF_DIR.mkdir(parents=True, exist_ok=True)
     (CONF_DIR / "default.conf").write_text(GOOD_CONF)
     record_deployed()
+    sh(f"docker network create {NET} >/dev/null 2>&1")      # network-removed: connect below needs it to exist
     ensure(CACHE)
     sh(f"docker start {CACHE} >/dev/null 2>&1")
     if exists(f"{APP}-old"):                    # upstream-renamed: drop the renamed one, recreate the real one below
         sh(f"docker rm -f {APP}-old >/dev/null 2>&1")
     if exists(APP) and sh(f"docker inspect -f '{{{{.HostConfig.Memory}}}}' {APP}").stdout.strip() not in ("", "0"):
         sh(f"docker rm -f {APP} >/dev/null 2>&1")    # upstream-oom: a memory limit is only undone by a rebuild
-    sh(f"docker exec {CACHE} sh -c 'find /cache -mindepth 1 -maxdepth 1 -name \".sess_*\" -delete' >/dev/null 2>&1")
+    sh(f"docker exec {CACHE} sh -c 'find /cache -mindepth 1 -maxdepth 1 \\( -name \".sess_*\" -o -name \".blob*\" \\) -delete' >/dev/null 2>&1")
     for name in (APP, FRONT):       # a previous drill may have removed one; start cannot bring back what is gone
         ensure(name)
         sh(f"docker unpause {name} >/dev/null 2>&1")
@@ -218,6 +233,20 @@ def inject(case):
     elif case == "upstream-renamed":
         sh(f"docker rename {APP} {APP}-old", check=True)
         sh(f"docker restart -t 1 {FRONT}")      # nginx resolves the upstream name at start and exits
+    elif case == "upstream-sigkill":
+        sh(f"docker kill -s KILL {APP}", check=True)          # exit 137 with no memory limit and no OOM verdict
+    elif case == "front-paused":
+        sh(f"docker pause {FRONT}", check=True)       # both URLs time out; the state runbook for Paused is about the upstream
+    elif case == "upstream-index-deleted":
+        # The upstream's own page, in its writable layer: /api/ now gets 403 (directory listing forbidden).
+        sh(f"docker exec {APP} rm -f /usr/share/nginx/html/index.html", check=True)
+    elif case == "network-removed":
+        for name in (FRONT, APP):
+            sh(f"docker network disconnect -f {NET} {name}")
+        sh(f"docker network rm {NET}", check=True)
+    elif case == "front-include-missing":
+        (CONF_DIR / "default.conf").write_text(BAD_INCLUDE_CONF)
+        sh(f"docker restart -t 1 {FRONT}")
     elif case == "bad-upstream-name":
         (CONF_DIR / "default.conf").write_text(BAD_NAME_CONF)
         sh(f"docker restart -t 1 {FRONT}")  # nginx cannot resolve the name and exits

@@ -845,3 +845,39 @@ config cases now restore instead of rewriting (crashloop 45 s, was 161 s); bad-c
 
 These two cases are no longer blind: they drove these tools. The blind measure now needs new faults.
 
+## Blind batch 2 (2026-10-17, night)
+
+Five new faults, written after the memory-limit and restore_config tools, with the agent frozen
+(`logs/blind2-freeze-20261017.txt`), each injection and reset checked without the agent first, three Nano drills each,
+interleaved (`logs/drills-20261017-205425.log`; no drill killed, so no stray agent runs). A sixth, the scratch volume's
+bytes filled, was dropped before any run: on tmpfs a directory takes an inode and no data page, so nginx still
+created its temp directories and the stack stayed 200/200.
+
+| case | fault | fixed | root cause right |
+|---|---|---|---|
+| upstream-sigkill | upstream killed with SIGKILL: `Exited (137)`, no memory limit, no OOM verdict | 3/3 | **0/3** |
+| front-paused | front end `docker pause`d: both URLs time out | 3/3 | 3/3 |
+| front-include-missing | config includes a file the image lacks: `[emerg] open() ... failed (2: No such file...)` | 3/3 | 3/3 |
+| network-removed | the stack network deleted, both containers off it | 2/3 | 2/3 |
+| upstream-index-deleted | the upstream's own index.html removed: `/api/` 403 | 0/3 | 0/3 |
+| **total** | | **11/15 (73 %)** | 8/15 |
+
+Batch 1 with Nano was 6/15. The batches are different faults, so this is not a like-for-like gain, but the misses
+moved: batch 1's were information no tool gave; batch 2's are three specific shapes.
+
+- **A fix with the wrong story.** All three upstream-sigkill runs restarted the container and reported "OOM-killed due
+  to host memory pressure". `docker_ps`'s `Exited (137)` marker attaches `oom-killed.md`, and `docker_ps` shows an OOM
+  verdict only when there is one, so its absence reads as nothing. The scorer's cause pattern (`kill|137`) counted
+  these as named; read by hand they are wrong. An unattended agent's report is the incident record; a wrong one is a
+  defect even when the URLs come back.
+- **upstream-index-deleted.** The agent listed `/usr/share/nginx/html` and saw the page missing, searched runbooks for
+  403 and got 504/name-resolution/detached runbooks (only `upstream-5xx.md` covers "the upstream answers an error
+  itself; a restart keeps the layer, rebuild"), tried the rebuild before a restart (refused, with the next call
+  named), and in two runs OpenClaw ended the session with "CLI transcript compaction failed: Compaction timed out".
+- **network-removed.** No tool says the network is gone: `docker_ps` shows both containers Up. The run that missed
+  never called `network_repair`.
+
+Next, from these: `docker_ps` should state the negative (`exit 137, OOMKilled: no -> killed by a signal`) and each
+container's networks (`edge-net: missing`); `upstream-5xx.md` should cover 4xx answered by the upstream itself; and
+the OpenClaw compaction timeout on long sessions wants a look. Each of these makes batch 2 no longer blind.
+

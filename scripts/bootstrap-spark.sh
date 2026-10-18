@@ -40,7 +40,8 @@ serve() { stage serve
   pgrep -f "scripts/ops_api[.]py"  >/dev/null || setsid nohup uv run --no-sync scripts/ops_api.py  > logs/ops-api.out  2>&1 < /dev/null &
   sleep 2; VLLM_URL=http://127.0.0.1:8001 uv run --no-sync scripts/smoke.py | tail -1; }
 
-nemoclaw() { stage nemoclaw
+# not named nemoclaw: a function by that name shadows the CLI it calls and recurses forever
+nemoclaw_stage() { stage nemoclaw
   command -v nemoclaw >/dev/null || { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NEMOCLAW_PROVIDER=custom NEMOCLAW_ENDPOINT_URL=http://127.0.0.1:8001/v1 \
     NEMOCLAW_MODEL=edge-agent NEMOCLAW_PROVIDER_KEY=none NEMOCLAW_REASONING=true NEMOCLAW_SANDBOX_NAME=edge-agent \
     bash <(curl -fsSL https://www.nvidia.com/nemoclaw.sh) || true; hash -r; }
@@ -71,8 +72,9 @@ nemoclaw() { stage nemoclaw
 victim() { stage victim; uv run --no-sync scripts/faults.py setup; }
 
 case "${1:-all}" in
-  all) check; python_env; image; model; serve; nemoclaw; victim; echo; echo "READY: scripts/nemoclaw-drill.sh bad-config" ;;
-  check|image|model|serve|nemoclaw|victim) "$1" ;;
+  all) check; python_env; image; model; serve; nemoclaw_stage; victim; echo; echo "READY: scripts/nemoclaw-drill.sh bad-config" ;;
+  check|image|model|serve|victim) "$1" ;;
+  nemoclaw) nemoclaw_stage ;;
   python) python_env ;;
   *) echo "usage: $0 [all|check|python|image|model|serve|nemoclaw|victim]"; exit 2 ;;
 esac

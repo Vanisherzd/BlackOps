@@ -322,17 +322,26 @@ KB_DB = ROOT / "kb" / "artifacts" / "blackout_ops_kb.sqlite"
 # scoring, no substring `matched`. On the held-out benchmark it turned retrieval from harmful (50 answers broken, 16
 # fixed) to helpful (16 broken, 53 fixed). KB_RETRIEVAL=v1 restores the pack as shipped.
 KB_V3 = ROOT / "kb" / "artifacts" / "corpus_v3.jsonl"
+# v4 (2026-10-18, scripts/kb-cards.py): v3 plus repair cards written for this stack's tools per public fault family,
+# and the fixes this stack's drills verified. KB_RETRIEVAL=v4 selects it; v3 stays the default until a drill A/B says.
+KB_V4 = ROOT / "kb" / "artifacts" / "corpus_v4.jsonl"
 _kb = None
 
 
+def kb_version():
+    v = os.environ.get("KB_RETRIEVAL", "v3")
+    return v if v in ("v1", "v3", "v4") else "v3"
+
+
 def knowledge_base():
-    """The pack, opened once: v3 unless KB_RETRIEVAL=v1."""
+    """The pack, opened once: v3 unless KB_RETRIEVAL=v1 or v4."""
     global _kb
     if _kb is None:
         sys.path.insert(0, str(ROOT / "kb" / "src"))
-        if os.environ.get("KB_RETRIEVAL", "v3") == "v3" and KB_V3.exists():
+        corpus = {"v3": KB_V3, "v4": KB_V4}.get(kb_version())
+        if corpus and corpus.exists():
             from blackout_ops_kb.retrieval_v2 import AGENT_DEFAULTS, KnowledgeBaseV2
-            _kb = KnowledgeBaseV2(KB_V3, **AGENT_DEFAULTS)
+            _kb = KnowledgeBaseV2(corpus, **AGENT_DEFAULTS)
         else:
             from blackout_ops_kb import KnowledgeBase
             _kb = KnowledgeBase(KB_DB)
@@ -351,19 +360,35 @@ def knowledge_note(query):
         kb = knowledge_base()
         if type(kb).__name__ != "KnowledgeBaseV2" or not query:
             return ""                                      # v1's `matched` was wrong 20 times in 21; push nothing
-        b = kb.retrieve({"query": query}, case_k=0, solution_k=3)
+        # v4: six candidates, or a stack card outranked on BM25 by a generic one never reaches the phrase test
+        b = kb.retrieve({"query": query}, case_k=0, solution_k=6 if kb_version() == "v4" else 3)
     except Exception:                                      # the note is an extra; it must never break the tool
         return ""
     if b["knowledge_match"]["status"] != "matched" or not b["solutions"]:
         return ""
     s = b["solutions"][0]
     m = s.get("metadata") or {}
+    if m.get("platform") == "docker":
+        return stack_card_note(s, m)
     lines = [f"\n\n--- knowledge card (from other systems' incidents: a hypothesis to confirm here, not this stack's "
              f"procedure) ---\n{s['id']}: {m.get('title', s.get('title', ''))} [matched on: {' '.join(s.get('matched_terms') or [])}]"]
     lines += [f"CHECK {c.get('command', '')} :: {c.get('purpose', '')}" for c in m.get("checks", [])[:3]]
     lines += [f"FIX {f.get('action', '')}" for f in m.get("remediation", [])[:2]]
     lines.append("If the runbook above does not fit what you see, test the card's CHECK lines with your read-only tools.")
     return "\n".join(lines)[:1200]
+
+
+def stack_card_note(s, m):
+    """A v4 repair card: written for this stack's tools, so its CHECK and FIX lines are calls the agent can make; still
+    a hypothesis until the CHECK lines confirm it, and never a substitute for the runbook."""
+    lines = [f"\n\n--- repair card (a public fault family mapped to this stack's tools: confirm with its CHECK lines "
+             f"before any FIX) ---\n{s['id']}: {m.get('title', '')} [matched on: {' '.join(s.get('matched_terms') or [])}]"]
+    lines += [f"CHECK {c['command']} :: {c['purpose']}" for c in m.get("checks", [])[:3]]
+    lines += [f"FIX {f['action']}" + (" (destructive: only once the CHECKs confirm it)" if f.get("approval_required") else "")
+              for f in m.get("remediation", [])[:2]]
+    lines += [f"ESCALATE if {x}" for x in m.get("escalate", [])[:1]]
+    lines += [f"verified on this stack: {x}" for x in m.get("proven_here", [])[:2]]
+    return "\n".join(lines)[:1600]
 
 
 def search_incident_knowledge(query, scenario=None):
@@ -395,7 +420,10 @@ def search_incident_knowledge(query, scenario=None):
         weak = ", ".join(f"{s['id']} ({s['match_coverage']:.2f})" for s in bundle["weak_solution_candidates"][:3]) or "none"
         lines.append(f"no remediation card covers this symptom; weak candidates ({weak}) are not a basis for repair. "
                      "Use search_runbooks for this stack's own procedures, gather more read-only evidence, or escalate.")
-    titles = list(dict.fromkeys(str(c.get("title", ""))[:60] for c in bundle["cases"][:3]))
+    # v4 cases name the repair card of their fault type, and this stack's own past fixes say what fixed them
+    titles = list(dict.fromkeys(str(c.get("title", ""))[:(110 if c["id"].startswith("stack-") else 60)]
+                                + (f" (card: {c['metadata']['repair_card']})" if (c.get("metadata") or {}).get("repair_card")
+                                   and not c["id"].startswith("stack-") else "") for c in bundle["cases"][:3]))
     if titles:
         lines.append("\nsimilar historical cases: " + "; ".join(titles))
     lines.append("These are hypotheses from other systems' incidents: confirm against this host's evidence before acting.")

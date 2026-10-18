@@ -8,11 +8,14 @@
                                                           | api-path-404 | config-empty | upstream-renamed
                                                           blind2 (2026-10-17): upstream-sigkill | front-paused
                                                           | upstream-index-deleted | network-removed | front-include-missing
+                                                          blind3 (2026-10-18): upstream-perm-denied | upstream-sigstop
+                                                          | upstream-429 | front-mime-missing
   uv run --no-sync scripts/faults.py verify           exit 0 when / and /api/ both return 200
   uv run --no-sync scripts/faults.py reset            restore config, start both containers
   uv run --no-sync scripts/faults.py run <case>       inject -> agent.py -> verify   (the end-to-end test)
 """
 import pathlib
+import shlex
 import subprocess
 import sys
 import time
@@ -81,6 +84,14 @@ CASES = {
     "upstream-index-deleted": dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"index|403|html|deleted|missing|layer|forbidden", tier="blind2"),
     "network-removed":        dict(min_actions=1, fix_tools={"network_repair", "docker_start", "docker_restart"}, cause=r"network|edge-net|removed|deleted|detach", tier="blind2"),
     "front-include-missing":  dict(min_actions=2, fix_tools={"write_config", "restore_config", "docker_restart"}, cause=r"include|snippet|proxy\.conf|no such file|config", tier="blind2"),
+    # Blind batch 3 (2026-10-18), written after the v4 repair cards were frozen (logs/kb-cards-frozen-*.sha256), to
+    # A/B them on faults they were not written against. Two of the four are ones a card could mislead on: a 429 reads
+    # like the slow-dependency card (restart, escalate) and a file missing from the image like the missing-reference
+    # card (restore_config); both need a recreate.
+    "upstream-perm-denied": dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"permission|denied|403|forbidden|chmod|readable", tier="blind3"),
+    "upstream-sigstop":     dict(min_actions=1, fix_tools={"docker_restart"}, cause=r"sigstop|stopped process|frozen|hung|unresponsive|not respond|worker", tier="blind3"),
+    "upstream-429":         dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"429|too many|rate|upstream.*(config|layer)", tier="blind3"),
+    "front-mime-missing":   dict(min_actions=2, fix_tools={"docker_start", "docker_restart", "recreate_stack"}, cause=r"mime|no such file|image|layer|missing file", tier="blind3"),
     "inode-exhausted":   dict(min_actions=2, fix_tools={"clear_scratch_volume", "docker_start", "docker_restart"}, cause=r"inode|scratch|edge-cache|/var/cache/nginx|tiny files|too many files", tier="unseen",
                               diag_tools={"disk_usage", "docker_exec"}),
 }
@@ -177,6 +188,12 @@ def reset():
     sh(f"docker start {APP} {FRONT} >/dev/null 2>&1")
     sh(f"docker restart -t 1 {APP} {FRONT} >/dev/null 2>&1")
     time.sleep(2)
+    if http("/") != 200:            # the front end's own layer may be damaged (front-mime-missing): rebuild it
+        sh(f"docker rm -f {FRONT} >/dev/null 2>&1")
+        ensure(FRONT)
+        sh(f"docker network connect {NET} {FRONT} >/dev/null 2>&1")
+        sh(f"docker start {FRONT} >/dev/null 2>&1")
+        time.sleep(2)
     if http("/api/") != 200:        # the upstream's own layer may be poisoned (upstream-500): only a rebuild clears it
         sh(f"docker rm -f {APP} >/dev/null 2>&1")
         ensure(APP)
@@ -246,6 +263,27 @@ def inject(case):
         sh(f"docker network rm {NET}", check=True)
     elif case == "front-include-missing":
         (CONF_DIR / "default.conf").write_text(BAD_INCLUDE_CONF)
+        sh(f"docker restart -t 1 {FRONT}")
+    elif case == "upstream-perm-denied":
+        # The page is still there but unreadable to nginx's workers: 403 with "Permission denied" in the log. The mode
+        # lives in the writable layer, so a restart keeps it.
+        sh(f"docker exec {APP} chmod 000 /usr/share/nginx/html/index.html", check=True)
+    elif case == "upstream-sigstop":
+        # Every nginx worker stopped (SIGSTOP), the master left alone: the container is Up, not Paused, the port
+        # accepts connections into the backlog and nothing answers, so /api/ times out (504).
+        # (matched on the process title at the start of cmdline, and never this shell: its own command line
+        # contains the pattern, and a first version stopped itself)
+        stop = ('for p in /proc/[0-9]*; do n=${p#/proc/}; { [ "$n" = 1 ] || [ "$n" = "$$" ]; } && continue; '
+                'c=$(tr "\\0" " " < $p/cmdline 2>/dev/null); case "$c" in "nginx: worker"*) kill -STOP $n;; esac; done; true')
+        sh(f"docker exec {APP} sh -c {shlex.quote(stop)}", check=True)
+    elif case == "upstream-429":
+        # The upstream's own config, in its writable layer, rejects every request with 429 Too Many Requests.
+        sh(f"docker exec {APP} sh -c \"printf 'server {{ listen 80; return 429; }}\\n' > /etc/nginx/conf.d/default.conf "
+           f"&& nginx -s reload\"", check=True)
+    elif case == "front-mime-missing":
+        # A file of the front end's image (nginx.conf includes it) deleted from its writable layer; on the next start
+        # nginx stops at [emerg] open() "/etc/nginx/mime.types". restore_config cannot help: default.conf is fine.
+        sh(f"docker exec {FRONT} rm -f /etc/nginx/mime.types", check=True)
         sh(f"docker restart -t 1 {FRONT}")
     elif case == "bad-upstream-name":
         (CONF_DIR / "default.conf").write_text(BAD_NAME_CONF)

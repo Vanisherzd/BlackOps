@@ -16,10 +16,14 @@
   uv run --no-sync scripts/faults.py reset            restore config, start both containers
   uv run --no-sync scripts/faults.py run <case>       inject -> agent.py -> verify   (the end-to-end test)
 """
+import hashlib
+import io
+import json
 import pathlib
 import shlex
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.request
 
@@ -170,6 +174,72 @@ def setup():
     print("setup:", "/", http("/"), "/api/", http("/api/"))
 
 
+# --- each container's own filesystem against its last known-good state ----------------------------------------------
+# A restart keeps a container's writable layer; a rebuild from its definition drops it. Which files of that layer
+# changed is the fact that tells the two apart, and it names the container: the upstream's config and the front end's
+# share the path /etc/nginx/conf.d/default.conf, and the agent "fixed" the front end's healthy file for an error in
+# the upstream's (blind batch 4). The baseline is needed because a healthy layer is not empty: nginx's entrypoint
+# rewrites the upstream's default.conf at its first start.
+LAYER_BASE = ROOT / "victim" / "known-good" / "layers.json"
+LAYER_SKIP = ("/run", "/var/run", "/var/cache", "/var/log", "/tmp", "/proc", "/sys", "/dev")
+
+
+def layer_state(name):
+    """{path: "deleted" | "<octal mode> <sha256 prefix>"} for the files `docker diff` lists, runtime paths skipped,
+    or None when the container does not exist. Works on a stopped container (docker cp)."""
+    r = sh(f"docker diff {name}")
+    if r.returncode:
+        return None
+    out = {}
+    for line in r.stdout.splitlines():
+        kind, _, path = line.partition(" ")
+        if not path or path.startswith(LAYER_SKIP):
+            continue
+        if kind == "D":
+            out[path] = "deleted"
+            continue
+        cp = subprocess.run(["docker", "cp", f"{name}:{path}", "-"], capture_output=True, timeout=30)
+        if cp.returncode:
+            continue
+        try:
+            with tarfile.open(fileobj=io.BytesIO(cp.stdout)) as t:
+                m = t.next()
+                if m is not None and m.isfile():      # directories: their files have lines of their own
+                    out[path] = f"{m.mode:o} {hashlib.sha256(t.extractfile(m).read()).hexdigest()[:16]}"
+        except tarfile.TarError:
+            pass
+    return out
+
+
+def record_layers():
+    """Save both containers' layer state as the known-good baseline (a deploy, and the agent when health is green)."""
+    state = {n: layer_state(n) for n in (FRONT, APP)}
+    if all(v is not None for v in state.values()):
+        LAYER_BASE.parent.mkdir(parents=True, exist_ok=True)
+        LAYER_BASE.write_text(json.dumps(state, indent=1))
+
+
+def layer_changes(name):
+    """[(path, what changed)] in this container's own filesystem since its known-good state."""
+    try:
+        base = json.loads(LAYER_BASE.read_text()).get(name) or {}
+    except (OSError, ValueError):
+        base = {}
+    now = layer_state(name) or {}
+    out = []
+    for path, v in sorted(now.items()):
+        old = base.get(path)
+        if v == old:
+            continue
+        if v == "deleted":
+            out.append((path, "deleted"))
+        elif old and old != "deleted" and old.split()[1] == v.split()[1]:
+            out.append((path, f"permissions changed {old.split()[0]} -> {v.split()[0]}"))
+        else:
+            out.append((path, "content changed" if old else "changed from the image"))
+    return out
+
+
 def record_deployed():
     """The deploy records what it deployed: the agent's restore_config puts this back (scripts/agent.py)."""
     kg = ROOT / "victim" / "known-good"
@@ -211,6 +281,8 @@ def reset():
         ensure(APP)
         sh(f"docker restart -t 1 {FRONT} >/dev/null 2>&1")
         time.sleep(2)
+    if http("/") == 200 and http("/api/") == 200:
+        record_layers()             # the deployed state is the baseline the agent's layer diff is measured against
 
 
 def inject(case):

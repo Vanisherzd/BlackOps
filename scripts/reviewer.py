@@ -41,10 +41,10 @@ for one never applies to the other.
   5xx) or unreachable. A rebuild restores the container's whole writable layer: its own config, files deleted or made
   unreadable, changed permissions. That cause is inferred, not observable: do not demand proof of it, and do not
   reject because the status is a 4xx, or the error is a permission error or a missing file inside the upstream.
-- recreate_stack replace=true on the front end edge-victim: only when the computed facts name a file outside
-  /etc/nginx/conf.d that nginx failed to open (a file of its image, such as /etc/nginx/mime.types), which a rebuild
-  restores. Its site config /etc/nginx/conf.d/default.conf is a host file that a rebuild does not change, so for an
-  error in that file a rebuild is wrong.
+- recreate_stack replace=true on the front end edge-victim: only when the computed facts name a file of its image
+  (outside /etc/nginx/conf.d) that is missing or changed, such as /etc/nginx/mime.types deleted or /etc/nginx/nginx.conf
+  edited, which a rebuild restores. Its site config /etc/nginx/conf.d/default.conf is a host file that a rebuild does
+  not change, so for an error in that file a rebuild is wrong.
 - Never as a first move.
 - kill_process: top_processes in this incident lists that pid at high CPU or memory, and it is not a platform process.
 - clear_scratch_volume: disk_usage in this incident shows the scratch volume edge-cache at 95 % or more of its space
@@ -99,6 +99,18 @@ def front_image_file(trace):
     return None
 
 
+def front_layer_changes():
+    """Files of the front end's image (outside the mounted conf.d) that differ from its known-good state, measured now
+    with docker diff: a missing one names itself in the log, an edited one (worker_connections 2) does not."""
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import faults
+    try:
+        return [f"{p} {w}" for p, w in faults.layer_changes(faults.FRONT) if not p.startswith("/etc/nginx/conf.d/")]
+    except Exception:                       # a failed measurement is no evidence for a rebuild
+        return []
+
+
 def computed_facts(action, args, trace):
     """The precondition facts, derived from the trace by code so the reviewer confirms rather than reconstructs."""
     facts = {}
@@ -114,7 +126,8 @@ def computed_facts(action, args, trace):
             failing = re.search(r'"api": (?!200)', facts["health after that restart"]) or "unreachable" in facts["health after that restart"]
             facts["/api/ still failing after the restart"] = "yes" if failing else "no"
         if name == "edge-victim":
-            facts["front end log names a missing file of its image"] = front_image_file(trace) or "NO"
+            found = [f"{f} missing (named in its log)" for f in [front_image_file(trace)] if f] + front_layer_changes()
+            facts["front end image files missing or changed"] = "; ".join(found) or "NO"
     elif action == "kill_process":
         pid = str(args.get("pid", ""))
         hits = [t["result"] for t in trace if t["tool"] == "top_processes" and re.search(rf"\b{re.escape(pid)}\b", t["result"])]
@@ -149,12 +162,12 @@ def sufficient(action, args, facts):
         if facts.get("/api/ still failing after the restart") != "yes":
             return False, "after the restart /api/ was not seen failing. Next: check_health; rebuild only if /api/ still fails"
         if args.get("name") == "edge-victim":
-            f = facts.get("front end log names a missing file of its image", "NO")
+            f = facts.get("front end image files missing or changed", "NO")
             if f == "NO":
-                return False, ("edge-victim's site config is a host file a rebuild keeps, and its logs in this incident name "
-                               "no missing file of its image. Next: docker_logs {\"name\": \"edge-victim\"}; for a config "
+                return False, ("edge-victim's site config is a host file a rebuild keeps, and no file of its image is "
+                               "missing or changed. Next: docker_logs {\"name\": \"edge-victim\"}; for a config "
                                "error fix the file (restore_config or write_config) and docker_restart edge-victim")
-            return True, f"restarted, still failing, and its log names {f}, a file of its image that a rebuild restores"
+            return True, f"restarted, still failing, and files of its image are missing or changed ({f}); a rebuild restores them"
         return True, "restarted, and /api/ still failing afterwards"
     if action == "kill_process":
         line = facts.get("top_processes lists this pid", "NO")

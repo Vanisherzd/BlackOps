@@ -63,6 +63,24 @@ def reviewed(name, args):
 ACCESS_ERR_RE = re.compile(r'"(?:GET|POST|HEAD) [^"]*" ([45]\d\d) ')
 
 
+def layer_note(name):
+    """Whose logs these are, and which files of that container's own filesystem differ from its known-good state.
+    Both containers have /etc/nginx/conf.d/default.conf; an error in the upstream's was fixed in the front end's file,
+    which took the front end down too (upstream-config-crash, blind batch 4)."""
+    import faults
+    head = (f"[logs of {name}: every path below is inside {name}'s own filesystem"
+            + (", not the host file read_config shows" if name != faults.FRONT else
+               "; its /etc/nginx/conf.d/default.conf is the host file read_config shows") + "]\n")
+    try:
+        changes = faults.layer_changes(name)
+    except (OSError, subprocess.SubprocessError):
+        changes = []
+    if changes:
+        head += (f"[files of {name} changed since its known-good state (a restart keeps them, recreate_stack "
+                 f"replace=true restores them): " + "; ".join(f"{p} {w}" for p, w in changes[:6]) + "]\n")
+    return head
+
+
 def symptom_query(text):
     """The lines that look like a complaint, or None when the output carries no symptom worth matching on.
 
@@ -214,7 +232,9 @@ def snapshot_known_good():
         if cur.strip() and "proxy_pass" in cur:
             KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)
             KNOWN_GOOD.write_text(cur)
-    except OSError:
+        import faults
+        faults.record_layers()      # what each container's own filesystem looks like while healthy
+    except (OSError, subprocess.SubprocessError):
         pass
 
 
@@ -262,7 +282,7 @@ TOOLS = [
     {"name": "docker_exec", "description": "Run a read-only diagnostic command inside a running container (nginx -t, cat, ls, ps, curl, df, du, tail, head, grep)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "cmd": {"type": "string"}}, "required": ["name", "cmd"]}},
     {"name": "docker_start", "description": "Start a stopped container", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "docker_restart", "description": "Restart a container (needed after a config change)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
-    {"name": "read_config", "description": "Read victim/conf.d/default.conf", "parameters": {"type": "object", "properties": {}}},
+    {"name": "read_config", "description": "Read the front end's (edge-victim's) nginx site config, a host file mounted at /etc/nginx/conf.d/default.conf. edge-victim-app has its own file at that path inside its container: docker_exec cat", "parameters": {"type": "object", "properties": {}}},
     {"name": "write_config", "description": "Replace the nginx config with the given full content. The file lives on the host and is mounted read-only into edge-victim, so this tool is the only way to change it (the container's own 'read-only file system' warning is expected). docker_restart edge-victim afterwards to apply", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
     {"name": "restore_config", "description": "Put back the last known-good nginx config (saved when both health URLs returned 200), or with source=previous the file the last write replaced; then docker_restart edge-victim to apply", "parameters": {"type": "object", "properties": {"source": {"type": "string", "enum": ["known-good", "previous"], "default": "known-good"}}}},
     {"name": "search_runbooks", "description": "Search the IT runbooks for a symptom in your own words or with the exact error text (502 upstream, nginx emerg config, disk full, exit 137, crash loop); returns the best matching procedures, or the catalogue if nothing matches", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
@@ -306,11 +326,20 @@ def collapse(text):
     return "\n".join(f"{l}   (x{seen[l.strip()]})" if seen[l.strip()] > 1 else l for l in order)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
 def http_status(url):
+    """The status the URL answers with. A redirect is reported, not followed: following a 301 to a name the host
+    cannot resolve read "unreachable", and the agent went repairing the network (upstream-redirect, 2026-10-19)."""
     try:
-        with urllib.request.urlopen(url, timeout=5) as r:
+        with urllib.request.build_opener(_NoRedirect).open(url, timeout=5) as r:
             return r.status
     except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            return f"{e.code} redirect to {e.headers.get('Location', '?')}"
         return e.code
     except Exception as e:
         return f"unreachable ({type(e).__name__})"
@@ -532,6 +561,7 @@ def _run_tool(name, args, dry_run):
         if denied:
             return denied
         out = collapse(sh(f"docker logs --tail {int(args.get('tail', 40))} {args['name']} 2>&1", limit=6000))
+        out = layer_note(args["name"]) + out
         if "read-only file system" in out:
             out += ("\n\nnote: the entrypoint's 'can not modify /etc/nginx/conf.d/default.conf (read-only file "
                     "system?)' is expected and harmless. That file is a host file mounted read-only into the "
@@ -564,6 +594,13 @@ def _run_tool(name, args, dry_run):
             if faults.NET not in app_nets:
                 return (f"denied: edge-victim-app is not on the {faults.NET} network right now, so nginx would fail to "
                         "resolve it at startup and exit. Run network_repair first, then start/restart edge-victim.")
+            app_running = sh("docker inspect -f '{{.State.Running}}' edge-victim-app").strip() == "true"
+            if not app_running and http_status(HEALTH["front"]) == 200:
+                # it serves / now; restarted, nginx resolves edge-victim-app at start, fails and exits (two runs made
+                # worse this way in blind batch 4)
+                return ("denied: edge-victim is serving / right now and edge-victim-app is not running; restarted, "
+                        "edge-victim would fail to resolve edge-victim-app at startup and go down too. The fault is in "
+                        'edge-victim-app: docker_logs {"name": "edge-victim-app"} and fix it first.')
         if dry_run:
             return f"DRY-RUN: would run docker {name.split('_')[1]} {args['name']}"
         out = sh(f"docker {name.split('_')[1]} -t 5 {args['name']}" if name == "docker_restart" else f"docker start {args['name']}")
@@ -668,11 +705,11 @@ def _run_tool(name, args, dry_run):
             # The site config is a host file a rebuild keeps; a file of the image (nginx.conf includes mime.types) is
             # restored by one. Denying every rebuild of the front end left front-mime-missing unfixable (0/6, 2026-10-18).
             import reviewer
-            if not reviewer.front_image_file(_incident["trace"]):
+            if not (reviewer.front_image_file(_incident["trace"]) or reviewer.front_layer_changes()):
                 return ("denied: edge-victim's site config is a host file mounted into the container; rebuilding the "
                         "container keeps the same file and the same fault. Fix the file with write_config or "
-                        "restore_config, then docker_restart edge-victim. (A rebuild is allowed only when its log names "
-                        "a missing file outside /etc/nginx/conf.d, a file of its image: read docker_logs edge-victim.)")
+                        "restore_config, then docker_restart edge-victim. (A rebuild is allowed only when a file of its "
+                        "image, outside /etc/nginx/conf.d, is missing or changed: docker_logs edge-victim lists them.)")
         if dry_run:
             return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
         if args.get("replace"):

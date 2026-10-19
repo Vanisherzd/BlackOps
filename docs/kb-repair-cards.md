@@ -78,3 +78,11 @@ Changed after reading the first A/B, so the rerun shows these failures fixed, no
 rule: the trace keeps the last 300 characters of a log, and the note docker_logs appends to front-end logs ("the
 entrypoint's read-only file system message is harmless") pushed the [emerg] line out of it, so the rule never saw the
 missing file. `trace_summary` now cuts that note before taking the tail.
+
+## front-mime-missing after the trace fix (2026-10-19, `logs/ab-20261019-132608-{A,B}.log`)
+
+v3: 0/3 autonomous (one restored by the self_heal fallback, one timeout, one failed); v4: 2/3 autonomous. Before the
+fix, 0/6. The reviewer approved all three front-end rebuilds it was asked about, each citing the missing
+/etc/nginx/mime.types as a file of the image. The v3 failure was the next bug: a docker_start the runbook gate had
+refused counted as the restart, with no health after it, so the code key rejected the rebuild for "/api/ not seen
+failing". `reviewer.restarted` now counts only start/restart calls that ran, in the reviewer and the tool layer alike.

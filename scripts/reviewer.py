@@ -80,6 +80,14 @@ def named(t, name):
     return re.search(r'"name":\s*"' + re.escape(name) + '"', t["args"]) is not None
 
 
+def restarted(trace, name):
+    """Indices of the start/restart calls on this container that actually ran. The trace records refused and denied
+    calls too, and a docker_start the runbook gate had refused once counted as the restart, with no health after it,
+    so the rebuild that followed was rejected for "/api/ not seen failing" (front-mime-missing, 2026-10-19)."""
+    return [i for i, t in enumerate(trace) if t["tool"] in ("docker_restart", "docker_start") and named(t, name)
+            and not t["result"].startswith(("refused:", "denied:", "review-rejected:", "DRY-RUN"))]
+
+
 def front_image_file(trace):
     """A file of the front end's image that nginx failed to open, from its logs in this incident, or None. Only those
     are restored by rebuilding edge-victim; its default.conf is a host file mounted in, which a rebuild keeps."""
@@ -96,7 +104,7 @@ def computed_facts(action, args, trace):
     facts = {}
     if action == "recreate_stack":
         name = str(args.get("name", ""))
-        idx = [i for i, t in enumerate(trace) if t["tool"] in ("docker_restart", "docker_start") and named(t, name)]
+        idx = restarted(trace, name)
         facts["restart of this container in this incident"] = "yes" if idx else "NO"
         if idx:
             after = trace[idx[-1]]["result"]

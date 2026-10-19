@@ -682,7 +682,7 @@ def _run_tool(name, args, dry_run):
             # docker_restart counted, and an agent that had read "OOMKilled: yes", started the container and seen it
             # killed again was still refused the rebuild (2026-10-17).
             import reviewer
-            if not any(t["tool"] in ("docker_restart", "docker_start") and reviewer.named(t, args["name"]) for t in _incident["trace"]):
+            if not reviewer.restarted(_incident["trace"], args["name"]):
                 return (f"denied: recreate_stack replace=true on {args['name']} before it was started or restarted in this "
                         f'incident. Next: docker_restart {{"name": "{args["name"]}"}}; if it still fails, call '
                         f'recreate_stack {{"name": "{args["name"]}", "replace": true}} again.')

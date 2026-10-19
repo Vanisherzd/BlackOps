@@ -8,7 +8,8 @@ cd ~/edge-agent || exit 1
 CASE="$1"; N="$2"; ENV_A="$3"; ENV_B="$4"
 TS=$(date +%Y%m%d-%H%M%S); BASE="logs/ab-$TS"
 setsid nohup bash -c '
-  quiesce() {   # see drill-all.sh: a killed drill can keep calling the ops API
+  quiesce() {   # see drill-all.sh: a killed drill can keep calling the ops API (local i: the run loop uses i too)
+    local i
     for i in $(seq 1 60); do
       age=$(( $(date +%s) - $(stat -c %Y logs/ops-api.log 2>/dev/null || echo 0) ))
       [ $age -ge 60 ] && return

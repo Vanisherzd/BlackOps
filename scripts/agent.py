@@ -58,7 +58,9 @@ def reviewed(name, args):
             "a less invasive action, or stop and escalate in your final report.")
 
 
-ACCESS_5XX_RE = re.compile(r'"(?:GET|POST|HEAD) [^"]*" (5\d\d) ')
+# 4xx too (2026-10-18): an upstream answering 429 or 403 to every request logged only access lines, so the query was
+# empty and neither a runbook nor a card was attached.
+ACCESS_ERR_RE = re.compile(r'"(?:GET|POST|HEAD) [^"]*" ([45]\d\d) ')
 
 
 def symptom_query(text):
@@ -67,14 +69,17 @@ def symptom_query(text):
     An nginx access-log line (`"GET / HTTP/1.0" 500 177 "-" "curl"`) is a symptom, but as embedding input it is mostly
     noise: quotes, sizes, user agents. Say what it means instead, in the words the runbook uses.
     """
-    lines = [l.strip() for l in (text or "").splitlines() if SYMPTOM_RE.search(l)]
+    lines = [l.strip() for l in (text or "").splitlines() if SYMPTOM_RE.search(l) or ACCESS_ERR_RE.search(l)]
     if not lines:
         return None
-    codes = sorted({m.group(1) for l in lines for m in [ACCESS_5XX_RE.search(l)] if m})
-    plain = [l for l in lines if not ACCESS_5XX_RE.search(l)]
+    codes = sorted({m.group(1) for l in lines for m in [ACCESS_ERR_RE.search(l)] if m})
+    plain = [l for l in lines if not ACCESS_ERR_RE.search(l)]
     query = " ".join(plain[-4:])[:400]
     if codes:
-        query = f"the service itself answers HTTP {' '.join(codes)} to requests, container is up. " + query
+        import http
+        named = " ".join(f"{c} {http.HTTPStatus(int(c)).phrase}" if int(c) in http.HTTPStatus._value2member_map_ else c
+                         for c in codes)
+        query = f"the service itself answers HTTP {named} to requests, container is up. " + query
     return query.strip() or None
 
 
@@ -438,7 +443,9 @@ def trace_summary(name, result):
     and, when long, their tail, where the appended health check is."""
     text = str(result)
     if name == "docker_logs":
-        body = text.split("\n\n--- matching runbook")[0]
+        # the read-only note appended to front-end logs pushed the [emerg] line out of the kept tail, and the rebuild
+        # rule, which reads the trace, never saw the missing image file it was waiting for (front-mime-missing, 0/6)
+        body = text.split("\n\n--- matching runbook")[0].split("\n\nnote: the entrypoint")[0]
         text = body if len(body) <= 300 else "… " + body[-300:]
     elif len(text) > 450:
         text = text[:300] + " … " + text[-150:]
@@ -658,9 +665,14 @@ def _run_tool(name, args, dry_run):
             return ("denied: replace=true needs an explicit name; it destroys that container and builds it again. "
                     'Next: recreate_stack {"name": "edge-victim-app", "replace": true}.')
         if args.get("replace") and args.get("name") == "edge-victim":
-            return ("denied: edge-victim's nginx config is a host file mounted into the container; rebuilding the "
-                    "container keeps the same file and the same fault. Fix the file with write_config, then "
-                    "docker_restart edge-victim.")
+            # The site config is a host file a rebuild keeps; a file of the image (nginx.conf includes mime.types) is
+            # restored by one. Denying every rebuild of the front end left front-mime-missing unfixable (0/6, 2026-10-18).
+            import reviewer
+            if not reviewer.front_image_file(_incident["trace"]):
+                return ("denied: edge-victim's site config is a host file mounted into the container; rebuilding the "
+                        "container keeps the same file and the same fault. Fix the file with write_config or "
+                        "restore_config, then docker_restart edge-victim. (A rebuild is allowed only when its log names "
+                        "a missing file outside /etc/nginx/conf.d, a file of its image: read docker_logs edge-victim.)")
         if dry_run:
             return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
         if args.get("replace"):
@@ -669,7 +681,8 @@ def _run_tool(name, args, dry_run):
             # A start of an exited container is the same evidence as a restart: it ran again and still failed. Only
             # docker_restart counted, and an agent that had read "OOMKilled: yes", started the container and seen it
             # killed again was still refused the rebuild (2026-10-17).
-            if not any(t["tool"] in ("docker_restart", "docker_start") and args["name"] in t["args"] for t in _incident["trace"]):
+            import reviewer
+            if not any(t["tool"] in ("docker_restart", "docker_start") and reviewer.named(t, args["name"]) for t in _incident["trace"]):
                 return (f"denied: recreate_stack replace=true on {args['name']} before it was started or restarted in this "
                         f'incident. Next: docker_restart {{"name": "{args["name"]}"}}; if it still fails, call '
                         f'recreate_stack {{"name": "{args["name"]}", "replace": true}} again.')
@@ -677,7 +690,7 @@ def _run_tool(name, args, dry_run):
             if refusal:
                 return refusal
         if args.get("replace"):
-            sh(f"docker rm -f {args['name']}")       # stateless by definition (SPECS); the config is a host file
+            sh(f"docker rm -f {args['name']}")       # stateless by definition (SPECS); the site config is a host file
         out = [faults.ensure(t) for t in targets]
         time.sleep(2)
         return with_health("\n".join(out) + "\n" + docker_ps())

@@ -51,3 +51,30 @@ No difference beyond noise. Why, run by run:
 
 The bottleneck on unseen faults is the guards' conditions, written for the faults already known, and the card only
 arriving when the agent happens to search.
+
+## Guards loosened, then the same A/B again (2026-10-18, `logs/ab-20261018-203657-{A,B}.log`)
+
+Changed after reading the first A/B, so the rerun shows these failures fixed, not generalisation:
+
+- Reviewer: the two containers named apart (the model key had applied "never rebuild edge-victim" to
+  edge-victim-app, twice); the upstream may be rebuilt when /api/ still fails after a restart with any error status,
+  4xx included, and "a rebuild restores deleted files, changed permissions and its own config" is said outright.
+- The front end may be rebuilt when its log names a missing file outside /etc/nginx/conf.d (a file of its image);
+  for default.conf, a host file, a rebuild stays refused. Same rule in the tool layer and the reviewer's code key
+  (`reviewer.front_image_file`). Restart evidence matched on the exact container name: `"edge-victim" in args` was
+  also true for edge-victim-app.
+- docker_logs builds its retrieval query from 4xx access lines too ("HTTP 429 Too Many Requests"): an upstream
+  answering 429 to everything logged no error line, so no runbook and no card were attached.
+
+| case | v3 before | v4 before | v3 after | v4 after |
+|---|---|---|---|---|
+| upstream-perm-denied | 0/3 | 0/3 | 0/3 | 1/3 |
+| upstream-sigstop | 2/3 | 3/3 | 2/3 | 2/3 |
+| upstream-429 | 2/3 | 2/3 | 3/3 | 3/3 |
+| front-mime-missing | 0/3 | 0/3 | 0/3 | 0/3 |
+| total | 4/12 | 5/12 | 5/12 | 6/12 |
+
+429 is fixed in both arms (reviewer rejections 2 -> 0). front-mime-missing stayed at 0 because of a bug in the new
+rule: the trace keeps the last 300 characters of a log, and the note docker_logs appends to front-end logs ("the
+entrypoint's read-only file system message is harmless") pushed the [emerg] line out of it, so the rule never saw the
+missing file. `trace_summary` now cuts that note before taking the tail.

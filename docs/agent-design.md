@@ -881,3 +881,31 @@ Next, from these: `docker_ps` should state the negative (`exit 137, OOMKilled: n
 container's networks (`edge-net: missing`); `upstream-5xx.md` should cover 4xx answered by the upstream itself; and
 the OpenClaw compaction timeout on long sessions wants a look. Each of these makes batch 2 no longer blind.
 
+
+## Blind batch 4 (2026-10-19): do the loosened guards generalise?
+
+Written against the agent frozen at c3f758d (`logs/blind4-freeze-20261019.txt`), after the guard changes that blind
+batch 3 prompted. Four families not drilled before; A/B of the knowledge pack as before
+(`logs/ab-20261019-144744-{A,B}.log`, 3 runs per case per arm, original Nano NVFP4).
+
+| case | v3 | v4 | what it tests |
+|---|---|---|---|
+| upstream-config-crash (its own config loses a `;`, it exits) | 0/3, 1 made worse | 0/3, 1 made worse | a new crash cause |
+| upstream-pids-limit (pids limit 3) | 3/3 | 3/3 | a resource limit |
+| front-worker-connections (nginx.conf of the image edited) | 0/3 | 0/3 | the front rebuild rule's edge |
+| upstream-redirect (301 to itself) | 3/3 | 0/3 | a 3xx where the rules speak of errors |
+| total | 6/12 | 3/12 | |
+
+Generalised: "rebuild the upstream when it still fails after a restart" fixed the pids limit 6/6 and the 301 in the v3
+arm. No card was pushed in any of the 24 runs, so the 3/3 against 0/3 on upstream-redirect is run-to-run variance, not
+the pack; over blind batches 3 (after the fixes) and 4 the arms stand at v3 11/24, v4 9/24.
+
+Three failures, none for lack of knowledge:
+
+- Wrong container. The upstream's error names `/etc/nginx/conf.d/default.conf`, the same path as the front end's
+  config. In every config-crash run the agent took it for the front end's file, rewrote or restored that (healthy)
+  host file and restarted the front end, which then could not resolve the dead upstream and went down too: the two
+  made-worse runs. No run tried rebuilding the upstream.
+- The front rebuild rule allows a missing image file only; an edited one (worker_connections) was refused 8 times.
+- The health check follows redirects: a 301 to a name the host cannot resolve read "unreachable", the v4 arm searched
+  "unreachable", got the network runbook and kept repairing the network. The agent's own curl saw the 301.

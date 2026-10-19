@@ -10,6 +10,8 @@
                                                           | upstream-index-deleted | network-removed | front-include-missing
                                                           blind3 (2026-10-18): upstream-perm-denied | upstream-sigstop
                                                           | upstream-429 | front-mime-missing
+                                                          blind4 (2026-10-19): upstream-config-crash | upstream-pids-limit
+                                                          | front-worker-connections | upstream-redirect
   uv run --no-sync scripts/faults.py verify           exit 0 when / and /api/ both return 200
   uv run --no-sync scripts/faults.py reset            restore config, start both containers
   uv run --no-sync scripts/faults.py run <case>       inject -> agent.py -> verify   (the end-to-end test)
@@ -92,6 +94,14 @@ CASES = {
     "upstream-sigstop":     dict(min_actions=1, fix_tools={"docker_restart"}, cause=r"sigstop|stopped process|frozen|hung|unresponsive|not respond|worker", tier="blind3"),
     "upstream-429":         dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"429|too many|rate|upstream.*(config|layer)", tier="blind3"),
     "front-mime-missing":   dict(min_actions=2, fix_tools={"docker_start", "docker_restart", "recreate_stack"}, cause=r"mime|no such file|image|layer|missing file", tier="blind3"),
+    # Blind batch 4 (2026-10-19), written against the agent frozen at c3f758d (logs/blind4-freeze-20261019.txt), after
+    # the guard changes that blind batch 3 prompted, to test whether they generalise. Each is a family not drilled
+    # before: the upstream crashing on its own config, a resource limit, a damaged image file of the front end that is
+    # not a missing one (the new front rebuild rule only covers missing files), a 3xx where the rules speak of errors.
+    "upstream-config-crash":    dict(min_actions=2, fix_tools={"docker_start", "docker_restart", "recreate_stack"}, cause=r"config|emerg|syntax|invalid parameter|listen|layer", tier="blind4"),
+    "upstream-pids-limit":      dict(min_actions=2, fix_tools={"docker_start", "docker_restart", "recreate_stack"}, cause=r"pids?|fork|process limit|resource limit|limit", tier="blind4"),
+    "front-worker-connections": dict(min_actions=2, fix_tools={"docker_start", "docker_restart", "recreate_stack"}, cause=r"worker_connections|connections are not enough|nginx\.conf", tier="blind4"),
+    "upstream-redirect":        dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"}, cause=r"301|redirect|loop|upstream.*(config|layer)", tier="blind4"),
     "inode-exhausted":   dict(min_actions=2, fix_tools={"clear_scratch_volume", "docker_start", "docker_restart"}, cause=r"inode|scratch|edge-cache|/var/cache/nginx|tiny files|too many files", tier="unseen",
                               diag_tools={"disk_usage", "docker_exec"}),
 }
@@ -179,6 +189,8 @@ def reset():
         sh(f"docker rm -f {APP}-old >/dev/null 2>&1")
     if exists(APP) and sh(f"docker inspect -f '{{{{.HostConfig.Memory}}}}' {APP}").stdout.strip() not in ("", "0"):
         sh(f"docker rm -f {APP} >/dev/null 2>&1")    # upstream-oom: a memory limit is only undone by a rebuild
+    if exists(APP) and sh(f"docker inspect -f '{{{{.HostConfig.PidsLimit}}}}' {APP}").stdout.strip() not in ("", "0", "<nil>", "<no value>", "-1"):
+        sh(f"docker rm -f {APP} >/dev/null 2>&1")    # upstream-pids-limit: same
     sh(f"docker exec {CACHE} sh -c 'find /cache -mindepth 1 -maxdepth 1 \\( -name \".sess_*\" -o -name \".blob*\" \\) -delete' >/dev/null 2>&1")
     for name in (APP, FRONT):       # a previous drill may have removed one; start cannot bring back what is gone
         ensure(name)
@@ -285,6 +297,26 @@ def inject(case):
         # nginx stops at [emerg] open() "/etc/nginx/mime.types". restore_config cannot help: default.conf is fine.
         sh(f"docker exec {FRONT} rm -f /etc/nginx/mime.types", check=True)
         sh(f"docker restart -t 1 {FRONT}")
+    elif case == "upstream-config-crash":
+        # The upstream's own config, in its writable layer, loses a semicolon; on its next start nginx stops at
+        # [emerg] and the container exits. Every start fails the same way; only a rebuild restores the file.
+        sh(f"docker exec {APP} sed -i 's/listen       80;/listen       80/' /etc/nginx/conf.d/default.conf", check=True)
+        sh(f"docker restart -t 1 {APP}")
+    elif case == "upstream-pids-limit":
+        # A process limit of 3 on the upstream: after a restart the entrypoint cannot fork and no worker starts, so
+        # the container is Up and /api/ times out. The limit lives in the container's settings; a rebuild from the
+        # definition drops it.
+        sh(f"docker update --pids-limit 3 {APP}", check=True)
+        sh(f"docker restart -t 1 {APP}")
+    elif case == "front-worker-connections":
+        # The front end's main nginx.conf (a file of its image, in its writable layer) now allows 2 connections per
+        # worker: it starts, then every request fails with "worker_connections are not enough". Nothing is missing.
+        sh(f"docker exec {FRONT} sed -i 's/worker_connections  1024;/worker_connections  2;/' /etc/nginx/nginx.conf", check=True)
+        sh(f"docker restart -t 1 {FRONT}")
+    elif case == "upstream-redirect":
+        # The upstream's own config, in its writable layer, answers every request with a 301 to itself.
+        sh(f"docker exec {APP} sh -c \"printf 'server {{ listen 80; return 301 http://edge-victim-app/; }}\\n' > "
+           f"/etc/nginx/conf.d/default.conf && nginx -s reload\"", check=True)
     elif case == "bad-upstream-name":
         (CONF_DIR / "default.conf").write_text(BAD_NAME_CONF)
         sh(f"docker restart -t 1 {FRONT}")  # nginx cannot resolve the name and exits

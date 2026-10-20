@@ -909,3 +909,22 @@ Three failures, none for lack of knowledge:
 - The front rebuild rule allows a missing image file only; an edited one (worker_connections) was refused 8 times.
 - The health check follows redirects: a 301 to a name the host cannot resolve read "unreachable", the v4 arm searched
   "unreachable", got the network runbook and kept repairing the network. The agent's own curl saw the 301.
+
+## Thinking off (2026-10-19/20): 4-5x faster, and it breaks the procedure
+
+Drill time is 78% model calls, about 91% of that decode at 53-58 tokens/s, and most generated tokens are thinking.
+Same 18 cases (seen 10, blind 3 and 4), one run each per arm.
+
+| | thinking on (`ab-20261019-195910-A`) | thinking off (`ab-20261019-231122-B`) |
+|---|---|---|
+| seen 10 | 9/10 | 5/10 |
+| blind 3 + 4 | 2/8 | 1/8 |
+| total | 11/18 | 6/18 |
+| false health claims | 0 | 6 |
+| tokens generated per model call | 974 | 192 |
+| median seconds, seen cases | 59 | 16 |
+
+Without thinking the agent claimed fixes it never verified and ended several drills after 0-2 calls. A first run of
+the thinking-off arm (`ab-20261019-195910-B`) was invalid: the shim's SHIM_THINK=0 only left the flag out and the
+template's default is on, so both arms thought (974 and 818 tokens per call). It doubles as an A/A run: 11/18 and
+12/18 with single cases flipping both ways, the noise any one-run-per-case comparison has to beat.

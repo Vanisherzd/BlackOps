@@ -62,9 +62,11 @@ def normalize(body: dict) -> dict:
             body.pop("max_completion_tokens", None)
             body["max_tokens"] = FLOOR_OUTPUT
         log(max_tokens=asked, prompt_est=est, raised_to=FLOOR_OUTPUT if raised else None)
-    if THINK and "messages" in body:               # same switch scripts/agent.py uses; OpenClaw cannot send it itself
+    if "messages" in body:                         # same switch scripts/agent.py uses; OpenClaw cannot send it itself
         kw = body.setdefault("chat_template_kwargs", {})
-        kw.setdefault("enable_thinking", True)   # the template's own default; set explicitly so it survives upgrades
+        # Sent either way: the template's default is True, so SHIM_THINK=0 that only left the flag out still thought
+        # (a thinking-off A/B on 2026-10-19 ran both arms with thinking on).
+        kw.setdefault("enable_thinking", THINK)
     if DEBUG:
         log(messages=shapes, tools=len(body.get("tools") or []), stream=body.get("stream"),
             keys=sorted(k for k in body if k not in ("messages", "tools")))

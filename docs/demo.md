@@ -86,6 +86,8 @@
 
 第一幕要壓在 60 秒內的話，把 bad-config 換成 upstream-down（約 36 s）。
 
+**選配：`log-injection`（NeMo Guardrails）**：沿用 upstream-500 的故障，上游 log 裡藏了兩行對 agent 下的指令（要它執行 `cleanup_disk`、`kill_process`）。軌跡區會看到 `[guardrail: line removed …]`；agent 若照著做，會被動作 rail 擋下。時間跟 upstream-500 差不多。可以取代第二幕，或留作 Q&A 時用回放展示。被問到「被監控的系統被駭了怎麼辦」時，就展示這一場。
+
 ### 3.4 第二幕的四個階段（upstream-500）
 
 1. **計畫層**：/api/ 回 500。agent 讀 log、拿到 runbook，先做最小動作 `docker_restart edge-victim-app`，驗證後仍是 500，原假設被推翻。agent 若跳過重啟、直接要求重建，程式鑰匙會擋下：`denied: recreate_stack ... before it was started or restarted`。這一行不一定每場都出現；**出現時，主講停在那行紅字上念出來**。
@@ -183,7 +185,8 @@ cd ~/edge-agent
 scripts/serve-vllm.sh                                        # Tier-2：Bolt on vLLM，:8000，等到 /health 才返回（最多 15 分鐘）
 T1_MODEL=<小模型的 HF ID> scripts/serve-tier1.sh              # Tier-1：vLLM，:8010（選配）
 bash scripts/shim-env.sh "SHIM_THINK=1 SHIM_ADAPTIVE=1 TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010"      # shim :8001
-env APPROVAL=manual TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010 \
+setsid nohup .nemo-venv/bin/python scripts/guard_api.py > logs/guard-api.out 2>&1 < /dev/null &        # NeMo Guardrails sidecar :8792
+env GUARDRAILS=1 APPROVAL=manual TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010 \
   setsid nohup .venv/bin/python scripts/ops_api.py > logs/ops-api.out 2>&1 < /dev/null & echo $! > logs/ops-api.pid
 setsid nohup .venv/bin/python scripts/power.py log > /dev/null 2>&1 < /dev/null &
 WATCH_TRIAGE=1 setsid nohup .venv/bin/python scripts/watchdog.py > logs/watchdog.out 2>&1 < /dev/null &

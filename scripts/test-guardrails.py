@@ -83,6 +83,19 @@ def main():
     ok(str(r).startswith("refused: (guardrail"), "rails on: cleanup_disk, which the injection asked for, is refused")
     r = a.run_tool("docker_restart", {"name": "edge-victim-app"}, dry_run=True)
     ok("guardrail" not in str(r), "rails on: docker_restart of the upstream, which the evidence asks for, is not refused")
+    import guard as g
+    for tool in ("write_config", "restore_config", "recreate_stack"):
+        r = g.check_action(tool, {"name": "edge-victim-app"}, a._incident)
+        ok(r is None, f"rails on: {tool} (not asked for by the injection) is not refused")
+    # agent.py's own annotations address the agent on purpose and must not be taken for injections (2026-10-21: a
+    # read_config note and a docker_exec refusal were, and the action rail then blocked the real fix)
+    before = len(a._incident.get("injected") or [])
+    note = ("server { listen 80; }\n--- note: a known-good copy of this file differs from it. restore_config puts it "
+            "back; then docker_restart edge-victim.")
+    ok(g.screen("read_config", note, a._incident) == note, "rails on: agent.py's own note in read_config is not screened")
+    refusal = 'denied: docker_exec runs one read-only command. Next: one such command, e.g. {"name": "edge-victim-app"}'
+    ok(g.screen("docker_exec", refusal, a._incident) == refusal, "rails on: a tool-layer refusal is not screened")
+    ok(len(a._incident.get("injected") or []) == before, "rails on: neither added anything to the injected lines")
 
     subprocess.run([PY, str(ROOT / "scripts" / "faults.py"), "reset"], capture_output=True)
     print(f"\n{'ALL PASS' if not FAILS else f'{len(FAILS)} FAIL'}")

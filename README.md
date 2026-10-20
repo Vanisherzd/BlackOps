@@ -1,6 +1,6 @@
 # BlackOps（Blackout Ops）— 離線自我修復的 IT 維運 Agent
 
-**目標**：在一台與被監控系統分離的邊緣裝置上，完全本地跑大模型推論與小型 RAG，做一個「網路斷了也能自己診斷、自己修好」的 IT 維運 Agent。部署目標是 Jetson AGX Thor，開發與驗證機是 NVIDIA DGX Spark（GB10，128 GB unified memory）。NVIDIA 堆疊：**Nemotron**（模型）、**NemoClaw／OpenShell**（Agent 執行環境）。推論引擎是 **vLLM**；2026-10-20 團隊決定由 vLLM 取代 TensorRT-LLM，TRT-LLM 保留為早期量測的基準，見 `docs/integration-vllm.md`。
+**目標**：在一台與被監控系統分離的邊緣裝置上，完全本地跑大模型推論與小型 RAG，做一個「網路斷了也能自己診斷、自己修好」的 IT 維運 Agent。部署目標是 Jetson AGX Thor，開發與驗證機是 NVIDIA DGX Spark（GB10，128 GB unified memory）。NVIDIA 堆疊：**Nemotron**（模型）、**NemoClaw／OpenShell**（Agent 執行環境）、**NeMo Guardrails**（工具層的安全 rail）、**NeMo Agent Toolkit**（事故 profiling），見 `docs/nemo-integration.md`。推論引擎是 **vLLM**；2026-10-20 團隊決定由 vLLM 取代 TensorRT-LLM，TRT-LLM 保留為早期量測的基準，見 `docs/integration-vllm.md`。
 
 **現況（2026-10-21）**：
 - 推論：Nemotron-3.5-Bolt-74B-A9B 跑在 vLLM 上。
@@ -20,6 +20,7 @@
             │   分情況思考、Tier 路由）  （Tier-1 選配：vLLM :8010）│            │
             │                                                    ▼            │
             │  watchdog（規則巡檢）  agent.py 工具與三把鑰匙 ──► docker（victim 容器）│
+            │                        ⇅ guard_api.py :8792（NeMo Guardrails：工具輸出／動作 rail） │
             │  dashboard :8097（看板、軌跡、功耗、審批）          產線看板 /board/    │
             └───────────────────────────────────────────────────────────────┘
   legacy：TensorRT-LLM + Nemotron-3-Nano-30B-A3B-NVFP4（scripts/serve-trt.sh, :8000）；vLLM 0.29 + Qwen3.6-35B（scripts/serve.sh, :8100）
@@ -61,6 +62,9 @@ deploy/vllm/                    Bolt 的 vLLM 映像與啟動腳本（Dockerfile
 blackbox/                       推論 gateway（client library）、mock server、mock 工具、最小 agent 迴圈、benchmark（tool_eval、perf_baseline）
 tests/                          blackbox 的單元測試（33 個，`.venv/bin/python -m unittest discover -s tests`）
 config/inference.env.example    gateway 與 vLLM 的環境變數範例
+nemo/guardrails/                NeMo Guardrails 的工具輸出 rail（pattern rail + self check input，用本機模型）
+nemo/guardrails-actions/        NeMo Guardrails 的工具輸入（動作）rail：拒絕照注入文字去做的動作
+.nemo-venv/                     NeMo sidecar 的獨立 venv（nemoguardrails、nvidia-nat、nvidia-nat-profiler；不入版控，見 docs/nemo-integration.md §4）
 scripts/
   serve-vllm.sh                 正式：Bolt on vLLM，以 edge-agent 的名稱開在 :8000；trtllm-edge 還在跑就拒絕啟動；`serve-vllm.sh stop`
   serve-tier1.sh                Tier-1 小模型 on vLLM，:8010（T1_MODEL 指定，scripts/tier.py 用）
@@ -85,6 +89,9 @@ scripts/
   overnight.sh / score-runs.py  Tier A/B 夜跑；依 arm 統計 Wh、Tier-1 承接比例、審批
   validate-vllm.sh              整合版的一鍵驗證：起服務、smoke、9 案 host 迴圈、5 卡 NemoClaw drill、tool_eval
   kb-probe.py                   知識庫覆蓋率探測（70 條真實機房錯誤句）
+  guard_api.py / guard.py       NeMo Guardrails sidecar（:8792）與 agent 端客戶端；GUARDRAILS=1 才啟用
+  test-guardrails.py            Guardrails 的確定性測試（11 行測資，加上透過 agent.run_tool 的 rail 開／關端到端檢查）
+  nat_profile.py                用 NeMo Agent Toolkit profiler 分析歸檔的事故：時間、token，以及 LLM／工具／其他各占多少能耗
   ops-sandbox-helper.sh         上傳到 sandbox 的 /sandbox/bin/ops（`ops tools` / `ops call <tool> '<json>'`，MCP 之外的後備路徑）
   smoke.py / probe.py           健康+tool call 煙霧測試；8 題 needle 精準度探針
   reviewer.py                   審核代理：破壞性動作（replace、kill、cleanup）執行前，第二個代理讀事故軌跡判 APPROVE/REJECT，連不上就不執行
@@ -371,7 +378,7 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 4. `uv run --no-sync scripts/faults.py run <case>` 與 `scripts/nemoclaw-drill.sh <case>` 各跑一次。
 現成案例共 28 個（`faults.py` 的 `CASES`）：seen 9 個、unseen 1 個（inode 用盡），以及四批盲測 18 個（blind、blind2 各 5 個，blind3、blind4 各 4 個）。seen 9 個是 `nginx-stopped`、`bad-config`、`upstream-down`、`bad-upstream-name`、`container-removed`、`crashloop`（restart=always 加壞設定，重啟是錯的動作）、`upstream-paused`（上游凍結，504 而非 502）、`upstream-detached`（上游脫離 docker 網路，兩邊都 Up）、`upstream-500`（上游自己的 overlay 層設定壞掉，重啟救不回來，要 `recreate_stack` 加 `replace`）。`faults.py reset` 能還原全部九種注入，不論順序。加 runbook 後要 `scripts/rag.py build` 重建索引，並把新症狀加進 `rag.py` 的 `EVAL`。
 
-**審核代理（多代理協作與風險控制）**：`recreate_stack` 加 `replace`、`kill_process`、`cleanup_disk` 執行前，`scripts/reviewer.py` 用同一顆本地模型、不同的 system prompt、不給工具，讀本次事故的證據軌跡判 APPROVE 或 REJECT 並引用證據；REJECT 會當成工具結果回給指揮代理；審核代理連不上就不執行（fail-closed）。設計是**雙鑰匙**：充分條件由程式從事故軌跡算出並判定（重建前必須重啟過且之後仍失敗、殺行程前 `top_processes` 要列到該 pid、清磁碟前 `disk_usage` 要超過 85%），缺哪個事實就直接拒絕並點名、不問模型；條件成立才問模型，且模型只判「與本次症狀相關嗎、有沒有一行證據反駁診斷」，要 REJECT 必須引用那行。原因：只給模型判時，同樣的證據兩次判決不同（一次要求證明觀察不到的機制）。實測：無證據殺行程 REJECT、量到 100% CPU 的失控行程 APPROVE、重啟後仍 500 的上游重建連續三次 APPROVE（7.8 到 21.8 秒）。紀錄在 `logs/reviews.jsonl`（含算出的事實與哪把鑰匙決定），計分卡多一欄 reviewer rejects。審核代理 APPROVE 之後，可以再加上人工審批這第三把鑰匙：`scripts/approval.py`，`APPROVAL=manual` 時在 dashboard 按核准，逾時一律視為拒絕。預設是 off。
+**審核代理（多代理協作與風險控制）**：`recreate_stack` 加 `replace`、`kill_process`、`cleanup_disk` 執行前，`scripts/reviewer.py` 用同一顆本地模型、不同的 system prompt、不給工具，讀本次事故的證據軌跡判 APPROVE 或 REJECT 並引用證據；REJECT 會當成工具結果回給指揮代理；審核代理連不上就不執行（fail-closed）。設計是**雙鑰匙**：充分條件由程式從事故軌跡算出並判定（重建前必須重啟過且之後仍失敗、殺行程前 `top_processes` 要列到該 pid、清磁碟前 `disk_usage` 要超過 85%），缺哪個事實就直接拒絕並點名、不問模型；條件成立才問模型，且模型只判「與本次症狀相關嗎、有沒有一行證據反駁診斷」，要 REJECT 必須引用那行。原因：只給模型判時，同樣的證據兩次判決不同（一次要求證明觀察不到的機制）。實測：無證據殺行程 REJECT、量到 100% CPU 的失控行程 APPROVE、重啟後仍 500 的上游重建連續三次 APPROVE（7.8 到 21.8 秒）。紀錄在 `logs/reviews.jsonl`（含算出的事實與哪把鑰匙決定），計分卡多一欄 reviewer rejects。工具層另有 **NeMo Guardrails** 兩道 rail（`GUARDRAILS=1`）：被監控系統吐出的內容裡，對 agent 下的指令會被移除；照那些指令去做的動作會被拒絕。對應的故障案例是 `log-injection`。審核代理 APPROVE 之後，可以再加上人工審批這第三把鑰匙：`scripts/approval.py`，`APPROVAL=manual` 時在 dashboard 按核准，逾時一律視為拒絕。預設是 off。
 
 **主機層動作**：`recreate_stack`（容器被整個刪掉，start/restart 救不回來）、`network_repair`、`cleanup_disk`（只刪本專案的舊 log，跳過行程正開著的檔案，不碰 image 與 volume，也不刪 `logs/agent/` 的事故軌跡）、`kill_process`（同一使用者、非平台行程）。刻意不放進白名單的是 docker daemon（推論容器是 `--rm`，重啟 daemon 會刪掉 agent 賴以思考的模型）、任何系統 unit（sudo 要密碼）、image 與 volume（全實驗室共用）。
 
@@ -436,6 +443,7 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | `docs/project-status-2026-10-20.md` | **整體進度、風險、接下來要做的事** |
 | `docs/demo.md` | 決賽 demo 執行手冊（現場配置、時間表、失敗預案、啟動順序） |
 | `docs/integration-vllm.md` | 三條分支整合、vLLM 取代 TRT-LLM、驗證結果 |
+| `docs/nemo-integration.md` | NeMo Guardrails 安全 rail、NeMo Agent Toolkit profiling、測試與結果 |
 | `docs/HANDOFF-kb-retrieval-v2.md` | kb-retrieval-v2 交接文件（KB、guards、加速、待辦、踩過的坑） |
 | `docs/demo-pending-edits.md` | demo 外殼的修改紀錄與回歸結果 |
 | `docs/kb-coverage-survey.md` | 知識庫覆蓋度與機房故障 survey |

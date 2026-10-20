@@ -4,6 +4,8 @@
 # its start, so once it ends that file holds this run only; the shared append-only logs are cut at their line count
 # before the run. Same victim containers as every other drill: never run it while another drill or A/B is going.
 #   scripts/run-archive.sh <case>                    e.g. TRIAGE=1 scripts/run-archive.sh upstream-500
+# RUN_LABEL names the arm in meta.json (scripts/overnight.sh sets it); scripts/score-runs.py groups by it.
+# nemoclaw-drill.sh always works in ~/edge-agent, so run this from that checkout.
 # logs/runs/ is outside agent.CLEANUP_GLOBS, so cleanup_disk never touches it.
 cd "$(dirname "$0")/.." || exit 1
 CASE="${1:?usage: scripts/run-archive.sh <case>}"
@@ -42,8 +44,10 @@ m = re.findall(r"verify: .*-> (PASS|FAIL)", drill)
 head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
 dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout.strip())
 calls = sum(1 for _ in (out / "ops-api.log").open()) if (out / "ops-api.log").exists() else 0
+import os
 meta = dict(case=case, start=t0, end=t1, seconds=round(t1 - t0, 1), verify=m[-1] if m else "UNKNOWN", ops_calls=calls,
-            git=head + ("+dirty" if dirty else ""))
+            git=head + ("+dirty" if dirty else ""), label=os.environ.get("RUN_LABEL", ""),
+            env={k: os.environ[k] for k in ("TIER_MODE", "APPROVAL", "KB_RETRIEVAL", "TRIAGE", "SHIM_THINK") if k in os.environ})
 (out / "meta.json").write_text(json.dumps(meta, indent=1) + "\n")
 print(f"=== archived {out} verify={meta['verify']} calls={calls} {meta['seconds']}s")
 PY

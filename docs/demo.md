@@ -7,6 +7,7 @@
 > 2. victim 包裝成**廠務網段的產線看板＋MES API**。
 > 3. 14 項 repo 修改中 12 項已在 branch 上，狀態見 §6。
 > 4. 指令、port、開關都改成實際的名稱。
+> 5. **推論引擎改為 vLLM**（2026-10-20 團隊決定，不再用 TensorRT-LLM）：Tier-2 是 Nemotron-3.5-Bolt-74B-A9B，以 `edge-agent` 的名稱開在 :8000（`scripts/serve-vllm.sh`）。agent、工具、NemoClaw 都不用改，見 `docs/integration-vllm.md`。
 
 ---
 
@@ -142,8 +143,8 @@
 - 台上能否用有線連到會場網路。
 
 **離線包內容**：
-- Thor 可用的推論映像：TensorRT-LLM Jetson 版或 TensorRT Edge-LLM，退路是 jetson-containers vLLM r38。
-- 模型：Nemotron-3-Nano-30B-A3B-NVFP4、Tier-1 的 4B（**HF ID 要到現場確認**，`serve-tier1.sh` 用 `T1_MODEL` 指定）、bge-small-en-v1.5（HF cache tar）。
+- Thor 可用的 vLLM 映像：先試 `blackbox-vllm-bolt:77154ca`（24.7 GB，含 b12x）。它是為 GB10（sm121）建的，Thor 能不能跑**未驗證**；退路是 jetson-containers 的 vLLM r38。
+- 模型：Nemotron-3.5-Bolt-74B-A9B-24GB（Tier-2，24.1 GB）；Nemotron-3-Nano-30B-A3B-NVFP4（64 GB 機型的 Tier-2 退路）；Tier-1 的小模型（**HF ID 要到現場確認**，`serve-tier1.sh` 用 `T1_MODEL` 指定）；bge-small-en-v1.5（HF cache tar）。
 - `nginx:latest` 的 arm64 映像（victim 跑在 Thor 上）；做遠端 victim 才需要 amd64。
 - uv 快取、`uv.lock` 對應的 wheels、repo 完整副本。
 - 回放素材：Spark 上的 `logs/runs/`，比賽中再補上 Thor 的真實紀錄。
@@ -162,7 +163,7 @@
 | 6 | P0 | 斷網 | `scripts/wan.sh down --yes\|up\|status` | ✅ 骨架 | 只驗了語法；需要 sudo，**不要在共用的 Spark 上跑 down** |
 | 7 | P0 | dashboard | `scripts/dashboard.py`、`dashboard.html` | ✅ | 各端點測過；已能從瀏覽器開啟（經 VS Code 轉 port），**版面待回饋** |
 | 8 | P0 | preflight | `scripts/preflight.sh` | ✅ | 在 Spark 上跑過 |
-| 9 | P0 | Thor 推論 | serve-trt.sh（Jetson 自動用 `--runtime nvidia`）、`trt/thor-128g.yaml`、`thor-64g.yaml`、`tier1.yaml`、`serve-tier1.sh` | ⚠️ 已準備 | **只能在 Thor 上驗證** |
+| 9 | P0 | 推論（vLLM） | `scripts/serve-vllm.sh`（Bolt，:8000，Jetson 上自動改用 `--runtime nvidia`）、`scripts/serve-tier1.sh`（vLLM，:8010） | ⚠️ 已準備 | Spark 上 Bolt＋agent 的回歸**待跑**；Thor **只能到現場驗證** |
 | 10 | P1 | 人工審批 | `scripts/approval.py`，接在 `agent.reviewed()` APPROVE 之後 | ✅ | manual／逾時／off／auto 都測過 |
 | 11 | P1 | Tier 控制器 | `scripts/tier.py`，接在 agent.py 和 oai_shim.py | ✅ | host 迴圈下 1→2→1；**4B 和 30B 的 parser 相容性未測** |
 | 12 | P1 | 功耗 | `scripts/power.py` | ✅ | Spark 上用 nvidia-smi 測過；Thor 用 tegrastats，rail 名稱要到現場確認 |
@@ -175,8 +176,8 @@
 
 ```bash
 cd ~/edge-agent
-YAML=$PWD/trt/thor-128g.yaml HOST=0.0.0.0 setsid nohup scripts/serve-trt.sh > logs/trt-serve.log 2>&1 &       # Tier-2 :8000（64 GB 機型用 thor-64g.yaml）
-T1_MODEL=<4B 的 HF ID> setsid nohup scripts/serve-tier1.sh > logs/trt-tier1.log 2>&1 &                           # Tier-1 :8010（選配）
+scripts/serve-vllm.sh                                        # Tier-2：Bolt on vLLM，:8000，等到 /health 才返回（最多 15 分鐘）
+T1_MODEL=<小模型的 HF ID> scripts/serve-tier1.sh              # Tier-1：vLLM，:8010（選配）
 bash scripts/shim-env.sh "SHIM_THINK=1 SHIM_ADAPTIVE=1 TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010"      # shim :8001
 env APPROVAL=manual TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010 \
   setsid nohup .venv/bin/python scripts/ops_api.py > logs/ops-api.out 2>&1 < /dev/null & echo $! > logs/ops-api.pid
@@ -189,7 +190,7 @@ DASHBOARD_URL=http://127.0.0.1:8097 T1_URL=http://127.0.0.1:8010 scripts/preflig
 - 沒有 Tier-1 server 時，shim 和 ops_api 都**不要**設 `TIER_MODE=adaptive`。不然 Tier 指示會變，但兩個 Tier 實際上是同一顆模型，台上講不清楚。
 - nvpmodel 連動：加 `TIER_NVPMODEL=1 NVP_T1=<巡檢模式 id> NVP_T2=<高效能模式 id>`，模式 id 在 10/21 用 `nvpmodel -q --verbose` 查。
 - dashboard 沒有登入驗證，`DASH_ACTIONS=1` 時，會場網路上任何人都能按注入。只在比賽期間開，或用 `DASH_HOST` 綁定台上用的那個介面。
-- 用 Bolt 當 Tier-2 的選項：Bolt 以 `edge-agent` 的名稱開在 :8200，設 `UPSTREAM_T2=http://127.0.0.1:8200`。注意記憶體：這台沒有 swap，兩個推論服務同時開可能會讓整台卡死。
+- 記憶體：這台沒有 swap。Bolt 用 0.45，Tier-1 預設 0.12；不要再另外載入大模型（10/17 曾經整台卡死）。
 
 ---
 
@@ -208,8 +209,8 @@ DASHBOARD_URL=http://127.0.0.1:8097 T1_URL=http://127.0.0.1:8010 scripts/preflig
 - [ ] 更新簡報「既有成果揭露」：**審批閘門與能耗治理原本計畫在黑客松期間做，現在已提前完成**，要依揭露規則照實列入，或在簡報上說明哪些部分是賽中才完成的
 
 **10/21 工作坊（3 人）**
-- [ ] 確認配到的機型：T5000 128 GB 還是 T4000 64 GB，決定用 `thor-128g.yaml` 或 `thor-64g.yaml`
-- [ ] Thor 推論能跑起來：`serve-trt.sh`（runtime nvidia）或退路；記錄峰值記憶體
+- [ ] 確認配到的機型：T5000 128 GB 還是 T4000 64 GB。64 GB 時，Bolt（0.45 × 64 ≈ 29 GB，權重就 24 GB）可能放不下 KV cache，改用 `MODEL_ID=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4`，或調高 `GPU_MEMORY_UTILIZATION`
+- [ ] Thor 上 vLLM 能跑起來：`scripts/serve-vllm.sh`（runtime nvidia）；不行就改用 jetson-containers vLLM（`IMAGE`／`BOLT_IMAGE` 可換）；記錄峰值記憶體
 - [ ] 確認 Tier-1 的 4B 模型 ID，並驗證 shim 解析它的 tool call 和 reasoning 都正常
 - [ ] `nvpmodel -q --verbose` 抄下模式表，實測切換延遲、哪些模式需要重開機
 - [ ] 確認 MIG 能否切給兩個推論實例；不行就把簡報裡「架構保證」的措辭改掉

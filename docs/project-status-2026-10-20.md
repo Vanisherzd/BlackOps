@@ -1,4 +1,9 @@
-# Blackout Ops 專案進度（2026-10-20 23:40 更新）
+# Blackout Ops 專案進度（2026-10-20 23:40 更新；24:00 補充：整合）
+
+> **2026-10-20 深夜補充：團隊決定推論改用 vLLM，不再用 TensorRT-LLM。** 三條分支整合在 `integrate-vllm`，從 `demo-infra` 分出，再 merge 進 `feat/blackbox-bolt-vllm`，目標是 `main`。
+> - Tier-2 改成 Bolt-74B-A9B，跑在 vLLM 上，以 `edge-agent` 的名稱開在 :8000（`scripts/serve-vllm.sh`）。agent、NemoClaw、工具、KB、demo 外殼都不用改。
+> - 單元測試 33/33 通過。**Bolt 加上整套 agent 的回歸還沒跑**，要先停掉 vanli 的 `trtllm-edge`，需要協調。
+> - 詳見 `docs/integration-vllm.md`。下文提到 TRT 的地方，指的是到目前為止的量測環境。
 
 時程：10/21 工作坊（剩 1 天）→ 10/22–23 黑客松 → 10/23 12:30 code freeze。
 資料來源：三條分支的 git log、`docs/HANDOFF-kb-retrieval-v2.md`（vanli）、`logs/`、今晚的回歸測試。

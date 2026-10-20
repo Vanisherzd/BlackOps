@@ -41,7 +41,7 @@ MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", 
             "kill_process"}
 SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
                         r"not found|exit(ed)? \(?\d|restarting|paused|oom|killed|no space|\b50[0-9]\b", re.I)
-_incident = {"runbook_seen": False, "refusals": 0, "trace": []}
+_incident = {"runbook_seen": False, "refusals": 0, "trace": [], "injected": []}
 DESTRUCTIVE = {"kill_process", "cleanup_disk", "clear_scratch_volume"}          # plus recreate_stack with replace=true; see reviewed()
 
 
@@ -111,7 +111,7 @@ def with_health(result):
     health = {k: http_status(u) for k, u in HEALTH.items()}
     import tier                                            # TIER_MODE=off by default: both calls are no-ops
     if all(v == 200 for v in health.values()):
-        _incident.update(runbook_seen=False, refusals=0, trace=[])
+        _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[])
         snapshot_known_good()
         tier.set_tier(1, "health green after an action")
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
@@ -489,8 +489,12 @@ def trace_summary(name, result):
 
 
 def run_tool(name, args, dry_run):
-    """Dispatch one tool call and record it in the incident trace (the reviewer's evidence)."""
-    result = _run_tool(name, args, dry_run)
+    """Dispatch one tool call and record it in the incident trace (the reviewer's evidence). With GUARDRAILS=1 the
+    NeMo Guardrails rails (scripts/guard.py) sit on both sides: a state-changing call that does what text injected
+    into the monitored system's output asked for is refused, and that output is screened before the agent reads it."""
+    import guard
+    refusal = guard.check_action(name, args if isinstance(args, dict) else {}, _incident) if name in MUTATING else None
+    result = refusal or guard.screen(name, _run_tool(name, args, dry_run), _incident)
     try:
         shown = {k: (v if len(str(v)) < 80 else str(v)[:77] + "...") for k, v in (args or {}).items()} if isinstance(args, dict) else str(args)[:80]
         _incident["trace"].append(dict(tool=name, args=json.dumps(shown, ensure_ascii=False), result=trace_summary(name, result)))
@@ -557,7 +561,7 @@ def _run_tool(name, args, dry_run):
     if name == "check_health":
         health = {k: http_status(u) for k, u in HEALTH.items()}
         if all(v == 200 for v in health.values()):
-            _incident.update(runbook_seen=False, refusals=0, trace=[])   # incident over; the next one starts clean
+            _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[])   # incident over; the next one starts clean
             snapshot_known_good()
             import tier
             tier.set_tier(1, "health green")

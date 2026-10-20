@@ -79,6 +79,11 @@ upstream-500 變慢：Bolt 在重啟之後、重建之前，多查了幾步。
 
 ## 5. 接下來
 
+0. ✅ **2026-10-21 01:30，`~/edge-agent` 已切到 `integrate-vllm`。**
+   - shim（`SHIM_THINK=1`）和 ops_api 已從這裡重啟。
+   - victim 已重建，含 `/board/` 掛載；RAG 索引已重建；sandbox 的 `AGENTS.md` 已更新，gateway 也重啟過。
+   - preflight 的核心項目都 PASS。確認用的 drill：bad-config 1/1（66 s）、upstream-500 1/1（101 s），見 `logs/drills-20261021-013243.log`。
+   - `kb-retrieval-v2` 和 `demo-infra` 兩個分支都原樣保留。
 1. ✅ 驗證完成，無退步（見 §3）。Bolt 目前以 `vllm-edge` 這個容器名稱、`edge-agent` 這個模型名稱，留在 :8000 上服務。
 2. 開 PR：`integrate-vllm` → `main`。
 3. 用 Bolt 重新量盲測與分情況思考。原本的數據是在 Nano 上量的。

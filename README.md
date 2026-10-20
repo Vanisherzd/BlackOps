@@ -1,21 +1,28 @@
-# dgx-spark-edge-agent — 在 DGX Spark 上離線自我修復的 IT Agent
+# BlackOps（Blackout Ops）— 離線自我修復的 IT 維運 Agent
 
-**目標**：一台 NVIDIA DGX Spark（GB10, 128 GB unified memory）上，完全本地跑大模型推論 + 小型 RAG，做一個「網路斷了也能自己診斷、自己修好」的 IT 維運 Agent。合規要求使用 NVIDIA 官方堆疊：**TensorRT-LLM**（推論）+ **NemoClaw**（Agent 執行環境）。
+**目標**：在一台與被監控系統分離的邊緣裝置上，完全本地跑大模型推論與小型 RAG，做一個「網路斷了也能自己診斷、自己修好」的 IT 維運 Agent。部署目標是 Jetson AGX Thor，開發與驗證機是 NVIDIA DGX Spark（GB10，128 GB unified memory）。NVIDIA 堆疊：**Nemotron**（模型）、**NemoClaw／OpenShell**（Agent 執行環境）。推論引擎是 **vLLM**；2026-10-20 團隊決定由 vLLM 取代 TensorRT-LLM，TRT-LLM 保留為早期量測的基準，見 `docs/integration-vllm.md`。
 
-**現況（2026-09-22）**：三個錯誤注入案例（服務掛掉 / 設定檔壞掉 / 上游 502）在兩條路徑都自主修復成功——repo 內的 agent 迴圈 3/3、透過 NemoClaw sandbox agent 3/3。
+**現況（2026-10-21）**：
+- 推論：Nemotron-3.5-Bolt-74B-A9B 跑在 vLLM 上。
+- NemoClaw 路徑：5 張舞台卡各跑 3 次，**15/15 自主修復**，沒有越修越壞，也沒有謊報。
+- repo 內的 host 迴圈：9 個見過的案例各跑 3 次，**26/27**。
+- TRT-LLM 加 Nemotron-3-Nano 的歷史成績：見過的題目 29/30，四批盲測 6/15、11/15、4–5/12、3–6/12。
+- demo 外殼（dashboard、watchdog、人工審批、Tier、功耗、斷網、歸檔）已經接上，見 `docs/demo.md`。
+- 整體進度：`docs/project-status-2026-10-20.md`。
 
 ```
             ┌────────────── DGX Spark（全部本地，不需外網）──────────────┐
   你 / 聊天  │  NemoClaw CLI ──► OpenShell sandbox（OpenClaw agent）          │
   頻道       │        │ inference.local        │ /sandbox/bin/ops / MCP       │
             │        ▼                        ▼                              │
-            │  oai_shim.py :8001 ──► trtllm-serve :8000     ops_api.py :8790  │
-            │  （格式相容層）        Nemotron-3-Nano-30B-A3B   （白名單工具、HTTP+MCP）│
-            │                       NVFP4, TensorRT-LLM          │            │
+            │  oai_shim.py :8001 ──► vLLM :8000 "edge-agent" ops_api.py :8790  │
+            │  （相容層、健康保護網、   Nemotron-3.5-Bolt-74B-A9B（白名單工具、HTTP+MCP）│
+            │   分情況思考、Tier 路由）  （Tier-1 選配：vLLM :8010）│            │
             │                                                    ▼            │
-            │                     agent.py 自我修復迴圈 ──► docker（victim 容器）│
+            │  watchdog（規則巡檢）  agent.py 工具與三把鑰匙 ──► docker（victim 容器）│
+            │  dashboard :8097（看板、軌跡、功耗、審批）          產線看板 /board/    │
             └───────────────────────────────────────────────────────────────┘
-  備援：vLLM 0.29 + Qwen3.6-35B-A3B-FP8 + MTP（scripts/serve.sh, :8100）
+  legacy：TensorRT-LLM + Nemotron-3-Nano-30B-A3B-NVFP4（scripts/serve-trt.sh, :8000）；vLLM 0.29 + Qwen3.6-35B（scripts/serve.sh, :8100）
 ```
 
 ## 目錄
@@ -40,8 +47,8 @@
 |---|---|
 | 機器 | DGX Spark，GB10 Grace Blackwell（sm_121），20 核 ARM，119 GiB unified memory（CPU/GPU 共用，**沒有 swap**），NVMe 916 GB |
 | OS / 驅動 | Ubuntu 24.04.4（DGX OS）, kernel 6.17 nvidia, driver 580.126.09, **CUDA 13.0**（`/usr/local/cuda`，nvcc 不在 PATH） |
-| 推論（正式） | TensorRT-LLM 容器 `nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc13`（arm64），模型 `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4`（19.3 GB） |
-| 推論（備援） | vLLM 0.29.0 + torch 2.13.0+cu130（純 PyPI aarch64 wheel），FlashInfer 0.6.18，模型 `Qwen/Qwen3.6-35B-A3B-FP8` + MTP |
+| 推論（正式，2026-10-20 起） | vLLM 容器 `blackbox-vllm-bolt:77154ca`（24.7 GB，基於 `vllm/vllm-openai:nightly-77154ca`，內含 b12x），模型 `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB`（24.1 GB），以 `edge-agent` 的名稱開在 :8000（`scripts/serve-vllm.sh`） |
+| 推論（legacy） | TensorRT-LLM `nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc13` + `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4`（19.3 GB），9/22–10/20 的量測都在這上面做；vLLM 0.29.0 bare-metal + `Qwen/Qwen3.6-35B-A3B-FP8` + MTP（`scripts/serve.sh`） |
 | Python / 套件 | uv 0.12.17，uv 管理的 CPython 3.12.14（系統 python3.12 沒 headers），`uv.lock` 全部 242 套件鎖版 |
 | Agent 執行環境 | NemoClaw v0.0.124，OpenShell 0.0.116（docker sandbox），OpenClaw 2026.7.1 |
 | 帶寬上限 | LPDDR5X ≈ 273 GB/s → 單流 decode ≈ 273 ÷（每 token 讀的權重 GB）tok/s；這是模型選擇的核心限制 |
@@ -50,14 +57,34 @@
 
 ```
 pyproject.toml / uv.lock        uv 專案（Python 3.12，vllm、openai、lm-eval 等鎖版）
+deploy/vllm/                    Bolt 的 vLLM 映像與啟動腳本（Dockerfile、start/stop/health、reasoning parser 外掛）；Jetson 上自動用 NVIDIA runtime
+blackbox/                       推論 gateway（client library）、mock server、mock 工具、最小 agent 迴圈、benchmark（tool_eval、perf_baseline）
+tests/                          blackbox 的單元測試（33 個，`.venv/bin/python -m unittest discover -s tests`）
+config/inference.env.example    gateway 與 vLLM 的環境變數範例
 scripts/
-  serve-trt.sh                  正式：trtllm-serve 容器，:8000（HOST=0.0.0.0 給 NemoClaw 用）。已在跑就拒絕重啟（FORCE=1 強制）
-  serve.sh                      備援：vLLM + Qwen3.6-35B-A3B-FP8 + MTP，:8100
-  oai_shim.py                   :8001 → :8000 的 OpenAI 格式相容層（NemoClaw/OpenClaw 的請求 TRT-LLM 會拒絕，見第 8 節）
+  serve-vllm.sh                 正式：Bolt on vLLM，以 edge-agent 的名稱開在 :8000；trtllm-edge 還在跑就拒絕啟動；`serve-vllm.sh stop`
+  serve-tier1.sh                Tier-1 小模型 on vLLM，:8010（T1_MODEL 指定，scripts/tier.py 用）
+  serve-trt.sh                  legacy：trtllm-serve 容器，:8000。已在跑就拒絕重啟（FORCE=1 強制）
+  serve.sh                      legacy：vLLM + Qwen3.6-35B-A3B-FP8 + MTP，:8100
+  oai_shim.py                   :8001 → :8000 的 OpenAI 格式相容層：訊息正規化、tool call salvage、健康保護網、分情況思考（SHIM_ADAPTIVE）、Tier 路由（TIER_MODE）
+  shim-env.sh                   用指定的環境變數重啟 shim（pid 檔）
   ops_api.py                    host 端工具 API :8790（HTTP `/tools` `/call` + MCP `/mcp`），只暴露白名單工具 + `self_heal`
   agent.py                      自我修復迴圈：觀察 → 工具呼叫決策 → 動作 → 驗證，JSONL 軌跡在 logs/agent/
-  faults.py                     victim 沙箱（兩個 nginx 容器）與錯誤注入：nginx-stopped / bad-config / upstream-down
-  nemoclaw-drill.sh             注入錯誤 → 叫 NemoClaw sandbox agent 修 → 驗證 → 印出它呼叫過的工具
+  faults.py                     victim 沙箱（兩個 nginx 容器加產線看板 /board/）與 28 種錯誤注入（CASES 含正解、根因 regex、tier）
+  nemoclaw-drill.sh             注入錯誤 → 叫 NemoClaw sandbox agent 修 → 驗證 → 印出它呼叫過的工具（TRIAGE=1：系統先收集資料放進告警）
+  triage.py                     告警附帶的開場資料（check_health、docker_ps、兩個容器的 docker_logs）
+  drill-all.sh / ab-drill.sh / ab-speed.sh   多場演練、單題 A/B、多題多輪 A/B（detach 執行）
+  run-archive.sh                跑一場 drill，並把該場紀錄歸檔到 logs/runs/<時間>-<案例>/（回放、夜跑用）
+  watchdog.py                   規則巡檢（不呼叫模型），連續兩次失敗就開事故並叫醒 NemoClaw agent
+  dashboard.py / dashboard.html 舞台 dashboard :8097：看板、軌跡、功耗、WAN 與審批、注入按鈕（DASH_ACTIONS=1）、回放
+  approval.py                   人工審批（第三把鑰匙），APPROVAL=off|manual|auto，預設 off
+  tier.py                       Tier 控制器與 nvpmodel 連動，TIER_MODE=off|adaptive|always2，預設 off
+  power.py                      功耗紀錄（tegrastats／nvidia-smi）與每場事故的 Wh
+  wan.sh                        斷網開關（iptables，只擋非私有網段）；`down --yes`
+  preflight.sh                  上台前檢查與預熱（--warm）
+  overnight.sh / score-runs.py  Tier A/B 夜跑；依 arm 統計 Wh、Tier-1 承接比例、審批
+  validate-vllm.sh              整合版的一鍵驗證：起服務、smoke、9 案 host 迴圈、5 卡 NemoClaw drill、tool_eval
+  kb-probe.py                   知識庫覆蓋率探測（70 條真實機房錯誤句）
   ops-sandbox-helper.sh         上傳到 sandbox 的 /sandbox/bin/ops（`ops tools` / `ops call <tool> '<json>'`，MCP 之外的後備路徑）
   smoke.py / probe.py           健康+tool call 煙霧測試；8 題 needle 精準度探針
   reviewer.py                   審核代理：破壞性動作（replace、kill、cleanup）執行前，第二個代理讀事故軌跡判 APPROVE/REJECT，連不上就不執行
@@ -74,14 +101,15 @@ runbooks/*.md                   小型 RAG 語料（IT runbook，11 篇：服務
 kb/                             離線知識庫（組員整理，2026-09-30 遷入，見 5.5）：blackout-ops-kb 0.3.0，SQLite FTS5，1,644 歷史案例 + 17 張 Linux/K8s 修復卡 + 7 拓撲；agent 以 search_incident_knowledge 查
 datasets/                       四個公開 AIOps benchmark 的清單、授權與使用規則；raw/（39 GB）只在 Spark 與 TRANSCEND USB，不入版控
 victim/conf.d/                  victim nginx 設定（由 faults.py 產生，不入版控）
-trt/*.yaml                      trtllm-serve 的 extra_llm_api_options（nano.yaml 為正式）
+victim/board/                   產線看板頁（示範晶圓廠，數字為示意；dashboard 也從這裡提供）
+trt/*.yaml                      legacy：trtllm-serve 的 extra_llm_api_options（nano.yaml；nano-ngram.yaml 會讓輸出壞掉，不要用）
 systemd/*.service               user unit（目前刻意不啟用開機自啟）
 docs/                           詳細文件（見第 11 節）
 ```
 
 ## 3. 從零搭建（逐步）
 
-一鍵版：`scripts/bootstrap-spark.sh`（stages：check → python → image → model → serve → nemoclaw → victim，可單獨跑 `scripts/bootstrap-spark.sh model`）。以下是它做的事、為什麼、以及每步驟的驗證方式。
+一鍵版：`scripts/bootstrap-spark.sh`（stages：check → python → image → model → serve → nemoclaw → victim，可單獨跑 `scripts/bootstrap-spark.sh model`）。以下是它做的事、為什麼、以及每步驟的驗證方式。**注意：它的 image／model／serve 三個 stage 仍然是 TRT-LLM 版。**推論請照 3.2 改用 `scripts/serve-vllm.sh`，其他 stage 照常可用。
 
 ### 3.0 前置：把機器清乾淨（需要 sudo 一次）
 
@@ -91,7 +119,7 @@ nvidia-smi; docker info --format '{{.ServerVersion}}'; df -h /          # 需 do
 # OpenShell 的 sandbox 也會跟宿主 kubelet 打架 → 退出 cluster
 kubectl drain <node> --ignore-daemonsets --delete-emptydir-data --force
 sudo systemctl disable --now kubelet cri-docker cri-docker.socket
-sudo systemctl disable --now ollama                                       # 純 TensorRT-LLM，不用 Ollama
+sudo systemctl disable --now ollama                                       # 推論用自己的容器，不用 Ollama
 ```
 其他 lab 服務容器只停不刪（`docker stop`，restart policy 改 `no`）。
 
@@ -103,7 +131,17 @@ git clone https://github.com/Vanisherzd/dgx-spark-edge-agent.git ~/edge-agent &&
 uv sync        # 第一次會下載 uv 管理的 CPython 3.12（pyproject 鎖 python-preference=only-managed，因為系統 python 沒 Python.h，Triton JIT 會炸）
 ```
 
-### 3.2 推論引擎與模型（正式：TensorRT-LLM）
+### 3.2 推論引擎與模型（正式：vLLM + Bolt）
+
+```bash
+make bolt-build                                                             # 只有映像不存在時才需要：建 blackbox-vllm-bolt:77154ca（24.7 GB）
+uv run hf download nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB             # 24.1 GB
+scripts/serve-vllm.sh                                                       # :8000，served name edge-agent；等到 /health（約 5 分）
+VLLM_URL=http://127.0.0.1:8000 uv run --no-sync scripts/smoke.py           # 期待 SMOKE OK
+```
+`serve-vllm.sh` 呼叫 `deploy/vllm/start-bolt.sh`，只覆寫容器名稱（`vllm-edge`）、模型名稱（`edge-agent`）、port（8000）與 `MAX_NUM_SEQS=2`。所以 shim、agent.py、reviewer.py、NemoClaw 都不用改。記憶體預設占 0.45；這台沒有 swap，**一次只能開一個大模型推論服務**。
+
+TRT-LLM（legacy，重現 9/22–10/20 的量測時才用；要先 `scripts/serve-vllm.sh stop`）：
 
 ```bash
 docker pull nvcr.io/nvidia/tensorrt-llm/release:1.3.0rc13                  # 35.6 GB，約 5 分
@@ -117,7 +155,7 @@ VLLM_URL=http://127.0.0.1:8000 uv run --no-sync scripts/smoke.py           # 期
 ### 3.3 相容層與工具 API
 
 ```bash
-nohup uv run --no-sync scripts/oai_shim.py > logs/oai-shim.out 2>&1 &     # :8001，NemoClaw 打這裡
+bash scripts/shim-env.sh "SHIM_THINK=1"                                    # :8001，NemoClaw 打這裡；加 SHIM_ADAPTIVE=1 開分情況思考
 nohup uv run --no-sync scripts/ops_api.py  > logs/ops-api.out  2>&1 &     # :8790，sandbox agent 的手腳
 curl -s http://127.0.0.1:8790/tools | head -c 200
 ```
@@ -153,24 +191,24 @@ nemoclaw edge-agent upload nemoclaw/openclaw-patch.json5 /sandbox/tmp/
 openshell sandbox exec -- sh -c 'openclaw config patch --stdin < /sandbox/tmp/openclaw-patch.json5'
 for f in AGENTS.md TOOLS.md HEARTBEAT.md; do nemoclaw edge-agent upload "nemoclaw/workspace/$f" /sandbox/.openclaw/workspace/; done
 nemoclaw edge-agent gateway restart
-nemoclaw edge-agent agent --agent main --session-id t1 -m "Reply with one word: ready"   # 走 sandbox → gateway → shim → TRT-LLM
+nemoclaw edge-agent agent --agent main --session-id t1 -m "Reply with one word: ready"   # 走 sandbox → gateway → shim → vLLM
 ```
 
 ### 3.5 victim 沙箱（給錯誤注入用）
 
 ```bash
-uv run --no-sync scripts/faults.py setup      # edge-victim (nginx, 127.0.0.1:8880) + edge-victim-app（上游）
+uv run --no-sync scripts/faults.py setup      # edge-victim (nginx, 127.0.0.1:8880，含 /board/ 產線看板) + edge-victim-app（上游）
 uv run --no-sync scripts/faults.py verify     # / 200 /api/ 200 -> PASS
 uv run hf download BAAI/bge-small-en-v1.5     # 檢索用的 embedding 模型，33M，跑 CPU 不佔 GPU
 uv run --no-sync scripts/rag.py build         # 建索引到 logs/rag-index.npz（約 12 秒）
 uv run --no-sync scripts/rag.py eval          # 檢索品質（28 題）：dense 為預設，keyword 為無索引時的後備
 ```
 
-### 3.6（備援）vLLM 路線
+### 3.6（legacy）bare-metal vLLM + Qwen 路線
 
 ```bash
 uv run hf download Qwen/Qwen3.6-35B-A3B-FP8                 # 37 GB
-docker stop trtllm-edge                                     # 兩顆大模型不能同時載
+scripts/serve-vllm.sh stop                                  # 兩顆大模型不能同時載
 nohup scripts/serve.sh > logs/serve.log 2>&1 &              # :8100，MTP 投機解碼預設開
 uv run --no-sync scripts/smoke.py
 ```
@@ -181,19 +219,40 @@ uv run --no-sync scripts/smoke.py
 
 ```bash
 cd ~/edge-agent
-HOST=0.0.0.0 nohup scripts/serve-trt.sh > logs/trt-serve.log 2>&1 &      # 1. 推論
-nohup uv run --no-sync scripts/oai_shim.py > logs/oai-shim.out 2>&1 &     # 2. 相容層
-nohup uv run --no-sync scripts/ops_api.py  > logs/ops-api.out  2>&1 &     # 3. 工具 API
+scripts/serve-vllm.sh                                                      # 1. 推論（Bolt，:8000）
+bash scripts/shim-env.sh "SHIM_THINK=1"                                    # 2. 相容層
+setsid nohup .venv/bin/python scripts/ops_api.py > logs/ops-api.out 2>&1 < /dev/null & echo $! > logs/ops-api.pid   # 3. 工具 API
 nemoclaw edge-agent start                                                  # 4. sandbox（若停了）
 uv run --no-sync scripts/faults.py setup                                   # 5. victim（若要做 drill）
-# 檢查
-curl -sf http://127.0.0.1:8000/health && echo trt-ok; nemoclaw edge-agent status | grep Inference
-# 停
-docker stop trtllm-edge; pkill -f oai_shim.py; pkill -f ops_api.py; nemoclaw edge-agent stop
+scripts/preflight.sh                                                       # 檢查（demo 前加 --warm）
+# 停（用 pid 檔；pkill -f 會比對到自己的指令列）
+scripts/serve-vllm.sh stop; kill "$(cat logs/oai-shim.pid)" "$(cat logs/ops-api.pid)"; nemoclaw edge-agent stop
 ```
-Log 位置：`docker logs trtllm-edge`（引擎，`logs/trt-serve.log` 只是啟動時的 nohup 副本，可能被清理掉）、`logs/oai-shim.log`（`SHIM_DEBUG=1` 時記錄訊息形狀與上游 400）、`logs/ops-api.log`（每一次工具呼叫：來源、工具、參數、結果）、`logs/agent/*.jsonl`（每次自我修復的逐步決策）、`nemoclaw edge-agent logs -n 200`（sandbox 內 gateway）。
+Demo 用的 watchdog、power、dashboard 與審批、Tier 的開關，依 `docs/demo.md` §6.1 的順序啟動。改完程式要重啟常駐服務（ops_api、shim 啟動時就把程式載入記憶體）。
+Log 位置：`docker logs vllm-edge`（引擎）、`logs/oai-shim.log`（`SHIM_DEBUG=1` 時記錄訊息形狀與上游 400）、`logs/ops-api.log`（每一次工具呼叫：來源、工具、參數、結果）、`logs/agent/*.jsonl`（每次自我修復的逐步決策）、`nemoclaw edge-agent logs -n 200`（sandbox 內 gateway）。
 
 ## 5. 我們做過的測試與數據
+
+### 5.0 目前的推論：Bolt on vLLM（2026-10-21，`docs/integration-vllm.md`）
+
+用 `scripts/validate-vllm.sh 3` 量測：
+- NemoClaw 路徑：5 張舞台卡各 3 次，**15/15 自主修復**。
+- host 迴圈：9 個 seen cases 各 3 次，**26/27**。
+- blackbox 的 tool_eval：**26/27**。
+
+舞台卡的中位時間，Bolt 對照 Nano/TRT：
+
+| 卡 | Bolt | Nano/TRT |
+|---|---|---|
+| nginx-stopped | 40 s | 44 s |
+| container-removed | 31 s | 30 s |
+| upstream-paused | 46 s | 46 s |
+| bad-config | 66 s | 79 s |
+| upstream-500 | 106 s | 48–65 s |
+
+10/17 在同一組 drill 上的對照：Bolt seen 20/20、blind 8/15；Nano 29/30、6/15。
+
+**以下 5.1–5.5 是 9/22–10/20 在 TRT-LLM／Qwen 時期量的歷史數據。** 盲測、guards 與加速實驗的完整紀錄見 `docs/agent-design.md`、`docs/HANDOFF-kb-retrieval-v2.md`。
 
 ### 5.1 引擎 / 模型選型矩陣（`docs/bench-2026-09-22.md`）
 
@@ -217,7 +276,7 @@ vLLM + Qwen3.6-35B + MTP，真實 IT 文字：短問答 TTFT 156 ms、TPOT 16 ms
 
 ### 5.3 兩個引擎對照（同一台、同一套腳本）
 
-| | vLLM + Qwen3.6-35B-A3B-FP8 + MTP3 | **TensorRT-LLM + Nemotron-3-Nano-30B-A3B-NVFP4（正式）** |
+| | vLLM + Qwen3.6-35B-A3B-FP8 + MTP3 | **TensorRT-LLM + Nemotron-3-Nano-30B-A3B-NVFP4（當時的正式版）** |
 |---|---|---|
 | 啟動到 health | 275 s | 106 s |
 | 單流 / 8 併發 | 60.7 / 343 tok/s | 57.9 / 237 tok/s（無投機解碼） |
@@ -260,9 +319,14 @@ Agent 端是一個唯讀工具 `search_incident_knowledge`（`scripts/agent.py`�
 
 **RAG 實測（`docs/kb-eval.md`，2026-09-30，run 4 為準）**：`uv run --no-sync scripts/kb-eval.py all`（Spark 上 detach 跑，約 50 分鐘）——63 個知識庫的保留案例、1×–32× 六個壓縮比、兩組（只給 telemetry / 加上 `search_incident_knowledge` 的檢索結果），Nemotron 關 thinking、4 路併發，用知識庫自己的評分程式計分，另加「服務定位正確率」（這些 benchmark 原本的指標）。前三輪的輸入有問題（prompt 把場景名當標籤；AIOps 讀錯小時且無時間戳；RCAEval 指標列被切到只剩 CPU、壓縮後只剩注入前的樣本），run 4 修完：只給 telemetry 時 1×–32× 嚴格 22–24%、場景 33–41%、服務 24–35%，曲線是平的——壓到 16× 不掉分、tokens 減半、能耗少三分之一（8×：14.4k tokens、9.9 s、0.08 Wh/次）；三個目標場景 35 案在 8× 為 37% / 37% / 31%。加檢索仍是負的（8×：13% / 22% / 19%）：知識庫對 37% 的輸入回 `matched`，卡片場景對到真值只有 2%，案例語料是標籤生成的文字，跟 telemetry 用語對不上。開 thinking 那輪（`docs/kb-eval-think.md`）是在壞輸入上量的，待重量。細節、每輪修了什麼、下一輪建議見 `docs/agent-design.md`。
 
+之後的更新：
+- 10/13 的 retrieval v3 讓檢索從「害多於助」變成「助多於害」，見 `docs/kb-retrieval-v2.md`。
+- 10/18 的 v4 加了 14 張本環境工具版修復卡，但沒有可量測的效果，預設維持 v3，見 `docs/kb-repair-cards.md`。
+- 對真實機房錯誤的覆蓋率與補卡建議，見 `docs/kb-coverage-survey.md`。
+
 ## 6. 錯誤注入與自我修復 drill
 
-兩條路徑都對同一組 victim 容器與同一套白名單工具。
+兩條路徑都對同一組 victim 容器與同一套白名單工具。本節是 9 月時期在 TRT-LLM 上的開發紀錄；目前的成績見 5.0。舞台上，watchdog 偵測到故障後會自己叫醒 agent，不需要有人下指令（`docs/demo.md`）。
 
 **A. repo 內 agent 迴圈（看得到每一步決策）**
 ```bash
@@ -305,9 +369,9 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 2. `runbooks/` 加一篇對應的 runbook（RAG 語料）。
 3. 若需要新動作，在 `scripts/agent.py` 的 `TOOLS` + `run_tool()` 加白名單工具（ops API 與 MCP 會自動曝露）。現成的主機層唯讀工具：`disk_usage`、`service_status`、`journal_tail`、`port_check`、`http_check`、`top_processes`。
 4. `uv run --no-sync scripts/faults.py run <case>` 與 `scripts/nemoclaw-drill.sh <case>` 各跑一次。
-現成案例九個：`nginx-stopped`、`bad-config`、`upstream-down`、`bad-upstream-name`、`container-removed`、`crashloop`（restart=always 加壞設定，重啟是錯的動作）、`upstream-paused`（上游凍結，504 而非 502）、`upstream-detached`（上游脫離 docker 網路，兩邊都 Up）、`upstream-500`（上游自己的 overlay 層設定壞掉，重啟救不回來，要 `recreate_stack` 加 `replace`）。`faults.py reset` 能還原全部九種注入，不論順序。加 runbook 後要 `scripts/rag.py build` 重建索引，並把新症狀加進 `rag.py` 的 `EVAL`。
+現成案例共 28 個（`faults.py` 的 `CASES`）：seen 9 個、unseen 1 個（inode 用盡），以及四批盲測 18 個（blind、blind2 各 5 個，blind3、blind4 各 4 個）。seen 9 個是 `nginx-stopped`、`bad-config`、`upstream-down`、`bad-upstream-name`、`container-removed`、`crashloop`（restart=always 加壞設定，重啟是錯的動作）、`upstream-paused`（上游凍結，504 而非 502）、`upstream-detached`（上游脫離 docker 網路，兩邊都 Up）、`upstream-500`（上游自己的 overlay 層設定壞掉，重啟救不回來，要 `recreate_stack` 加 `replace`）。`faults.py reset` 能還原全部九種注入，不論順序。加 runbook 後要 `scripts/rag.py build` 重建索引，並把新症狀加進 `rag.py` 的 `EVAL`。
 
-**審核代理（多代理協作與風險控制）**：`recreate_stack` 加 `replace`、`kill_process`、`cleanup_disk` 執行前，`scripts/reviewer.py` 用同一顆本地模型、不同的 system prompt、不給工具，讀本次事故的證據軌跡判 APPROVE 或 REJECT 並引用證據；REJECT 會當成工具結果回給指揮代理；審核代理連不上就不執行（fail-closed）。設計是**雙鑰匙**：充分條件由程式從事故軌跡算出並判定（重建前必須重啟過且之後仍失敗、殺行程前 `top_processes` 要列到該 pid、清磁碟前 `disk_usage` 要超過 85%），缺哪個事實就直接拒絕並點名、不問模型；條件成立才問模型，且模型只判「與本次症狀相關嗎、有沒有一行證據反駁診斷」，要 REJECT 必須引用那行。原因：只給模型判時，同樣的證據兩次判決不同（一次要求證明觀察不到的機制）。實測：無證據殺行程 REJECT、量到 100% CPU 的失控行程 APPROVE、重啟後仍 500 的上游重建連續三次 APPROVE（7.8 到 21.8 秒）。紀錄在 `logs/reviews.jsonl`（含算出的事實與哪把鑰匙決定），計分卡多一欄 reviewer rejects。
+**審核代理（多代理協作與風險控制）**：`recreate_stack` 加 `replace`、`kill_process`、`cleanup_disk` 執行前，`scripts/reviewer.py` 用同一顆本地模型、不同的 system prompt、不給工具，讀本次事故的證據軌跡判 APPROVE 或 REJECT 並引用證據；REJECT 會當成工具結果回給指揮代理；審核代理連不上就不執行（fail-closed）。設計是**雙鑰匙**：充分條件由程式從事故軌跡算出並判定（重建前必須重啟過且之後仍失敗、殺行程前 `top_processes` 要列到該 pid、清磁碟前 `disk_usage` 要超過 85%），缺哪個事實就直接拒絕並點名、不問模型；條件成立才問模型，且模型只判「與本次症狀相關嗎、有沒有一行證據反駁診斷」，要 REJECT 必須引用那行。原因：只給模型判時，同樣的證據兩次判決不同（一次要求證明觀察不到的機制）。實測：無證據殺行程 REJECT、量到 100% CPU 的失控行程 APPROVE、重啟後仍 500 的上游重建連續三次 APPROVE（7.8 到 21.8 秒）。紀錄在 `logs/reviews.jsonl`（含算出的事實與哪把鑰匙決定），計分卡多一欄 reviewer rejects。審核代理 APPROVE 之後，可以再加上人工審批這第三把鑰匙：`scripts/approval.py`，`APPROVAL=manual` 時在 dashboard 按核准，逾時一律視為拒絕。預設是 off。
 
 **主機層動作**：`recreate_stack`（容器被整個刪掉，start/restart 救不回來）、`network_repair`、`cleanup_disk`（只刪本專案的舊 log，跳過行程正開著的檔案，不碰 image 與 volume，也不刪 `logs/agent/` 的事故軌跡）、`kill_process`（同一使用者、非平台行程）。刻意不放進白名單的是 docker daemon（推論容器是 `--rm`，重啟 daemon 會刪掉 agent 賴以思考的模型）、任何系統 unit（sudo 要密碼）、image 與 volume（全實驗室共用）。
 
@@ -343,23 +407,39 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | 上游不在網路上時重啟前端 | nginx 解析不到上游名稱直接退出，兩個 URL 全掛 | `docker_start/restart edge-victim` 先檢查上游是否在網路上 |
 | `nemoclaw upload` 目的地 | 把檔名路徑當目錄 | 目的地給目錄 |
 | `openshell sandbox exec` / `nemoclaw exec` 吃 stdin | heredoc 腳本後半段被吞 | 一律 `</dev/null` |
+| 兩個大模型推論服務同時開 | 沒有 swap，整台卡死，要實體重開機（10-17） | 一次只開一個；`serve-vllm.sh` 會先檢查 `trtllm-edge` |
+| `pgrep -f` / `pkill -f` 比對到自己 | 等待迴圈永遠不結束、kill 到自己的 shell | 用 pid 檔，或寫成 `[x]` 這種形式避開自己 |
+| 多人共用 `~/edge-agent` | 常駐服務從工作目錄熱載入程式；別人切 branch 或改檔就改到正在跑的實驗 | 每人用自己的 `git worktree`；跑 drill 前先協調時段（victim、sandbox、shim、推論都只有一套） |
 
 ## 9. Hackathon 當天流程
 
-`docs/hackathon-runbook.md`：離線 bundle 打包（`docker save` 容器 + HF cache tar）、`scripts/bootstrap-spark.sh` 各 stage 時間、Jetson AGX Thor / Orin / Orin Nano 的差異與備案模型、當天判斷指令。
+- 決賽 demo 的執行手冊：`docs/demo.md`，包含現場配置、時間表、失敗預案、器材，以及在 Thor 上的啟動順序。
+- `docs/hackathon-runbook.md`：離線 bundle 打包、`scripts/bootstrap-spark.sh` 各 stage 時間、Jetson 對照。這份是 TRT-LLM 時期寫的；推論的部分改用 `scripts/serve-vllm.sh`，bundle 要改帶 `blackbox-vllm-bolt:77154ca` 映像與 Bolt 權重。
 
 ## 10. 安全與待辦
 
-- TRT-LLM API 綁 0.0.0.0 無認證（NemoClaw 直連需要）：lab LAN 可達，要收就用 iptables 只放 172.24.0.0/16。
+- vLLM API（:8000）綁 0.0.0.0、沒有認證：lab LAN 連得到，要收緊就用 iptables 只放 172.24.0.0/16。
+- dashboard（:8097）沒有認證：`DASH_ACTIONS=1` 時，網段上任何人都能按注入。只在比賽時開，或用 `DASH_HOST` 綁定特定介面。
 - `~/.nemoclaw.bak-2026-09-22/credentials.json` 內有舊的 NVIDIA API key；`hsnl` 密碼曾出現在對話中 → 都建議更換。
 - HF cache 還留著 ~35 GB 未完成的 `nvidia/Qwen3.6-35B-A3B-NVFP4`（NemoClaw express 誤下載），`hf cache rm model/nvidia/Qwen3.6-35B-A3B-NVFP4` 可清。
 - `http_check` / `port_check` 只允許 loopback 與私有網段，避免 ops API 變成對外探測工具。
-- 待做：RAG 真正的檢索器（Nemotron 在整包語料塞 prompt 時抓細節較弱）、host 級別**動作**（目前只有唯讀診斷）的執行器、更多錯誤注入案例。
+- 待做（2026-10-21）：
+  - Thor 上驗證 vLLM。
+  - 遠端 victim（`docs/demo.md` #1）。
+  - 用 Bolt 重量盲測與分情況思考。
+  - 補知識庫的硬體、網路類卡片（`docs/kb-coverage-survey.md` §4）。
 
 ## 11. 文件索引
 
 | 文件 | 內容 |
 |---|---|
+| `docs/project-status-2026-10-20.md` | **整體進度、風險、接下來要做的事** |
+| `docs/demo.md` | 決賽 demo 執行手冊（現場配置、時間表、失敗預案、啟動順序） |
+| `docs/integration-vllm.md` | 三條分支整合、vLLM 取代 TRT-LLM、驗證結果 |
+| `docs/HANDOFF-kb-retrieval-v2.md` | kb-retrieval-v2 交接文件（KB、guards、加速、待辦、踩過的坑） |
+| `docs/demo-pending-edits.md` | demo 外殼的修改紀錄與回歸結果 |
+| `docs/kb-coverage-survey.md` | 知識庫覆蓋度與機房故障 survey |
+| `docs/scorecard.md` | 演練計分卡（TRT 時期） |
 | `docs/superpowers/specs/2026-09-21-edge-agent-infra-design.md` | Phase 1 設計與地雷清單 |
 | `docs/spark-hw.md` | 主機事實、port、停掉/移除了什麼、安全備註 |
 | `docs/bench-2026-09-22.md` | 模型/加速矩陣、needle 探針、事故紀錄 |
@@ -372,13 +452,17 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | `docs/BOLT_VLLM_PLAN.md` | Bolt vLLM 基線範圍、階段與設計決策 |
 | `docs/BOLT_VLLM_BASELINE.md` | Bolt vLLM 部署重現、環境變數與本機量測 |
 | `docs/ARCHITECTURE.md` | Bolt vLLM 閘道、代理、工具與基準架構 |
-| `docs/current_state.md` | 現有 TRT-LLM、NemoClaw 與工具鏈盤點 |
+| `docs/current_state.md` | 2026-10-16 時 TRT-LLM、NemoClaw 與工具鏈的盤點 |
 | `kb/README.md`、`kb/docs/*.md` | 知識庫：安裝、查詢 API、RAG schema、來源、交付稽核 |
 | `docs/kb-eval.md`、`docs/kb-eval/` | 知識庫 RAG 實測：壓縮比 × 正確率 × token × 能耗曲線、有無檢索對照、檢索命中分析（`scripts/kb-eval.py`） |
 | `datasets/README.md`、`datasets/docs/p0_rag_usage.md` | 資料集清單、授權、答案隔離與實驗切分規則 |
 
-Repo 副本：GitHub `Vanisherzd/dgx-spark-edge-agent`（private）、lab Spark `hsnl@192.168.2.60:~/edge-agent`（可直接 push）、筆電 `~/Desktop/HSNL/edge-agent`。lab VPN 下筆電連不到 GitHub，推 GitHub 從 Spark 端執行，token 從筆電經 stdin 傳過去，且要先把 Spark 上既有的 credential helper 清掉（那台曾用別人的帳號 `s102345` 推送而被 403）：
+Repo 副本：GitHub `Vanisherzd/BlackOps`（private，原名 `dgx-spark-edge-agent`，舊網址會自動轉址）、lab Spark `hsnl@192.168.2.60:~/edge-agent`（可直接 push）、筆電 `~/Desktop/HSNL/edge-agent`。lab VPN 下筆電連不到 GitHub，推 GitHub 從 Spark 端執行，token 從筆電經 stdin 傳過去，且要先把 Spark 上既有的 credential helper 清掉（那台曾用別人的帳號 `s102345` 推送而被 403）：
 
 ```bash
 T=$(gh auth token); printf '%s' "$T" | ssh hsnl@192.168.2.60 'read -r T; cd ~/edge-agent && git -c credential.helper= -c credential.helper="!f() { echo username=Vanisherzd; echo password=$T; }; f" push origin main'
+```
+協作者在 Spark 上推送自己的分支時，不要動共用的 `gh` 登入（目前是別人的帳號），每次指令帶自己的帳號，密碼貼 classic PAT：
+```bash
+git -c credential.helper= push -u https://<你的帳號>@github.com/Vanisherzd/BlackOps.git <branch>
 ```

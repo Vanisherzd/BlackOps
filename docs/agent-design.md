@@ -951,3 +951,28 @@ the two timeouts; there it costs nothing and turns "no false claim" from an obse
 still counted 3 false claims in the thinking-off run: one intercepted mid-run claim (it scans the whole turn) and two
 honest reports ("the front-end is healthy" while /api/ fails; "restored the known-good config"), its pattern is too
 loose.
+
+## Adaptive thinking and system triage, 3 rounds (2026-10-20, `logs/ab-20261020-155259-{A,B}.log`)
+
+A = thinking on + measured-health verifier, as deployed. B = A + `SHIM_ADAPTIVE=1` (no thinking on a turn whose last
+tool results name the next call or report the stack recovered) + `TRIAGE=1` (`scripts/triage.py`: check_health,
+docker_ps and both containers' logs, taken by the system and carried in the alert). 18 cases x 3 rounds per arm,
+arms alternating, the ops API and the shim restarted before every drill.
+
+| | A | B |
+|---|---|---|
+| resolved | 41/54 | 43/54 |
+| seen 10 / hard 8 | 29/30, 12/24 | 27/30, 16/24 |
+| false claims, made worse | 0, 0 | 0, 0 |
+| timeouts | 1 | 3 |
+| model calls / generated tokens | 523 / 425k | 288 / 300k |
+| median s of solved runs, seen / hard | 56 / 208 | 38 / 137 |
+| total s (timeouts included) | 10278 | 9570 |
+
+B makes 45% fewer model calls and solves in a third less time; the totals differ less because two more drills hit
+the timeout. A flaw found in B's seen-case failures: refusals carry "Next: ..." too, so the turn after a refusal ran
+without thinking, which is the turn that has to re-plan (inode-exhausted: rejected, then "/approve" to a human who
+does not exist). Next: exclude refused, denied and review-rejected results from the trigger.
+
+The ops API had served code loaded before d341f6f for a day (a long-running process keeps the modules it imported);
+arm A is the first drill run of d341f6f's agent changes, and seen cases stay at 29/30.

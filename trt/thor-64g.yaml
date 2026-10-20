@@ -1,0 +1,12 @@
+# Tier-2 on a Jetson AGX Thor T4000, 64 GB unified memory. Untested starting point: smaller KV share and batch, as
+# the 30B NVFP4 weights (~18.5 GiB; 16.1 GiB with docs/expert-pruning.md) and the sandbox leave less room.
+max_seq_len: 32768
+max_num_tokens: 8192
+enable_chunked_prefill: true
+max_batch_size: 2
+kv_cache_config:
+  enable_block_reuse: false
+  free_gpu_memory_fraction: 0.25
+  mamba_ssm_cache_dtype: float32
+cuda_graph_config:
+  enable_padding: true

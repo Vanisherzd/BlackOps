@@ -1,3 +1,8 @@
+# DO NOT USE (2026-10-19, TensorRT-LLM 1.3.0rc13, Nemotron-3-Nano NVFP4): with this config the server reports 117-238
+# tokens/s against 53-58 without it, and every answer is broken: the reasoning is one word ("We") and the rest of the
+# 700 generated tokens decode to nothing, no content, no tool call. Likely the hybrid model's Mamba state is not rolled
+# back when drafted tokens are rejected (an inference, not confirmed). Measure with scripts/decode-bench.py, which
+# checks the text as well as the speed.
 # extra_llm_api_options for trtllm-serve on the DGX Spark (NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4, text-only).
 # free_gpu_memory_fraction is a share of the *free* memory at startup; 0.5 leaves room for OpenShell/NemoClaw and RAG.
 # Without chunked prefill TRT-LLM rejects prompts longer than max_num_tokens (default 8192), so RAG prompts need both.

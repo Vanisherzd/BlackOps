@@ -1,0 +1,217 @@
+{
+  "benchmark": "concurrency_smoke",
+  "environment": {
+    "blackbox_inference_env": {},
+    "git_sha": "e059a1c",
+    "hostname": "DGX-spark",
+    "models": [
+      "bolt"
+    ],
+    "nvidia_smi": "NVIDIA GB10, 580.126.09",
+    "platform": "Linux-6.17.0-1008-nvidia-aarch64-with-glibc2.39",
+    "python": "3.12.14",
+    "timestamp": "2026-10-17T06:37:29.951658+00:00"
+  },
+  "measurement": "LOCAL_MEASUREMENT",
+  "requests_per_mode": 4,
+  "results": [
+    {
+      "concurrency": 1,
+      "latency_ms": [
+        400,
+        399,
+        419,
+        405
+      ],
+      "mean_latency_ms": 405.75,
+      "mean_output_tokens_per_second": 22.19,
+      "name": "sequential",
+      "passed": true,
+      "request_count": 4,
+      "requests": [
+        {
+          "content": "BLACKBOX_BOLT_OK",
+          "latency_ms": 400,
+          "output_tokens_per_second": 22.5,
+          "passed": true,
+          "usage": {
+            "completion_tokens": 9,
+            "final_tokens": 9,
+            "prompt_tokens": 33,
+            "reasoning_tokens": 0,
+            "total_tokens": 42
+          }
+        },
+        {
+          "content": "BLACKBOX_BOLT_OK",
+          "latency_ms": 399,
+          "output_tokens_per_second": 22.56,
+          "passed": true,
+          "usage": {
+            "completion_tokens": 9,
+            "final_tokens": 9,
+            "prompt_tokens": 33,
+            "reasoning_tokens": 0,
+            "total_tokens": 42
+          }
+        },
+        {
+          "content": "BLACKBOX_BOLT_OK",
+          "latency_ms": 419,
+          "output_tokens_per_second": 21.48,
+          "passed": true,
+          "usage": {
+            "completion_tokens": 9,
+            "final_tokens": 9,
+            "prompt_tokens": 33,
+            "reasoning_tokens": 0,
+            "total_tokens": 42
+          }
+        },
+        {
+          "content": "BLACKBOX_BOLT_OK",
+          "latency_ms": 405,
+          "output_tokens_per_second": 22.22,
+          "passed": true,
+          "usage": {
+            "completion_tokens": 9,
+            "final_tokens": 9,
+            "prompt_tokens": 33,
+            "reasoning_tokens": 0,
+            "total_tokens": 42
+          }
+        }
+      ],
+      "usage": [
+        {
+          "completion_tokens": 9,
+          "final_tokens": 9,
+          "prompt_tokens": 33,
+          "reasoning_tokens": 0,
+          "total_tokens": 42
+        },
+        {
+          "completion_tokens": 9,
+          "final_tokens": 9,
+          "prompt_tokens": 33,
+          "reasoning_tokens": 0,
+          "total_tokens": 42
+        },
+        {
+          "completion_tokens": 9,
+          "final_tokens": 9,
+          "prompt_tokens": 33,
+          "reasoning_tokens": 0,
+          "total_tokens": 42
+        },
+        {
+          "completion_tokens": 9,
+          "final_tokens": 9,
+          "prompt_tokens": 33,
+          "reasoning_tokens": 0,
+          "total_tokens": 42
+        }
+      ],
+      "wall_ms": 1624
+    },
+    {
+      "concurrency": 2,
+      "latency_ms": [
+        789,
+        401,
+        799,
+        798
+      ],
+      "mean_latency_ms": 696.75,
+      "mean_output_tokens_per_second": 14.1,
+      "name": "parallel",
+      "passed": true,
+      "request_count": 4,
+      "requests": [
+        {
+          "content": "BLACKBOX_BOLT_OK",
+          "latency_ms": 789,
+          "output_tokens_per_second": 11.41,
+          "passed": true,
+          "usage": {
+            "completion_tokens": 9,
+            "final_tokens": 9,
+            "prompt_tokens": 33,
+            "reasoning_tokens": 0,
+            "total_tokens": 42
+          }
+        },
+        {
+          "content": "BLACKBOX_BOLT_OK",
+          "latency_ms": 401,
+          "output_tokens_per_second": 22.44,
+          "passed": true,
+          "usage": {
+            "completion_tokens": 9,
+            "final_tokens": 9,
+            "prompt_tokens": 33,
+            "reasoning_tokens": 0,
+            "total_tokens": 42
+          }
+        },
+        {
+          "content": "BLACKBOX_BOLT_OK",
+          "latency_ms": 799,
+          "output_tokens_per_second": 11.26,
+          "passed": true,
+          "usage": {
+            "completion_tokens": 9,
+            "final_tokens": 9,
+            "prompt_tokens": 33,
+            "reasoning_tokens": 0,
+            "total_tokens": 42
+          }
+        },
+        {
+          "content": "BLACKBOX_BOLT_OK",
+          "latency_ms": 798,
+          "output_tokens_per_second": 11.28,
+          "passed": true,
+          "usage": {
+            "completion_tokens": 9,
+            "final_tokens": 9,
+            "prompt_tokens": 33,
+            "reasoning_tokens": 0,
+            "total_tokens": 42
+          }
+        }
+      ],
+      "usage": [
+        {
+          "completion_tokens": 9,
+          "final_tokens": 9,
+          "prompt_tokens": 33,
+          "reasoning_tokens": 0,
+          "total_tokens": 42
+        },
+        {
+          "completion_tokens": 9,
+          "final_tokens": 9,
+          "prompt_tokens": 33,
+          "reasoning_tokens": 0,
+          "total_tokens": 42
+        },
+        {
+          "completion_tokens": 9,
+          "final_tokens": 9,
+          "prompt_tokens": 33,
+          "reasoning_tokens": 0,
+          "total_tokens": 42
+        },
+        {
+          "completion_tokens": 9,
+          "final_tokens": 9,
+          "prompt_tokens": 33,
+          "reasoning_tokens": 0,
+          "total_tokens": 42
+        }
+      ],
+      "wall_ms": 1589
+    }
+  ]
+}

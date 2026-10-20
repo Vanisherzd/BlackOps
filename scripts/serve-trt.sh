@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Serve with TensorRT-LLM (trtllm-serve, OpenAI-compatible) in the NGC container. Offline: model must be in the HF cache.
+# LEGACY since 2026-10-20: the default engine is vLLM (scripts/serve-vllm.sh). Kept to reproduce the results measured on it.
 # Runs in the foreground so systemd can supervise it; `docker stop trtllm-edge` stops it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -17,7 +18,10 @@ if [ "${FORCE:-0}" != "1" ] && docker ps --format '{{.Names}}' | grep -qx "$NAME
   echo "$NAME is already running and healthy on port ${PORT:-8000}; FORCE=1 to restart" >&2; exit 0
 fi
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-exec docker run --rm --name "$NAME" --gpus all --ipc host --network host \
+# GPU_FLAGS: the Spark takes --gpus all; on a Jetson (Thor) the container needs the NVIDIA runtime instead.
+GPU_FLAGS="${GPU_FLAGS:-$([ -f /etc/nv_tegra_release ] && echo "--runtime nvidia" || echo "--gpus all")}"
+# shellcheck disable=SC2086
+exec docker run --rm --name "$NAME" $GPU_FLAGS --ipc host --network host \
   -e HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}" -e PYTORCH_ALLOC_CONF=expandable_segments:True -e TRTLLM_ENABLE_PDL="${TRTLLM_ENABLE_PDL:-1}" \
   -v "$HOME/.cache/huggingface:/root/.cache/huggingface" -v "$YAML:/config.yaml:ro" \
   "$IMAGE" trtllm-serve serve "$MODEL" \

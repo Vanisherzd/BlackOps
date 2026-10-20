@@ -15,6 +15,16 @@ teammate's smoke run. Alongside: prompt tokens from the server, wall latency, GP
 1 Hz with the idle draw subtracted and shared among in-flight calls, and how often retrieval matched at all.
 
 Outputs live in logs/kb-eval/ (inputs, predictions, power trace); the report and curve CSVs go to docs/kb-eval*.
+
+Opt-in switches (unset = the behaviour above, unchanged), for comparing retrieval versions without overwriting a run:
+  KB_EVAL_OUT=logs/kb-eval-v3   predictions, power trace and cases.json go here (inputs still come from logs/kb-eval)
+  KB_EVAL_TAG=-v3               report -> docs/kb-eval-v3.md, curves -> docs/kb-eval/curve-<arm>-v3.csv
+  KB_RETRIEVAL=v3               the agent tool reads the v3 corpus (kb/src/blackout_ops_kb/retrieval_v2.py, cases
+                                indexed by their own telemetry); KB_VOTE=N turns on card-by-case-vote
+  KB_QUERY=incident             the retrieval query is extracted from the telemetry (retrieval_v2.incident_query)
+                                instead of written by the model in one line
+  KB_EXCLUDE=siblings           leave-out: while a case is diagnosed, the v3 index hides the train incidents with the
+                                same fault on the same service (retrieval_v2.sibling_ids), i.e. a fault never seen there
 """
 import argparse
 import collections
@@ -32,8 +42,15 @@ from concurrent.futures import ThreadPoolExecutor
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 sys.path.insert(0, str(ROOT / "kb" / "src"))
-OUT = ROOT / "logs" / "kb-eval"
-INPUTS = OUT / "inputs"
+OUT = pathlib.Path(os.environ.get("KB_EVAL_OUT") or ROOT / "logs" / "kb-eval")
+if not OUT.is_absolute():
+    OUT = ROOT / OUT
+INPUTS = ROOT / "logs" / "kb-eval" / "inputs"
+TAG = os.environ.get("KB_EVAL_TAG", "")
+RETRIEVAL = os.environ.get("KB_RETRIEVAL", "v1")
+KB_VOTE = int(os.environ.get("KB_VOTE", "0"))
+KB_QUERY = os.environ.get("KB_QUERY", "one-liner")
+KB_EXCLUDE = os.environ.get("KB_EXCLUDE", "")
 DOCS = ROOT / "docs" / "kb-eval"
 GT = ROOT / "kb" / "artifacts" / "eval_ground_truth.jsonl"
 TRAIN = ROOT / "kb" / "artifacts" / "cases_train.jsonl"
@@ -265,14 +282,19 @@ def one_liner(client, events):
 
 def knowledge_for(events, client):
     import agent
-    q, ms, toks = one_liner(client, events)
+    if KB_QUERY == "incident":
+        from blackout_ops_kb.retrieval_v2 import incident_query
+        q, ms, toks = incident_query(events), None, None
+    else:
+        q, ms, toks = one_liner(client, events)
     q = q or symptom_query(events)[:240]
     text = agent.search_incident_knowledge(q)
     meta = {"query": q, "query_chars": len(q), "summary_ms": ms, "summary_tokens": toks}
     try:
         b = agent._kb.retrieve({"query": q}, case_k=3, solution_k=3)
         meta.update(status=b["knowledge_match"]["status"], coverage=b["knowledge_match"]["best_solution_coverage"], scenario=b["scenario"],
-                    cards=[s["id"] for s in b["solutions"][:2]], case_titles=[c["title"] for c in b["cases"][:3]])
+                    cards=[s["id"] for s in b["solutions"][:2]], case_titles=[c["title"] for c in b["cases"][:3]],
+                    card_scenario=(b["solutions"] or [{}])[0].get("scenario"))
     except Exception as e:
         meta["error"] = f"{type(e).__name__}: {str(e)[:100]}"
     return text, meta
@@ -341,11 +363,29 @@ class PowerSampler(threading.Thread):
         self.join(timeout=8)
 
 
+def use_retrieval():
+    """Point the agent tool at the retrieval under test. v1 = the tool as shipped (it opens the pack lazily)."""
+    import agent
+    if RETRIEVAL == "v3":
+        from blackout_ops_kb.retrieval_v2 import AGENT_DEFAULTS, KnowledgeBaseV2
+        agent._kb = KnowledgeBaseV2(agent.KB_V3, **AGENT_DEFAULTS, vote=KB_VOTE)       # what the agent itself uses
+    elif RETRIEVAL == "v1":                      # explicit, so this stays v1 whatever the agent's own default is
+        from blackout_ops_kb import KnowledgeBase
+        agent._kb = KnowledgeBase(agent.KB_DB)
+    else:
+        sys.exit(f"unknown KB_RETRIEVAL {RETRIEVAL}")
+    if KB_EXCLUDE and RETRIEVAL != "v3":
+        sys.exit("KB_EXCLUDE needs KB_RETRIEVAL=v3")
+
+
 def run(args):
     import agent  # noqa: F401  (the tool under test; imported once, before the threads)
+    use_retrieval()
     from openai import OpenAI
     client = OpenAI(base_url=f"{BASE}/v1", api_key="none", timeout=600)
     cases = {c["id"]: c for c in json.loads((OUT / "cases.json").read_text())}
+    truths = {t["id"]: t for t in jsonl(GT)}           # only for the leave-out (KB_EXCLUDE); never reaches a prompt
+    train = jsonl(TRAIN)
     suffix = "-think" if args.think else ""
     done = {}
     for arm in args.arms:
@@ -363,7 +403,14 @@ def run(args):
     def work(job):
         arm, r, row = job
         case = cases[row["id"]]
-        knowledge, meta = knowledge_for(row["telemetry"], client) if arm == "rag" else (None, {})
+        if arm == "rag" and KB_EXCLUDE == "siblings":
+            from blackout_ops_kb.retrieval_v2 import sibling_ids
+            hidden = sibling_ids(truths[row["id"]], train)
+            with agent._kb.excluding(hidden):
+                knowledge, meta = knowledge_for(row["telemetry"], client)
+            meta["hidden"] = len(hidden)
+        else:
+            knowledge, meta = knowledge_for(row["telemetry"], client) if arm == "rag" else (None, {})
         rec = dict(id=row["id"], compression_ratio=float(r), arm=arm, think=int(bool(args.think)), retrieval=meta)
         t0 = time.time()
         for budget in (TELEMETRY_CHARS, TELEMETRY_CHARS // 2, TELEMETRY_CHARS // 4):   # shrink if the server says too long
@@ -489,7 +536,7 @@ def report(args):
             for r in recs:
                 f.write(json.dumps({k: r.get(k) for k in ("id", "compression_ratio", "predicted_label", "predicted_scenario",
                                                           "input_tokens", "latency_ms", "energy_wh")}) + "\n")
-        curves[arm] = score_predictions(GT, scored, DOCS / f"curve-{arm}{suffix}.csv")
+        curves[arm] = score_predictions(GT, scored, DOCS / f"curve-{arm}{TAG}{suffix}.csv")
         arms[arm] = recs
 
     lines = [f"# Knowledge-pack RAG evaluation ({time.strftime('%Y-%m-%d')}{', thinking on' if args.think else ', thinking off'})", "",
@@ -499,7 +546,10 @@ def report(args):
              f"{dict(collections.Counter(c['source'] for c in cases))}). Two arms per input: `none` = telemetry only; `rag` = telemetry "
              f"plus what the agent's `search_incident_knowledge` returns for the symptoms in it. Same closed-set label vocabulary "
              f"(train split of each source) for both arms; scored by the pack's own scorer (`blackout_ops_kb.evaluation`). Energy = "
-             f"nvidia-smi power at 1 Hz minus idle{f' ({idle:.1f} W)' if idle else ''}, shared among concurrent calls.", ""]
+             f"nvidia-smi power at 1 Hz minus idle{f' ({idle:.1f} W)' if idle else ''}, shared among concurrent calls.",
+             "", f"Retrieval: {RETRIEVAL}" + (f", card by case vote >= {KB_VOTE}/5" if KB_VOTE else "")
+             + (", LEAVE-OUT: the same fault on the same service hidden from the index per case" if KB_EXCLUDE else "")
+             + f"; query: {'extracted from the telemetry (incident_query)' if KB_QUERY == 'incident' else 'one line written by the model'}.", ""]
     lines += ["## Accuracy vs compression", "", "Strict = the pack's scorer (exact label, or the label inside the answer when it has 6+ characters). "
               "Lenient = strict, or truth label inside the answer, or answer inside the truth label. Wh = GPU energy above idle per diagnosis "
               f"at {args.concurrency}-way concurrency; solo = the same charged in full to each call (upper bound, sequential-equivalent).", "",
@@ -546,17 +596,18 @@ def report(args):
         title_hit = [any(_label_correct(truths[x["id"]]["labels"], [t]) for t in x["retrieval"].get("case_titles", [])) for x in rag]
         ms = [x["retrieval"].get("summary_ms") for x in rag if x["retrieval"].get("summary_ms")]
         lines += [f"- Query = a one-line symptom the model wrote from the telemetry (median {sorted(ms)[len(ms) // 2] / 1000:.1f} s extra per diagnosis)." if ms else "",
-                  f"- `matched` (a remediation card cleared the 0.34 coverage bar): {pct(matched)} of inputs.",
+                  f"- `matched`: {pct(matched)} of inputs; the matched card's scenario equals the truth scenario on "
+                  f"{pct([x['retrieval'].get('card_scenario') == x['truth_scenario'] for x in rag if x['retrieval'].get('status') == 'matched'])} of those.",
                   f"- Retrieval's scenario guess equals the truth scenario, target scenarios only: {pct(card_ok)}.",
                   f"- One of the three similar historical cases carries the true label in its title: {pct(title_hit)} of inputs.",
                   f"- Lenient accuracy when a similar case carried the label: {pct([x['lenient'] for x, h in zip(rag, title_hit) if h])} vs "
                   f"{pct([x['lenient'] for x, h in zip(rag, title_hit) if not h])} when none did."]
     errs = {arm: sum(1 for x in recs if x.get("error")) for arm, recs in arms.items()}
     capped = {arm: sum(1 for x in recs if x.get("capped")) for arm, recs in arms.items()}
-    lines += ["", f"Errors: {errs}. Prompts truncated to the window: {capped}. Predictions and the power trace: `logs/kb-eval/` on the Spark; "
+    lines += ["", f"Errors: {errs}. Prompts truncated to the window: {capped}. Predictions and the power trace: `{OUT.relative_to(ROOT)}/` on the Spark; "
               f"curves: `docs/kb-eval/curve-*.csv`."]
-    (ROOT / "docs" / f"kb-eval{suffix}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    (DOCS / f"summary{suffix}.json").write_text(json.dumps({"curves": curves, "errors": errs, "capped": capped, "idle_w": idle}, indent=1))
+    (ROOT / "docs" / f"kb-eval{TAG}{suffix}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (DOCS / f"summary{TAG}{suffix}.json").write_text(json.dumps({"curves": curves, "errors": errs, "capped": capped, "idle_w": idle}, indent=1))
     print("\n".join(lines))
 
 

@@ -1,0 +1,199 @@
+{
+  "aggregate": {
+    "completion_tokens": {
+      "median": 24.0,
+      "p90": 24.0
+    },
+    "itl_mean_ms": {
+      "median": 46.02,
+      "p90": 56.981
+    },
+    "itl_p50_ms": {
+      "median": 35.086,
+      "p90": 35.629
+    },
+    "output_tokens_per_second": {
+      "median": 25.045,
+      "p90": 30.943
+    },
+    "prompt_tokens": {
+      "median": 1368.0,
+      "p90": 1368.0
+    },
+    "request_count": 6,
+    "run_wall_time_ms": 10780.415,
+    "successful_requests": 6,
+    "ttft_ms": {
+      "median": 1419.702,
+      "p90": 5253.898
+    },
+    "wall_time_ms": {
+      "median": 2231.787,
+      "p90": 6299.274
+    }
+  },
+  "benchmark": "perf_baseline",
+  "config": {
+    "concurrency": 2,
+    "max_tokens": 256,
+    "prompt_tokens_target": 2000,
+    "requests": 6
+  },
+  "environment": {
+    "blackbox_inference_env": {},
+    "git_sha": "e059a1c",
+    "hostname": "DGX-spark",
+    "models": [
+      "bolt"
+    ],
+    "nvidia_smi": "NVIDIA GB10, 580.126.09",
+    "platform": "Linux-6.17.0-1008-nvidia-aarch64-with-glibc2.39",
+    "python": "3.12.14",
+    "timestamp": "2026-10-17T06:48:18.853761+00:00"
+  },
+  "measurement": "LOCAL_MEASUREMENT",
+  "peak_gpu_memory_mib": null,
+  "peak_power_w": null,
+  "requests": [
+    {
+      "completion_tokens": 24,
+      "content_length": 141,
+      "generation_time_ms": 776.071,
+      "itl_mean_ms": 35.276,
+      "itl_p50_ms": 35.098,
+      "output_tokens_per_second": 30.925,
+      "passed": true,
+      "prompt_tokens": 1368,
+      "request": 0,
+      "streaming": true,
+      "ttft_ms": 5508.076,
+      "wall_time_ms": 6316.75
+    },
+    {
+      "completion_tokens": 24,
+      "content_length": 137,
+      "generation_time_ms": 1246.63,
+      "itl_mean_ms": 56.665,
+      "itl_p50_ms": 35.074,
+      "output_tokens_per_second": 19.252,
+      "passed": true,
+      "prompt_tokens": 1368,
+      "request": 1,
+      "streaming": true,
+      "ttft_ms": 4999.72,
+      "wall_time_ms": 6281.798
+    },
+    {
+      "completion_tokens": 24,
+      "content_length": 141,
+      "generation_time_ms": 1254.739,
+      "itl_mean_ms": 57.034,
+      "itl_p50_ms": 35.63,
+      "output_tokens_per_second": 19.127,
+      "passed": true,
+      "prompt_tokens": 1368,
+      "request": 2,
+      "streaming": true,
+      "ttft_ms": 939.955,
+      "wall_time_ms": 2231.523
+    },
+    {
+      "completion_tokens": 24,
+      "content_length": 141,
+      "generation_time_ms": 778.254,
+      "itl_mean_ms": 35.375,
+      "itl_p50_ms": 35.628,
+      "output_tokens_per_second": 30.838,
+      "passed": true,
+      "prompt_tokens": 1368,
+      "request": 3,
+      "streaming": true,
+      "ttft_ms": 1420.576,
+      "wall_time_ms": 2229.851
+    },
+    {
+      "completion_tokens": 24,
+      "content_length": 141,
+      "generation_time_ms": 1252.435,
+      "itl_mean_ms": 56.929,
+      "itl_p50_ms": 34.719,
+      "output_tokens_per_second": 19.163,
+      "passed": true,
+      "prompt_tokens": 1368,
+      "request": 4,
+      "streaming": true,
+      "ttft_ms": 938.813,
+      "wall_time_ms": 2227.01
+    },
+    {
+      "completion_tokens": 24,
+      "content_length": 141,
+      "generation_time_ms": 775.199,
+      "itl_mean_ms": 35.236,
+      "itl_p50_ms": 34.801,
+      "output_tokens_per_second": 30.96,
+      "passed": true,
+      "prompt_tokens": 1368,
+      "request": 5,
+      "streaming": true,
+      "ttft_ms": 1418.827,
+      "wall_time_ms": 2232.051
+    }
+  ],
+  "startup_time_s": null,
+  "streaming": true,
+  "system": {
+    "container_image_id": "sha256:bedc15400b015f9c82e5096ffe848f296cb8da24ec4d0bbd586ae90ad8551ac5",
+    "cuda_version": "13.0",
+    "git_sha": "e059a1c684025a617f8e0a7d1da2ae2c6be1ff98",
+    "gpu_name_driver": "NVIDIA GB10, 580.126.09",
+    "model_revision": null,
+    "ram_memtotal_kib": 125442872,
+    "vllm_argv": [
+      "nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB",
+      "--trust-remote-code",
+      "--load-format",
+      "auto",
+      "--tensor-parallel-size",
+      "1",
+      "--max-model-len",
+      "32768",
+      "--max-num-seqs",
+      "2",
+      "--gpu-memory-utilization",
+      "0.45",
+      "--enable-chunked-prefill",
+      "--kv-cache-dtype",
+      "fp8",
+      "--linear-backend",
+      "b12x",
+      "--moe-backend",
+      "b12x",
+      "--attention-backend",
+      "FLASHINFER",
+      "--mamba-backend",
+      "flashinfer",
+      "--mamba-ssm-cache-dtype",
+      "bfloat16",
+      "--mamba-cache-dtype",
+      "bfloat16",
+      "--mamba-cache-mode",
+      "align",
+      "--seed",
+      "42",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--reasoning-parser-plugin",
+      "/opt/bolt/ultra_v3_reasoning_parser.py",
+      "--reasoning-parser",
+      "ultra_v3",
+      "--served-model-name",
+      "bolt",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "8200"
+    ]
+  }
+}

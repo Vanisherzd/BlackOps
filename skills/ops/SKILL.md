@@ -19,7 +19,7 @@ Look first, and never guess a state you can read:
 | Tool | Arguments | Use it for |
 | --- | --- | --- |
 | `ops__check_health` | – | the two health URLs; this is the definition of healthy |
-| `ops__docker_ps` | – | container state and exit code |
+| `ops__docker_ps` | – | container state and exit code, any memory limit, and whether the kernel OOM-killed it |
 | `ops__docker_logs` | `name`, `tail` | why a container exited |
 | `ops__docker_exec` | `name`, `cmd` | a read-only command inside a container (`nginx -t`, `cat`, `ls`, `df`, `du`, `ps`, `curl`) |
 | `ops__read_config` | – | the current nginx config |
@@ -39,15 +39,18 @@ Actions, least invasive first:
 | `ops__docker_start` | `name` | a container that is Exited |
 | `ops__docker_restart` | `name` | after a config change, or a container that is up but wedged |
 | `ops__write_config` | `content` | the complete corrected nginx config, then restart the front end |
+| `ops__restore_config` | `source` | put back the last known-good nginx config (`read_config` says when one differs), then restart the front end |
 | `ops__self_heal` | – | runs this whole loop on the host in one call; use it only if you are stuck |
 
 ## Procedure
 1. `ops__check_health` — know the actual symptom before theorising.
 2. `ops__docker_ps` — which container, and how did it exit.
 3. `ops__docker_logs` on that container — read the real error, not the first plausible one.
-4. `ops__search_runbooks` with words from that error. If it returns only the catalogue, `ops__search_incident_knowledge`
-   with the same words: `matched` gives checks and fixes to confirm on this host; `insufficient` means gather more
-   evidence or escalate, not repair from a weak candidate.
+4. `ops__search_runbooks` with words from that error (`ops__docker_logs` attaches the nearest runbook by itself). The
+   runbook is this stack's procedure. When the knowledge pack recognises the symptom, a **knowledge card** is attached
+   too: a hypothesis from other systems' incidents. If the runbook's steps do not fit what you see, test the card's
+   CHECK lines with your read-only tools before acting. `ops__search_incident_knowledge` asks the pack directly;
+   `insufficient` means gather more evidence or escalate, not repair from a weak candidate.
 5. Apply the smallest action that addresses the cause. A container that exited on a config error will exit again if
    you only restart it.
 6. `ops__check_health` again. Both URLs must be 200. If they are not, go back to step 3 with what you learned.

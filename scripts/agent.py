@@ -37,24 +37,52 @@ UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / jour
 # of it. So the rule lives in the tool layer. Evidence tools push the matching runbook into the answer, and an action
 # refuses once until a runbook has been seen for this incident. An incident ends when health comes back green.
 MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
+            "clear_scratch_volume", "restore_config",
             "kill_process"}
 SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
                         r"not found|exit(ed)? \(?\d|restarting|paused|oom|killed|no space|\b50[0-9]\b", re.I)
 _incident = {"runbook_seen": False, "refusals": 0, "trace": []}
-DESTRUCTIVE = {"kill_process", "cleanup_disk"}          # plus recreate_stack with replace=true; see reviewed()
+DESTRUCTIVE = {"kill_process", "cleanup_disk", "clear_scratch_volume"}          # plus recreate_stack with replace=true; see reviewed()
 
 
 def reviewed(name, args):
     """Second-agent approval for an irreversible action. Returns None to proceed, or the refusal text."""
     import reviewer
+    import tier                                            # an irreversible action is the hard judgement: Tier-2
+    tier.set_tier(2, f"review of {name}")
     ok, reason = reviewer.review(name, args, _incident["trace"], _incident["runbook_seen"])
     if ok:
-        return None
-    return (f"review-rejected: the change reviewer did not approve {name}. Reason: {reason}\n"
-            "Choose a less invasive action, gather the evidence the reviewer asked for, or escalate.")
+        import approval                                    # third key, a human (APPROVAL=off by default: passes)
+        approved, text = approval.request(name, args, reason)
+        return None if approved else text
+    # Every refusal names who refused and the next call. "the change reviewer did not approve" once read as a request
+    # for a human: the agent answered "/approve" and the drill ended (2026-10-14).
+    return (f"review-rejected: refused by the automatic change reviewer (no human approval exists: do not ask for one or send /approve). "
+            f"Reason: {reason}\nNext: make the call the reason names, then call {name} again; if there is none, choose "
+            "a less invasive action, or stop and escalate in your final report.")
 
 
-ACCESS_5XX_RE = re.compile(r'"(?:GET|POST|HEAD) [^"]*" (5\d\d) ')
+# 4xx too (2026-10-18): an upstream answering 429 or 403 to every request logged only access lines, so the query was
+# empty and neither a runbook nor a card was attached.
+ACCESS_ERR_RE = re.compile(r'"(?:GET|POST|HEAD) [^"]*" ([45]\d\d) ')
+
+
+def layer_note(name):
+    """Whose logs these are, and which files of that container's own filesystem differ from its known-good state.
+    Both containers have /etc/nginx/conf.d/default.conf; an error in the upstream's was fixed in the front end's file,
+    which took the front end down too (upstream-config-crash, blind batch 4)."""
+    import faults
+    head = (f"[logs of {name}: every path below is inside {name}'s own filesystem"
+            + (", not the host file read_config shows" if name != faults.FRONT else
+               "; its /etc/nginx/conf.d/default.conf is the host file read_config shows") + "]\n")
+    try:
+        changes = faults.layer_changes(name)
+    except (OSError, subprocess.SubprocessError):
+        changes = []
+    if changes:
+        head += (f"[files of {name} changed since its known-good state (a restart keeps them, recreate_stack "
+                 f"replace=true restores them): " + "; ".join(f"{p} {w}" for p, w in changes[:6]) + "]\n")
+    return head
 
 
 def symptom_query(text):
@@ -63,14 +91,17 @@ def symptom_query(text):
     An nginx access-log line (`"GET / HTTP/1.0" 500 177 "-" "curl"`) is a symptom, but as embedding input it is mostly
     noise: quotes, sizes, user agents. Say what it means instead, in the words the runbook uses.
     """
-    lines = [l.strip() for l in (text or "").splitlines() if SYMPTOM_RE.search(l)]
+    lines = [l.strip() for l in (text or "").splitlines() if SYMPTOM_RE.search(l) or ACCESS_ERR_RE.search(l)]
     if not lines:
         return None
-    codes = sorted({m.group(1) for l in lines for m in [ACCESS_5XX_RE.search(l)] if m})
-    plain = [l for l in lines if not ACCESS_5XX_RE.search(l)]
+    codes = sorted({m.group(1) for l in lines for m in [ACCESS_ERR_RE.search(l)] if m})
+    plain = [l for l in lines if not ACCESS_ERR_RE.search(l)]
     query = " ".join(plain[-4:])[:400]
     if codes:
-        query = f"the service itself answers HTTP {' '.join(codes)} to requests, container is up. " + query
+        import http
+        named = " ".join(f"{c} {http.HTTPStatus(int(c)).phrase}" if int(c) in http.HTTPStatus._value2member_map_ else c
+                         for c in codes)
+        query = f"the service itself answers HTTP {named} to requests, container is up. " + query
     return query.strip() or None
 
 
@@ -78,14 +109,18 @@ def with_health(result):
     """Append the health check to an action's result. The agent that fixed the stack and kept digging for five
     minutes had not run check_health after acting; now the answer arrives with the action."""
     health = {k: http_status(u) for k, u in HEALTH.items()}
+    import tier                                            # TIER_MODE=off by default: both calls are no-ops
     if all(v == 200 for v in health.values()):
         _incident.update(runbook_seen=False, refusals=0, trace=[])
+        snapshot_known_good()
+        tier.set_tier(1, "health green after an action")
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
     state = docker_ps()
     hint = ""
     for line in state.splitlines():
         if "Exited" in line or "MISSING" in line or "Restarting" in line:
             hint = f" {line.split(chr(9))[0]} is {line.split(chr(9))[1][:40]}: that is the next thing to fix."
+    tier.set_tier(2, "an action left the stack failing")
     return f"{result}\nhealth now: {json.dumps(health)} -> still failing.{hint}\ncontainers now:\n{state}"
 
 
@@ -119,7 +154,7 @@ def attach_runbook(result, query):
     name = ranked[0][0]
     body = {n: t for n, _, t in rag.documents()}[name]
     _incident["runbook_seen"] = True
-    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}"
+    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}" + knowledge_note(query)
 
 
 # --- host layer -------------------------------------------------------------------------------------------------
@@ -132,8 +167,30 @@ def attach_runbook(result, query):
 #   images and volumes           - shared with the rest of the lab; the agent reports pressure, a human decides.
 # logs/agent/*.jsonl is the incident audit trail and is deliberately not cleanable: an ops agent does not delete
 # the record of what it did.
-CLEANUP_GLOBS = (str(ROOT / "logs" / "*.log"), str(ROOT / "logs" / "*.out"), "/tmp/edge-agent-*")
+# An allowlist of service output that can be regenerated, not "logs/*.log": a pattern over a directory also catches
+# whatever is written there later, and it did twice (drill logs on 2026-10-14 01:37, the first A/B's logs at 12:29).
+CLEANUP_GLOBS = (str(ROOT / "logs" / "*.out"), str(ROOT / "logs" / "trt-serve.log"), "/tmp/edge-agent-*")
 CLEANUP_MIN_AGE_S = 600        # never delete a file something is probably still writing
+# Evidence is not a log to rotate. On 2026-10-14 an inode-exhaustion drill ran cleanup_disk (the host's / really is at
+# 94 %, so it looked justified) and deleted every earlier drills-*.log, the raw record behind docs/scorecard.md.
+EVIDENCE_GLOBS = (str(ROOT / "logs" / "drills-*.log"), str(ROOT / "logs" / "ab-*.log"), str(ROOT / "logs" / "oai-shim.log"),
+                  str(ROOT / "logs" / "ops-api.log"), str(ROOT / "logs" / "reviews.jsonl"))   # belt and braces
+
+
+def cleanup_candidates(now=None):
+    """(path, size) of the files cleanup_disk would delete, and how many it skips because a process holds them."""
+    now = now or time.time()
+    keep = {os.path.realpath(f) for pattern in EVIDENCE_GLOBS for f in glob.glob(pattern)}
+    open_files, victims, skipped = held_open(), [], 0
+    for pattern in CLEANUP_GLOBS:
+        for f in glob.glob(pattern):
+            if not os.path.isfile(f) or now - os.path.getmtime(f) <= CLEANUP_MIN_AGE_S or os.path.realpath(f) in keep:
+                continue
+            if os.path.realpath(f) in open_files:   # a live service still writes here; unlinking it loses the log
+                skipped += 1
+                continue
+            victims.append((f, os.path.getsize(f)))
+    return victims, skipped
 PROTECTED_CMD = re.compile(r"sshd?\b|systemd|dockerd|containerd|trtllm|tensorrt|openclaw|openshell|nemoclaw|"
                            r"ops_api|oai_shim|uv run|/init\b", re.I)
 
@@ -147,8 +204,45 @@ def docker_ps():
     listed = dict(line.split("\t", 1) for line in
                   sh("docker ps -a --filter name=edge-victim --format '{{.Names}}\t{{.Status}}'").splitlines()
                   if "\t" in line)
-    return "\n".join(f"{n}\t{listed.get(n, 'MISSING (no such container: it was removed, not stopped)')}"
+    # A container's own memory limit and the kernel's OOM verdict are not in `docker ps`; without them an
+    # "Exited (137)" upstream read as host memory pressure, and both models went 0/3 on it (2026-10-17).
+    extra = {}
+    present = [n for n in sorted(NAMES) if n in listed]
+    if present:
+        for line in sh("docker inspect -f '{{.Name}}\t{{.HostConfig.Memory}}\t{{.State.OOMKilled}}' "
+                       + " ".join(present)).splitlines():
+            parts = line.strip().lstrip("/").split("\t")
+            if len(parts) == 3:
+                name, mem, oom = parts
+                notes = []
+                if mem.isdigit() and int(mem) > 0:
+                    notes.append(f"memory limit {int(mem) / 2**20:.0f} MiB")
+                if oom == "true":
+                    notes.append("OOMKilled: yes (the kernel killed it at its memory limit)")
+                if notes:
+                    extra[name] = " | " + " | ".join(notes)
+    return "\n".join(f"{n}\t{listed.get(n, 'MISSING (no such container: it was removed, not stopped)')}{extra.get(n, '')}"
                       for n in sorted(NAMES))
+
+
+# Last known-good config: recorded at deploy (faults.reset/setup) and whenever both health URLs are 200, outside the
+# directory nginx reads. write_config keeps the file it replaces. Without one, an emptied config left the agent
+# guessing a server block from nothing (config-empty, 0/3 for both models on 2026-10-17).
+KNOWN_GOOD_DIR = ROOT / "victim" / "known-good"
+KNOWN_GOOD = KNOWN_GOOD_DIR / "default.conf"
+PREVIOUS = KNOWN_GOOD_DIR / "previous.conf"
+
+
+def snapshot_known_good():
+    try:
+        cur = (CONF_DIR / "default.conf").read_text()
+        if cur.strip() and "proxy_pass" in cur:
+            KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)
+            KNOWN_GOOD.write_text(cur)
+        import faults
+        faults.record_layers()      # what each container's own filesystem looks like while healthy
+    except (OSError, subprocess.SubprocessError):
+        pass
 
 
 def held_open():
@@ -190,16 +284,17 @@ directory. Call `finish` once both health URLs return 200 or when you cannot fix
 
 TOOLS = [
     {"name": "check_health", "description": "HTTP status of the front-end and /api/ health URLs", "parameters": {"type": "object", "properties": {}}},
-    {"name": "docker_ps", "description": "State of the two containers (docker ps -a)", "parameters": {"type": "object", "properties": {}}},
+    {"name": "docker_ps", "description": "State of the two containers (docker ps -a), with any memory limit and whether the kernel OOM-killed them", "parameters": {"type": "object", "properties": {}}},
     {"name": "docker_logs", "description": "Last lines of a container's logs", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "tail": {"type": "integer", "default": 40}}, "required": ["name"]}},
     {"name": "docker_exec", "description": "Run a read-only diagnostic command inside a running container (nginx -t, cat, ls, ps, curl, df, du, tail, head, grep)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "cmd": {"type": "string"}}, "required": ["name", "cmd"]}},
     {"name": "docker_start", "description": "Start a stopped container", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "docker_restart", "description": "Restart a container (needed after a config change)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
-    {"name": "read_config", "description": "Read victim/conf.d/default.conf", "parameters": {"type": "object", "properties": {}}},
+    {"name": "read_config", "description": "Read the front end's (edge-victim's) nginx site config, a host file mounted at /etc/nginx/conf.d/default.conf. edge-victim-app has its own file at that path inside its container: docker_exec cat", "parameters": {"type": "object", "properties": {}}},
     {"name": "write_config", "description": "Replace the nginx config with the given full content. The file lives on the host and is mounted read-only into edge-victim, so this tool is the only way to change it (the container's own 'read-only file system' warning is expected). docker_restart edge-victim afterwards to apply", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
+    {"name": "restore_config", "description": "Put back the last known-good nginx config (saved when both health URLs returned 200), or with source=previous the file the last write replaced; then docker_restart edge-victim to apply", "parameters": {"type": "object", "properties": {"source": {"type": "string", "enum": ["known-good", "previous"], "default": "known-good"}}}},
     {"name": "search_runbooks", "description": "Search the IT runbooks for a symptom in your own words or with the exact error text (502 upstream, nginx emerg config, disk full, exit 137, crash loop); returns the best matching procedures, or the catalogue if nothing matches", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}},
     {"name": "search_incident_knowledge", "description": "Offline knowledge base of 1,644 historical incidents and 17 Linux/Kubernetes remediation cards (disk full, inode exhaustion, systemd restart loop, OOM, DNS resolver, TLS expiry, port not listening, CrashLoopBackOff). Use it for a symptom no runbook covers. Answers 'matched' with checks and fixes to verify on this host, or 'insufficient', which means gather more evidence or escalate; never repair from a weak candidate", "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "symptom or exact error text"}, "scenario": {"type": "string", "enum": ["disk_full", "crashloop", "dns"]}}, "required": ["query"]}},
-    {"name": "disk_usage", "description": "Host filesystem usage (df) and docker disk usage; use for disk-full symptoms", "parameters": {"type": "object", "properties": {}}},
+    {"name": "disk_usage", "description": "Disk usage: this stack's scratch volume, the host filesystems, and docker; use for disk-full symptoms", "parameters": {"type": "object", "properties": {"inodes": {"type": "boolean", "default": False, "description": "also report inode usage per filesystem (df -i)"}}}},
     {"name": "service_status", "description": "Whether a host systemd unit is active, plus its last status line (read-only)", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}}, "required": ["unit"]}},
     {"name": "journal_tail", "description": "Last lines of a host systemd unit's journal", "parameters": {"type": "object", "properties": {"unit": {"type": "string"}, "lines": {"type": "integer", "default": 30}}, "required": ["unit"]}},
     {"name": "port_check", "description": "Whether a TCP port accepts connections", "parameters": {"type": "object", "properties": {"host": {"type": "string", "default": "127.0.0.1"}, "port": {"type": "integer"}}, "required": ["port"]}},
@@ -207,7 +302,8 @@ TOOLS = [
     {"name": "top_processes", "description": "Top host processes by CPU with memory usage", "parameters": {"type": "object", "properties": {}}},
     {"name": "recreate_stack", "description": "Recreate a container of this stack from its definition: one that no longer exists at all, or with replace=true one whose own state is corrupt and survives a restart (e.g. a broken config inside the upstream). Start/restart first if it merely exited", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "replace": {"type": "boolean", "default": False}}}},
     {"name": "network_repair", "description": "Make sure the stack network exists and both containers are attached to it; use when the front end cannot resolve or reach the upstream", "parameters": {"type": "object", "properties": {}}},
-    {"name": "cleanup_disk", "description": "Free space by deleting this project's own old log files (never images, volumes, or anyone else's data)", "parameters": {"type": "object", "properties": {}}},
+    {"name": "cleanup_disk", "description": "Free space by deleting this project's own old service output (*.out, the inference server's startup log); never images, volumes, records, or anyone else's data", "parameters": {"type": "object", "properties": {}}},
+    {"name": "clear_scratch_volume", "description": "Delete every file in this stack's scratch volume edge-cache (mounted as /var/cache/nginx in edge-victim: nginx's temp files). Its contents are disposable; nginx recreates its temp directories when it starts", "parameters": {"type": "object", "properties": {}}},
     {"name": "kill_process", "description": "Terminate a runaway host process by pid; only processes owned by this user and not part of the platform itself", "parameters": {"type": "object", "properties": {"pid": {"type": "integer"}, "force": {"type": "boolean", "default": False}}, "required": ["pid"]}},
     {"name": "finish", "description": "End the run with a verdict", "parameters": {"type": "object", "properties": {"status": {"type": "string", "enum": ["resolved", "unresolved", "escalate"]}, "root_cause": {"type": "string"}, "actions": {"type": "string"}}, "required": ["status", "root_cause", "actions"]}},
 ]
@@ -237,11 +333,20 @@ def collapse(text):
     return "\n".join(f"{l}   (x{seen[l.strip()]})" if seen[l.strip()] > 1 else l for l in order)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
 def http_status(url):
+    """The status the URL answers with. A redirect is reported, not followed: following a 301 to a name the host
+    cannot resolve read "unreachable", and the agent went repairing the network (upstream-redirect, 2026-10-19)."""
     try:
-        with urllib.request.urlopen(url, timeout=5) as r:
+        with urllib.request.build_opener(_NoRedirect).open(url, timeout=5) as r:
             return r.status
     except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            return f"{e.code} redirect to {e.headers.get('Location', '?')}"
         return e.code
     except Exception as e:
         return f"unreachable ({type(e).__name__})"
@@ -250,11 +355,81 @@ def http_status(url):
 def search_runbooks(query):
     """Retrieval lives in scripts/rag.py: hybrid keyword + dense, with its own fallback when the index is absent."""
     import rag
-    return rag.search(query)
+    return rag.search(query) + knowledge_note(query)
 
 
 KB_DB = ROOT / "kb" / "artifacts" / "blackout_ops_kb.sqlite"
+# v3 (2026-10-13, docs/kb-retrieval-v2.md): cases indexed by their own incident's telemetry, word-boundary IDF
+# scoring, no substring `matched`. On the held-out benchmark it turned retrieval from harmful (50 answers broken, 16
+# fixed) to helpful (16 broken, 53 fixed). KB_RETRIEVAL=v1 restores the pack as shipped.
+KB_V3 = ROOT / "kb" / "artifacts" / "corpus_v3.jsonl"
+# v4 (2026-10-18, scripts/kb-cards.py): v3 plus repair cards written for this stack's tools per public fault family,
+# and the fixes this stack's drills verified. KB_RETRIEVAL=v4 selects it; v3 stays the default until a drill A/B says.
+KB_V4 = ROOT / "kb" / "artifacts" / "corpus_v4.jsonl"
 _kb = None
+
+
+def kb_version():
+    v = os.environ.get("KB_RETRIEVAL", "v3")
+    return v if v in ("v1", "v3", "v4") else "v3"
+
+
+def knowledge_base():
+    """The pack, opened once: v3 unless KB_RETRIEVAL=v1 or v4."""
+    global _kb
+    if _kb is None:
+        sys.path.insert(0, str(ROOT / "kb" / "src"))
+        corpus = {"v3": KB_V3, "v4": KB_V4}.get(kb_version())
+        if corpus and corpus.exists():
+            from blackout_ops_kb.retrieval_v2 import AGENT_DEFAULTS, KnowledgeBaseV2
+            _kb = KnowledgeBaseV2(corpus, **AGENT_DEFAULTS)
+        else:
+            from blackout_ops_kb import KnowledgeBase
+            _kb = KnowledgeBase(KB_DB)
+    return _kb
+
+
+def knowledge_note(query):
+    """A knowledge card pushed next to a runbook, only when the pack is confident (v3: one of the card's own symptom
+    phrases is in the query whole and specific). Pulling it was left to the model and never happened: the skill said
+    to ask the pack when runbook search returns the catalogue, and dense search never does ("printer toner low"
+    returns disk-full.md), so in every drill the pack went unread. A score floor to detect "no runbook covers this"
+    was measured and does not separate (covered 0.66-0.88, uncovered up to 0.73), so the card rides along instead.
+    Measured on 24 uncovered symptoms: 6 cards pushed, 5 right, 14 correct silences, 4 missed; on 38 covered ones 3
+    cards, each consistent with the runbook. Never counts as a runbook: the gate is unchanged."""
+    try:
+        kb = knowledge_base()
+        if type(kb).__name__ != "KnowledgeBaseV2" or not query:
+            return ""                                      # v1's `matched` was wrong 20 times in 21; push nothing
+        # v4: six candidates, or a stack card outranked on BM25 by a generic one never reaches the phrase test
+        b = kb.retrieve({"query": query}, case_k=0, solution_k=6 if kb_version() == "v4" else 3)
+    except Exception:                                      # the note is an extra; it must never break the tool
+        return ""
+    if b["knowledge_match"]["status"] != "matched" or not b["solutions"]:
+        return ""
+    s = b["solutions"][0]
+    m = s.get("metadata") or {}
+    if m.get("platform") == "docker":
+        return stack_card_note(s, m)
+    lines = [f"\n\n--- knowledge card (from other systems' incidents: a hypothesis to confirm here, not this stack's "
+             f"procedure) ---\n{s['id']}: {m.get('title', s.get('title', ''))} [matched on: {' '.join(s.get('matched_terms') or [])}]"]
+    lines += [f"CHECK {c.get('command', '')} :: {c.get('purpose', '')}" for c in m.get("checks", [])[:3]]
+    lines += [f"FIX {f.get('action', '')}" for f in m.get("remediation", [])[:2]]
+    lines.append("If the runbook above does not fit what you see, test the card's CHECK lines with your read-only tools.")
+    return "\n".join(lines)[:1200]
+
+
+def stack_card_note(s, m):
+    """A v4 repair card: written for this stack's tools, so its CHECK and FIX lines are calls the agent can make; still
+    a hypothesis until the CHECK lines confirm it, and never a substitute for the runbook."""
+    lines = [f"\n\n--- repair card (a public fault family mapped to this stack's tools: confirm with its CHECK lines "
+             f"before any FIX) ---\n{s['id']}: {m.get('title', '')} [matched on: {' '.join(s.get('matched_terms') or [])}]"]
+    lines += [f"CHECK {c['command']} :: {c['purpose']}" for c in m.get("checks", [])[:3]]
+    lines += [f"FIX {f['action']}" + (" (destructive: only once the CHECKs confirm it)" if f.get("approval_required") else "")
+              for f in m.get("remediation", [])[:2]]
+    lines += [f"ESCALATE if {x}" for x in m.get("escalate", [])[:1]]
+    lines += [f"verified on this stack: {x}" for x in m.get("proven_here", [])[:2]]
+    return "\n".join(lines)[:1600]
 
 
 def search_incident_knowledge(query, scenario=None):
@@ -263,14 +438,10 @@ def search_incident_knowledge(query, scenario=None):
     the symptom, `insufficient` = nothing does, so no repair may be derived from the weak candidates) but its size
     is not: the raw bundle is 14-24 KB of JSON and the model has a 32k window, so only the lines the agent can act
     on come back. It never counts as having read this stack's runbook; the gate still wants search_runbooks."""
-    global _kb
     try:
-        if _kb is None:
-            sys.path.insert(0, str(ROOT / "kb" / "src"))
-            from blackout_ops_kb import KnowledgeBase
-            _kb = KnowledgeBase(KB_DB)
+        kb = knowledge_base()
         incident = {"query": query, "scenario": scenario} if scenario in ("disk_full", "crashloop", "dns") else {"query": query}
-        bundle = _kb.retrieve(incident, case_k=3, solution_k=3)
+        bundle = kb.retrieve(incident, case_k=3, solution_k=3)
     except Exception as e:
         return f"knowledge base unavailable ({type(e).__name__}: {str(e)[:100]}); use search_runbooks"
     km = bundle["knowledge_match"]
@@ -290,7 +461,10 @@ def search_incident_knowledge(query, scenario=None):
         weak = ", ".join(f"{s['id']} ({s['match_coverage']:.2f})" for s in bundle["weak_solution_candidates"][:3]) or "none"
         lines.append(f"no remediation card covers this symptom; weak candidates ({weak}) are not a basis for repair. "
                      "Use search_runbooks for this stack's own procedures, gather more read-only evidence, or escalate.")
-    titles = list(dict.fromkeys(str(c.get("title", ""))[:60] for c in bundle["cases"][:3]))
+    # v4 cases name the repair card of their fault type, and this stack's own past fixes say what fixed them
+    titles = list(dict.fromkeys(str(c.get("title", ""))[:(110 if c["id"].startswith("stack-") else 60)]
+                                + (f" (card: {c['metadata']['repair_card']})" if (c.get("metadata") or {}).get("repair_card")
+                                   and not c["id"].startswith("stack-") else "") for c in bundle["cases"][:3]))
     if titles:
         lines.append("\nsimilar historical cases: " + "; ".join(titles))
     lines.append("These are hypotheses from other systems' incidents: confirm against this host's evidence before acting.")
@@ -298,12 +472,28 @@ def search_incident_knowledge(query, scenario=None):
     return out if len(out) <= 2500 else out[:2500] + "\n...(cut)"
 
 
+def trace_summary(name, result):
+    """What the incident trace (the reviewer's evidence) keeps of a result. A blind first-300-characters cut kept nginx's
+    startup notices and dropped the one [emerg] line at the end of a log, and the reviewer then judged an inode
+    exhaustion "a connectivity issue": logs keep their end (without the attached runbook), other results their head
+    and, when long, their tail, where the appended health check is."""
+    text = str(result)
+    if name == "docker_logs":
+        # the read-only note appended to front-end logs pushed the [emerg] line out of the kept tail, and the rebuild
+        # rule, which reads the trace, never saw the missing image file it was waiting for (front-mime-missing, 0/6)
+        body = text.split("\n\n--- matching runbook")[0].split("\n\nnote: the entrypoint")[0]
+        text = body if len(body) <= 300 else "… " + body[-300:]
+    elif len(text) > 450:
+        text = text[:300] + " … " + text[-150:]
+    return text[:460].replace("\n", " ")
+
+
 def run_tool(name, args, dry_run):
     """Dispatch one tool call and record it in the incident trace (the reviewer's evidence)."""
     result = _run_tool(name, args, dry_run)
     try:
         shown = {k: (v if len(str(v)) < 80 else str(v)[:77] + "...") for k, v in (args or {}).items()} if isinstance(args, dict) else str(args)[:80]
-        _incident["trace"].append(dict(tool=name, args=json.dumps(shown, ensure_ascii=False), result=str(result)[:300].replace("\n", " ")))
+        _incident["trace"].append(dict(tool=name, args=json.dumps(shown, ensure_ascii=False), result=trace_summary(name, result)))
         del _incident["trace"][:-30]
     except Exception:
         pass
@@ -350,20 +540,27 @@ def _run_tool(name, args, dry_run):
         # cannot pick the procedure for it. Send it back for the symptom. Bounded, so a stubborn model cannot
         # deadlock: after two refusals the action goes through and the log shows it did.
         _incident["refusals"] += 1
+        if _incident["refusals"] >= 2:
+            import tier
+            tier.set_tier(2, "guards refused twice in this incident")
         if _incident["refusals"] <= 2:
             import rag
             catalogue = "\n".join(f"- {n}: {t}" for n, t, _ in rag.documents())
-            return (f"refused: no runbook consulted yet for this incident, so {name} is premature. "
-                    "Get the symptom first (docker_logs of the failing container attaches the matching procedure), "
-                    "or call search_runbooks with the error text. Runbooks available:\n" + catalogue)
+            return (f"refused: (automatic rule) no runbook consulted yet for this incident, so {name} is premature. "
+                    'Next: call docker_logs {"name": "<the failing container>"} (it attaches the matching runbook), or '
+                    'search_runbooks {"query": "<the error text>"}; then call ' + name + " again. Runbooks available:\n"
+                    + catalogue)
 
     def guard(n):
         if n not in NAMES:
-            return f"denied: container {n!r} is outside the allowed set {sorted(NAMES)}"
+            return f"denied: container {n!r} is outside the allowed set {sorted(NAMES)}. Next: the same call with one of those names."
     if name == "check_health":
         health = {k: http_status(u) for k, u in HEALTH.items()}
         if all(v == 200 for v in health.values()):
             _incident.update(runbook_seen=False, refusals=0, trace=[])   # incident over; the next one starts clean
+            snapshot_known_good()
+            import tier
+            tier.set_tier(1, "health green")
         return json.dumps(health)
     if name == "docker_ps":
         out = docker_ps()
@@ -376,6 +573,7 @@ def _run_tool(name, args, dry_run):
         if denied:
             return denied
         out = collapse(sh(f"docker logs --tail {int(args.get('tail', 40))} {args['name']} 2>&1", limit=6000))
+        out = layer_note(args["name"]) + out
         if "read-only file system" in out:
             out += ("\n\nnote: the entrypoint's 'can not modify /etc/nginx/conf.d/default.conf (read-only file "
                     "system?)' is expected and harmless. That file is a host file mounted read-only into the "
@@ -393,7 +591,10 @@ def _run_tool(name, args, dry_run):
     if name == "docker_exec":
         cmd = args["cmd"].strip()
         if not cmd.startswith(EXEC_ALLOW) or any(t in cmd for t in (";", "&&", "|", ">", "`", "$(")):
-            return "denied: only read-only diagnostics are allowed here"
+            return ("denied: docker_exec runs one read-only command (nginx -t, cat, ls, ps, curl, df, du, tail, head, "
+                    "grep, id, env) with no ; && | > ` or $(. Next: one such command, e.g. "
+                    '{"name": "edge-victim-app", "cmd": "df -h /"}; to change state use the action tools '
+                    "(write_config, docker_start/docker_restart, network_repair, recreate_stack, clear_scratch_volume).")
         return guard(args["name"]) or sh(f"docker exec {args['name']} sh -c {json.dumps(cmd)}")
     if name in ("docker_start", "docker_restart"):
         d = guard(args["name"])
@@ -405,28 +606,71 @@ def _run_tool(name, args, dry_run):
             if faults.NET not in app_nets:
                 return (f"denied: edge-victim-app is not on the {faults.NET} network right now, so nginx would fail to "
                         "resolve it at startup and exit. Run network_repair first, then start/restart edge-victim.")
+            app_running = sh("docker inspect -f '{{.State.Running}}' edge-victim-app").strip() == "true"
+            if not app_running and http_status(HEALTH["front"]) == 200:
+                # it serves / now; restarted, nginx resolves edge-victim-app at start, fails and exits (two runs made
+                # worse this way in blind batch 4)
+                return ("denied: edge-victim is serving / right now and edge-victim-app is not running; restarted, "
+                        "edge-victim would fail to resolve edge-victim-app at startup and go down too. The fault is in "
+                        'edge-victim-app: docker_logs {"name": "edge-victim-app"} and fix it first.')
         if dry_run:
             return f"DRY-RUN: would run docker {name.split('_')[1]} {args['name']}"
         out = sh(f"docker {name.split('_')[1]} -t 5 {args['name']}" if name == "docker_restart" else f"docker start {args['name']}")
         time.sleep(2)
         return with_health(out + "\n" + docker_ps())
     if name == "read_config":
-        return (CONF_DIR / "default.conf").read_text()
+        cur = (CONF_DIR / "default.conf").read_text()
+        out = cur if cur.strip() else "(the file is empty: nginx starts with no server block and listens nowhere)"
+        if KNOWN_GOOD.exists() and KNOWN_GOOD.read_text() != cur:
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(KNOWN_GOOD.stat().st_mtime))
+            out += (f"\n\n--- note: a known-good copy of this file (saved {when}, while both health URLs returned 200) "
+                    "differs from it. restore_config puts it back; then docker_restart edge-victim.")
+        return out
     if name == "write_config":
         content = args["content"]
-        if len(content) > 20000 or "proxy_pass" not in content:
-            return "denied: config must stay under 20 KB and keep the /api/ proxy_pass"
+        if len(content) > 20000 or "proxy_pass" not in content or "/board/" not in content:
+            return ("denied: config must stay under 20 KB and keep the /api/ proxy_pass and the /board/ location. "
+                    "Next: read_config, keep those lines, and write_config the complete corrected file.")
         if dry_run:
             return "DRY-RUN: would write default.conf"
+        KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)
+        PREVIOUS.write_text((CONF_DIR / "default.conf").read_text())
         (CONF_DIR / "default.conf").write_text(content)
         return "written, but not applied: nginx only reads it on start. Call docker_restart {\"name\": \"edge-victim\"} now."
+    if name == "restore_config":
+        src = KNOWN_GOOD if args.get("source", "known-good") != "previous" else PREVIOUS
+        if not src.exists():
+            return (f"error: no {args.get('source', 'known-good')} copy exists. Next: read_config, then write_config the "
+                    "complete corrected file.")
+        if dry_run:
+            return f"DRY-RUN: would restore {src.name}"
+        KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)
+        PREVIOUS.write_text((CONF_DIR / "default.conf").read_text())
+        (CONF_DIR / "default.conf").write_text(src.read_text())
+        return (f"restored {src.name} into default.conf (the replaced file is kept as previous.conf), not applied yet: "
+                'nginx reads it on start. Next: docker_restart {"name": "edge-victim"}.')
     if name == "search_runbooks":
         _incident["runbook_seen"] = True
         return search_runbooks(args["query"])
     if name == "search_incident_knowledge":
         return search_incident_knowledge(str(args["query"]), args.get("scenario"))
     if name == "disk_usage":
-        return sh("df -h -x tmpfs -x devtmpfs -x efivarfs | head -12") + "\n\n" + sh("docker system df")
+        # The scratch volume comes first: the incident trace keeps 300 characters of a result, and the reviewer's
+        # precondition for clearing it is read from there.
+        import faults
+        # OPS_INODES=on-request (the knowledge A/B, docs/kb-retrieval-v2.md): inode figures only when asked for, so
+        # whether the agent thinks of inodes is part of what is measured. Default: always shown.
+        inodes = os.environ.get("OPS_INODES", "always") != "on-request" or bool(args.get("inodes"))
+        vol = sh(f"docker exec {faults.CACHE} sh -c 'df -h /cache | tail -1; df -i /cache | tail -1'")
+        lines = vol.strip().splitlines()
+        if len(lines) == 2 and len(lines[1].split()) >= 5:
+            scratch = f"scratch volume edge-cache (/var/cache/nginx in edge-victim): space {lines[0].split()[4]}"
+            scratch += f", inodes {lines[1].split()[4]}" if inodes else ""
+        else:
+            scratch = f"scratch volume edge-cache: unreadable ({vol.strip()[:120]})"
+        return (scratch + "\n\nhost, space:\n" + sh("df -h -x tmpfs -x devtmpfs -x efivarfs | head -12")
+                + ("\nhost, inodes:\n" + sh("df -i -x tmpfs -x devtmpfs -x efivarfs | head -12") if inodes else "")
+                + "\n" + sh("docker system df"))
     if name in ("service_status", "journal_tail"):
         unit = str(args["unit"]).strip()
         if not UNIT_RE.match(unit):
@@ -467,24 +711,35 @@ def _run_tool(name, args, dry_run):
             if t not in faults.SPECS:
                 return f"denied: {t!r} is not part of this stack"
         if args.get("replace") and not args.get("name"):
-            return "denied: replace=true needs an explicit name; it destroys that container and builds it again"
+            return ("denied: replace=true needs an explicit name; it destroys that container and builds it again. "
+                    'Next: recreate_stack {"name": "edge-victim-app", "replace": true}.')
         if args.get("replace") and args.get("name") == "edge-victim":
-            return ("denied: edge-victim's nginx config is a host file mounted into the container; rebuilding the "
-                    "container keeps the same file and the same fault. Fix the file with write_config, then "
-                    "docker_restart edge-victim.")
+            # The site config is a host file a rebuild keeps; a file of the image (nginx.conf includes mime.types) is
+            # restored by one. Denying every rebuild of the front end left front-mime-missing unfixable (0/6, 2026-10-18).
+            import reviewer
+            if not (reviewer.front_image_file(_incident["trace"]) or reviewer.front_layer_changes()):
+                return ("denied: edge-victim's site config is a host file mounted into the container; rebuilding the "
+                        "container keeps the same file and the same fault. Fix the file with write_config or "
+                        "restore_config, then docker_restart edge-victim. (A rebuild is allowed only when a file of its "
+                        "image, outside /etc/nginx/conf.d, is missing or changed: docker_logs edge-victim lists them.)")
         if dry_run:
             return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
         if args.get("replace"):
             # Known precondition, checked in code: a rebuild is never a first move. The runbook says restart first,
             # and the reviewer once approved a premature rebuild because "the runbook was consulted".
-            if not any(t["tool"] == "docker_restart" and args["name"] in t["args"] for t in _incident["trace"]):
-                return (f"denied: recreate_stack replace=true on {args['name']} before it was restarted in this incident. "
-                        f"docker_restart it first; rebuild only if it still fails afterwards.")
+            # A start of an exited container is the same evidence as a restart: it ran again and still failed. Only
+            # docker_restart counted, and an agent that had read "OOMKilled: yes", started the container and seen it
+            # killed again was still refused the rebuild (2026-10-17).
+            import reviewer
+            if not reviewer.restarted(_incident["trace"], args["name"]):
+                return (f"denied: recreate_stack replace=true on {args['name']} before it was started or restarted in this "
+                        f'incident. Next: docker_restart {{"name": "{args["name"]}"}}; if it still fails, call '
+                        f'recreate_stack {{"name": "{args["name"]}", "replace": true}} again.')
             refusal = reviewed(name, {"name": args["name"], "replace": True})
             if refusal:
                 return refusal
         if args.get("replace"):
-            sh(f"docker rm -f {args['name']}")       # stateless by definition (SPECS); the config is a host file
+            sh(f"docker rm -f {args['name']}")       # stateless by definition (SPECS); the site config is a host file
         out = [faults.ensure(t) for t in targets]
         time.sleep(2)
         return with_health("\n".join(out) + "\n" + docker_ps())
@@ -501,16 +756,7 @@ def _run_tool(name, args, dry_run):
         time.sleep(1)
         return with_health("\n".join(out))
     if name == "cleanup_disk":
-        now, victims, skipped = time.time(), [], 0
-        open_files = held_open()
-        for pattern in CLEANUP_GLOBS:
-            for f in glob.glob(pattern):
-                if not os.path.isfile(f) or now - os.path.getmtime(f) <= CLEANUP_MIN_AGE_S:
-                    continue
-                if os.path.realpath(f) in open_files:   # a live service still writes here; unlinking it loses the log
-                    skipped += 1
-                    continue
-                victims.append((f, os.path.getsize(f)))
+        victims, skipped = cleanup_candidates()
         freed = sum(n for _, n in victims)
         if dry_run:
             return f"DRY-RUN: would delete {len(victims)} project log file(s), {freed / 1e6:.1f} MB"
@@ -527,18 +773,28 @@ def _run_tool(name, args, dry_run):
                 f"(skipped {skipped} still held open by a running service); "
                 f"/ is now {100 * usage.used / usage.total:.0f}% full with {usage.free / 1e9:.0f} GB free. "
                 "Images and volumes were not touched: report disk pressure instead of deleting shared data.")
+    if name == "clear_scratch_volume":
+        import faults
+        if dry_run:
+            return "DRY-RUN: would delete every file in the scratch volume edge-cache"
+        refusal = reviewed(name, {})
+        if refusal:
+            return refusal
+        out = sh(f"docker exec {faults.CACHE} sh -c 'n=$(find /cache -mindepth 1 | wc -l); "
+                 f"find /cache -mindepth 1 -delete; echo deleted $n entries; df -i /cache | tail -1'")
+        return with_health(out.strip() + "\nThe front end creates its temp directories when it starts; start it if it is down.")
     if name == "kill_process":
         pid = int(args["pid"])
         if pid in (os.getpid(), os.getppid(), 1):
-            return "denied: that pid is this agent or init"
+            return "denied: that pid is this agent or init. Next: top_processes, and pick the runaway pid it lists."
         info = sh(f"ps -o uid=,args= -p {pid}").strip()
         if not info or "exit " in info:
             return f"no such process: {pid}"
         uid, cmd = info.split(None, 1)
         if int(uid) != os.getuid():
-            return f"denied: pid {pid} belongs to uid {uid}, not this agent"
+            return f"denied: pid {pid} belongs to uid {uid}, not this agent. Next: report it in your final report; it is not yours to kill."
         if PROTECTED_CMD.search(cmd):
-            return f"denied: pid {pid} is part of the platform ({cmd[:120]})"
+            return f"denied: pid {pid} is part of the platform ({cmd[:120]}). Next: report it; the platform is not killed from here."
         if dry_run:
             return f"DRY-RUN: would signal {pid} ({cmd[:80]})"
         refusal = reviewed(name, {"pid": pid, "cmd": cmd[:80], "force": bool(args.get("force"))})

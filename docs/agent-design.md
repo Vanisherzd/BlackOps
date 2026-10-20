@@ -704,3 +704,275 @@ re-measured on the fixed inputs (25 min) before any tier claim uses it.
 Host-level actions (systemctl on the Spark itself), memory of this host's own past incidents, NemoClaw skill
 packaging, a telemetry-indexed rebuild of the knowledge pack, trace summaries in the AIOps loader. Add each only when
 a fault case needs it.
+
+## A tenth case, inode exhaustion, and the reviewer's evidence (2026-10-13)
+
+`inode-exhausted` (tier `unseen`): the front end's `/var/cache/nginx` is a small tmpfs volume (`edge-cache`, 256
+inodes) held by a sidecar outside the whitelist, because a tmpfs volume empties when no container holds it and a
+restart would otherwise clear the fault by accident (probed before the case was written). Small files take every
+inode while bytes stay free; the front end exits with `mkdir() ... (28: No space left on device)`. `disk_usage` now
+reports that volume's space and inodes first, and the host's inodes; `clear_scratch_volume` empties it (destructive;
+code key: measured at 95 % or more). No runbook: the nearest one, `disk-full.md`, points at docker images, which is
+the wrong lead here, and the Spark's root filesystem really is at 94 %.
+
+First drill: FAIL. The agent read the logs, ran `disk_usage`, saw inodes at 100 % and called `clear_scratch_volume`;
+the reviewer rejected it as "a connectivity issue, not disk-related". The incident trace kept the first 300 characters
+of every result, and a nginx log starts with worker-exit notices: the one `[emerg]` line at the end never reached the
+reviewer, whose only "symptom" was the first health check, "unreachable". `trace_summary` now keeps the end of a log
+(without the attached runbook) and the head plus tail of other long results, and the reviewer is given the error lines
+of the logs read alongside the first health check. Replayed on the same incident, the model key approves, quoting
+the inode figure and the log line. After the fix: 3/3 fixed, 2 autonomous (85-100 s), 1 via `self_heal`; the code key
+correctly refused one clear attempted before the volume was measured.
+
+## The knowledge card rides along, and evidence is not a log (2026-10-14)
+
+The pack was unreachable: the skill asked for it only when runbook search returned the catalogue, which dense search
+never does. A relevance floor could not tell covered from uncovered symptoms (0.66-0.88 vs up to 0.73); the pack's
+own phrase match could (6 cards on 24 uncovered symptoms, 5 right). `knowledge_note` now appends a confident card next
+to every attached runbook, as a hypothesis; the gate is unchanged. Details in `docs/kb-retrieval-v2.md`.
+
+In the drills that followed, one inode run called `cleanup_disk` alongside the right fix; the reviewer approved
+(`/` at 94 % is above the 85 % bar and the log said "No space left on device") and it deleted every earlier
+`logs/drills-*.log`. The precondition was true on this host and irrelevant to the incident, which is the gap a
+second key is for and the model key did not close. Now: drill logs are excluded from cleanup like the incident
+trajectories, and the code key refuses a host cleanup when the full filesystem in the incident is the scratch
+volume. Rerun: inode 2/2 autonomous, no cleanup.
+
+## Why turns ended empty, refusals that name the next call, and a blind test (2026-10-14, evening)
+
+**Empty last turns.** In the inode A/B, three runs recovered and then ended without the last step. The sandbox
+transcripts show three different causes: a request that arrived with room for one output token (10.7k input, 32k
+window, `stopReason=length`, out=1; where the client's budget came from is not pinned down); a tool call written in
+the thinking channel without its `<tool_call>` opener, which the salvage regex required; and an agent that read "the
+change reviewer did not approve" as a request for a human and answered `/approve`. Fixes: the shim raises a request
+below 1,024 output tokens to 4,096 when an over-estimate of the prompt leaves room, and logs every request's budget;
+salvage accepts the last `<function=...>...</function>` block without its wrapper, for a tool the request offered.
+
+**Every refusal names who refused and the next call.** The reviewer's refusals start "review-rejected: refused by the
+automatic change reviewer (no human approval exists: do not ask for one or send /approve)", the gate's and the code
+key's end in `Next:` with the tool and its JSON arguments, and the self-test asserts it for every code-key refusal.
+Prefixes (`refused:`, `denied:`, `review-rejected:`) are unchanged; the scorer and the self-test read them.
+
+Measured after both changes: the ten cases three times each, 29/30 autonomous (the one failure upstream-detached),
+no fallback, nothing made worse, no false health claim; the output floor fired three times and salvage once. The inode
+experiment (`OPS_INODES=on-request`): 9/10, and both runs that met the refusal measured inodes and were fixed.
+
+**Blind test.** Five faults written after the agent was frozen (`logs/blind-freeze-20261014.txt` holds the hashes of
+every file that shapes the agent; nothing was changed because of these cases), each injection and reset checked once
+without the agent, then three drills each (tier `blind` in `faults.CASES`):
+
+| case | fault | fixed |
+|---|---|---|
+| upstream-renamed | upstream container renamed, front end restarted: `host not found in upstream` | 3/3 |
+| upstream-wrong-port | upstream's own config moved to 8080 (writable layer): 502 | 2/3 |
+| api-path-404 | front end proxies to `/v2/`: 404 | 1/3 |
+| upstream-oom | upstream memory limit 8 MB: `Exited (137)`, 504 | 0/3 |
+| config-empty | front-end config emptied: container Up, nothing listening, no error logged | 0/3 |
+| **total** | | **6/15 (40 %)** against 29/30 on the cases the agent was tuned on |
+
+Failure shapes. upstream-oom: the state marker attaches `oom-killed.md`, the agent starts the container (killed
+again), kills host processes, never reaches restart-then-rebuild; nothing it can call shows a container memory
+limit. config-empty: the agent cannot know the stack's canonical config and guesses (`listen 8880`, an `events {}
+http {}` wrapper), searches the sandbox's own filesystem for a copy, and every run ends in OpenClaw's "Context
+overflow". api-path-404: the upstream's log line `"GET /v2/" 404` names the fault and was missed twice.
+
+What the numbers say: on faults it was tuned on the agent is reliable; on new ones it fixes about two in five, and
+the misses are knowledge it has no way to obtain (a memory limit, a known-good config) more than reasoning. The
+cheapest next levers, in that order: a last-known-good config the agent can restore (write_config keeps a backup;
+`restore_config`), and `docker_ps` showing a container's memory limit and OOM-killed flag.
+
+**Harness defects found on the way.** (1) A drill killed by its timeout does not stop the sandbox agent: after
+"Context overflow" OpenClaw compacts and continues in another transcript, and its calls landed in the next two drills
+(compared call by call against each drill's own transcript: runs 5, 6, 10, 11, 15; in run 15 a stray `recreate_stack`
+built the container that run was credited for). Those runs are excluded above and the affected cases rerun;
+`drill-all.sh` and `ab-drill.sh` now wait until the ops API has been quiet for 60 s before the next reset, and the
+reruns started clean. (2) `score.py` dropped killed drills from the table (config-empty did not appear at all); a
+drill with an agent turn and no verify now counts as a silent failure (self-check asserts it). With both, `score.py`
+over all 19 blind drills reads 8/19 (42 %), the same picture.
+
+## Nano against Bolt on the same drills (2026-10-17)
+
+Same agent, tools, prompts, sandbox and cases (the agent files unchanged since `logs/blind-freeze-20261014.txt`);
+only the model behind the shim changes. Bolt is `nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB` on vLLM (branch
+`feat/blackbox-bolt-vllm`, `~/edge-agent-bolt`), served on 127.0.0.1:8200 as `edge-agent`; the shim ran with
+`UPSTREAM=http://127.0.0.1:8200` and the ops API with `VLLM_URL` pointing there, so the reviewer and `self_heal` used
+Bolt too (otherwise the reviewer, unreachable on :8000, would fail closed and refuse every destructive action). Nano is
+the 2026-10-14 runs. Bolt: `logs/drills-20261017-160900.log` (seen x2, blind x3, interleaved) and `-183544.log`.
+
+| | Nano-30B-A3B (TRT-LLM) | Bolt-74B-A9B (vLLM) |
+|---|---|---|
+| seen cases (ten, incl. inode) | 29/30, median 84 s, 6 calls | **20/20**, median **57 s**, 7 calls |
+| upstream-renamed | 3/3 | 2/3 (one via self_heal) |
+| upstream-wrong-port | 2/3 | **3/3** |
+| api-path-404 | 1/3 | **3/3** |
+| upstream-oom | 0/3 | 0/3 |
+| config-empty | 0/3 | 0/3 |
+| **blind total** | **6/15 (40 %)** | **8/15 (53 %)** (Fisher p ≈ 0.7) |
+| false health claims | 0 | 0 |
+
+Bolt decodes slower (32.8 against 57.9 tok/s single stream) and still finishes the drills faster: fewer and shorter
+thoughts. It gains where reading the evidence decides the case: the upstream's `"GET /v2/" 404` line, the upstream
+listening on 8080. The two cases that need information no tool provides (a container memory limit, a known-good
+config) stay at 0/3 for both models, which is the measured version of "information, not reasoning" for them. The
+blind difference is two runs out of fifteen and not significant on its own.
+
+Harness, again: the quiet-API wait from 2026-10-14 was not enough. After a config-empty run was killed, its agent
+had been silent for 73 s (thinking), passed the 60 s check, and its calls landed in the next two drills; in one a
+stray `recreate_stack` built the container that run passed on. Compared call by call against each run's own
+transcript, runs 31 and 35 are excluded (stray actions executed) and rerun clean; run 30 had stray reads only and
+stands. `drill-all.sh` now restarts the sandbox gateway whenever the timeout kills a drill, which ends every
+in-flight agent run, and then waits for the quiet API as before.
+
+## The two missing pieces of information, as tools (2026-10-17, evening)
+
+Both models were 0/3 on upstream-oom and config-empty, the two blind cases that need information no tool gave.
+
+- **`docker_ps` shows each container's memory limit and the kernel's OOM verdict** (`docker inspect`
+  `HostConfig.Memory`, `State.OOMKilled`): `Exited (137) | memory limit 8 MiB | OOMKilled: yes (the kernel killed it at
+  its memory limit)`. `oom-killed.md` gained the branch for it: a container that hit its own limit is restarted once
+  to confirm, then rebuilt from the stack definition, which sets no limit.
+- **A last known-good config and `restore_config`.** The deploy (`faults.reset`/`setup`) records what it deployed, and
+  a health check with both URLs at 200 records the current file, in `victim/known-good/` (outside the directory nginx
+  reads). `write_config` keeps the file it replaces as `previous.conf`. `read_config` says when the file is empty and
+  when a known-good copy differs from it. `restore_config` (gated like any action) puts the copy back; restart applies it.
+
+First runs with Nano: config-empty 3/3 (33-72 s: read_config, restore_config, restart), upstream-oom 1/3. The two
+upstream-oom misses read `OOMKilled: yes` and went straight for the rebuild, were refused because no restart had
+happened, then started the exited container, which the precondition did not count. A start of an exited container
+is the same evidence as a restart, so the code key and the reviewer now accept either. Then upstream-oom 3/3
+(restart, rebuild). Regression over the ten tuned cases: 10/10 autonomous, median 45 s (84 s before), because the
+config cases now restore instead of rewriting (crashloop 45 s, was 161 s); bad-config also 3/3 in the first batch.
+
+These two cases are no longer blind: they drove these tools. The blind measure now needs new faults.
+
+## Blind batch 2 (2026-10-17, night)
+
+Five new faults, written after the memory-limit and restore_config tools, with the agent frozen
+(`logs/blind2-freeze-20261017.txt`), each injection and reset checked without the agent first, three Nano drills each,
+interleaved (`logs/drills-20261017-205425.log`; no drill killed, so no stray agent runs). A sixth, the scratch volume's
+bytes filled, was dropped before any run: on tmpfs a directory takes an inode and no data page, so nginx still
+created its temp directories and the stack stayed 200/200.
+
+| case | fault | fixed | root cause right |
+|---|---|---|---|
+| upstream-sigkill | upstream killed with SIGKILL: `Exited (137)`, no memory limit, no OOM verdict | 3/3 | **0/3** |
+| front-paused | front end `docker pause`d: both URLs time out | 3/3 | 3/3 |
+| front-include-missing | config includes a file the image lacks: `[emerg] open() ... failed (2: No such file...)` | 3/3 | 3/3 |
+| network-removed | the stack network deleted, both containers off it | 2/3 | 2/3 |
+| upstream-index-deleted | the upstream's own index.html removed: `/api/` 403 | 0/3 | 0/3 |
+| **total** | | **11/15 (73 %)** | 8/15 |
+
+Batch 1 with Nano was 6/15. The batches are different faults, so this is not a like-for-like gain, but the misses
+moved: batch 1's were information no tool gave; batch 2's are three specific shapes.
+
+- **A fix with the wrong story.** All three upstream-sigkill runs restarted the container and reported "OOM-killed due
+  to host memory pressure". `docker_ps`'s `Exited (137)` marker attaches `oom-killed.md`, and `docker_ps` shows an OOM
+  verdict only when there is one, so its absence reads as nothing. The scorer's cause pattern (`kill|137`) counted
+  these as named; read by hand they are wrong. An unattended agent's report is the incident record; a wrong one is a
+  defect even when the URLs come back.
+- **upstream-index-deleted.** The agent listed `/usr/share/nginx/html` and saw the page missing, searched runbooks for
+  403 and got 504/name-resolution/detached runbooks (only `upstream-5xx.md` covers "the upstream answers an error
+  itself; a restart keeps the layer, rebuild"), tried the rebuild before a restart (refused, with the next call
+  named), and in two runs OpenClaw ended the session with "CLI transcript compaction failed: Compaction timed out".
+- **network-removed.** No tool says the network is gone: `docker_ps` shows both containers Up. The run that missed
+  never called `network_repair`.
+
+Next, from these: `docker_ps` should state the negative (`exit 137, OOMKilled: no -> killed by a signal`) and each
+container's networks (`edge-net: missing`); `upstream-5xx.md` should cover 4xx answered by the upstream itself; and
+the OpenClaw compaction timeout on long sessions wants a look. Each of these makes batch 2 no longer blind.
+
+
+## Blind batch 4 (2026-10-19): do the loosened guards generalise?
+
+Written against the agent frozen at c3f758d (`logs/blind4-freeze-20261019.txt`), after the guard changes that blind
+batch 3 prompted. Four families not drilled before; A/B of the knowledge pack as before
+(`logs/ab-20261019-144744-{A,B}.log`, 3 runs per case per arm, original Nano NVFP4).
+
+| case | v3 | v4 | what it tests |
+|---|---|---|---|
+| upstream-config-crash (its own config loses a `;`, it exits) | 0/3, 1 made worse | 0/3, 1 made worse | a new crash cause |
+| upstream-pids-limit (pids limit 3) | 3/3 | 3/3 | a resource limit |
+| front-worker-connections (nginx.conf of the image edited) | 0/3 | 0/3 | the front rebuild rule's edge |
+| upstream-redirect (301 to itself) | 3/3 | 0/3 | a 3xx where the rules speak of errors |
+| total | 6/12 | 3/12 | |
+
+Generalised: "rebuild the upstream when it still fails after a restart" fixed the pids limit 6/6 and the 301 in the v3
+arm. No card was pushed in any of the 24 runs, so the 3/3 against 0/3 on upstream-redirect is run-to-run variance, not
+the pack; over blind batches 3 (after the fixes) and 4 the arms stand at v3 11/24, v4 9/24.
+
+Three failures, none for lack of knowledge:
+
+- Wrong container. The upstream's error names `/etc/nginx/conf.d/default.conf`, the same path as the front end's
+  config. In every config-crash run the agent took it for the front end's file, rewrote or restored that (healthy)
+  host file and restarted the front end, which then could not resolve the dead upstream and went down too: the two
+  made-worse runs. No run tried rebuilding the upstream.
+- The front rebuild rule allows a missing image file only; an edited one (worker_connections) was refused 8 times.
+- The health check follows redirects: a 301 to a name the host cannot resolve read "unreachable", the v4 arm searched
+  "unreachable", got the network runbook and kept repairing the network. The agent's own curl saw the 301.
+
+## Thinking off (2026-10-19/20): 4-5x faster, and it breaks the procedure
+
+Drill time is 78% model calls, about 91% of that decode at 53-58 tokens/s, and most generated tokens are thinking.
+Same 18 cases (seen 10, blind 3 and 4), one run each per arm.
+
+| | thinking on (`ab-20261019-195910-A`) | thinking off (`ab-20261019-231122-B`) |
+|---|---|---|
+| seen 10 | 9/10 | 5/10 |
+| blind 3 + 4 | 2/8 | 1/8 |
+| total | 11/18 | 6/18 |
+| false health claims | 0 | 6 |
+| tokens generated per model call | 974 | 192 |
+| median seconds, seen cases | 59 | 16 |
+
+Without thinking the agent claimed fixes it never verified and ended several drills after 0-2 calls. A first run of
+the thinking-off arm (`ab-20261019-195910-B`) was invalid: the shim's SHIM_THINK=0 only left the flag out and the
+template's default is on, so both arms thought (974 and 818 tokens per call). It doubles as an A/A run: 11/18 and
+12/18 with single cases flipping both ways, the noise any one-run-per-case comparison has to beat.
+
+## Measured health on the last word (2026-10-20)
+
+`scripts/oai_shim.py`, on requests that carry a check_health tool: when a turn ends in text, the shim measures the
+health URLs itself (no redirects followed) and appends `[measured by the system at ...: front .., api .. -> healthy |
+NOT recovered]`; when the text claims the stack is healthy (the scorer's own pattern, an escalation excepted) and
+the measurement disagrees, the turn becomes a check_health call instead, at most twice per incident (counted from
+the injected call ids in the history). It measures directly rather than through the ops API so the scorer does not
+credit the agent with a closure check it did not make. Same 18 cases, one run each:
+
+| | resolved | false claims in the final report | made worse | timeouts | total s |
+|---|---|---|---|---|---|
+| thinking on (`ab-20261019-195910-A`) | 11/18 | 0 | 1 | 2 | 4743 |
+| thinking off (`ab-20261019-231122-B`) | 6/18 | 6 | 1 | 0 | 1340 |
+| thinking off + verifier (`ab-20261020-132501-B`) | 9/18 | 0 | 0 | 1 | 1945 |
+| thinking on + verifier (`ab-20261020-141410-B`) | 14/18 | 0 | 0 | 0 | 2842 |
+
+With thinking off it refuted 17 claims and 3 more drills were resolved. With thinking on it never intervened (12
+claims confirmed, 3 turns without a claim), so 14 against 11 is run-to-run variance and the time difference is mostly
+the two timeouts; there it costs nothing and turns "no false claim" from an observation into a guarantee. The scorer
+still counted 3 false claims in the thinking-off run: one intercepted mid-run claim (it scans the whole turn) and two
+honest reports ("the front-end is healthy" while /api/ fails; "restored the known-good config"), its pattern is too
+loose.
+
+## Adaptive thinking and system triage, 3 rounds (2026-10-20, `logs/ab-20261020-155259-{A,B}.log`)
+
+A = thinking on + measured-health verifier, as deployed. B = A + `SHIM_ADAPTIVE=1` (no thinking on a turn whose last
+tool results name the next call or report the stack recovered) + `TRIAGE=1` (`scripts/triage.py`: check_health,
+docker_ps and both containers' logs, taken by the system and carried in the alert). 18 cases x 3 rounds per arm,
+arms alternating, the ops API and the shim restarted before every drill.
+
+| | A | B |
+|---|---|---|
+| resolved | 41/54 | 43/54 |
+| seen 10 / hard 8 | 29/30, 12/24 | 27/30, 16/24 |
+| false claims, made worse | 0, 0 | 0, 0 |
+| timeouts | 1 | 3 |
+| model calls / generated tokens | 523 / 425k | 288 / 300k |
+| median s of solved runs, seen / hard | 56 / 208 | 38 / 137 |
+| total s (timeouts included) | 10278 | 9570 |
+
+B makes 45% fewer model calls and solves in a third less time; the totals differ less because two more drills hit
+the timeout. A flaw found in B's seen-case failures: refusals carry "Next: ..." too, so the turn after a refusal ran
+without thinking, which is the turn that has to re-plan (inode-exhausted: rejected, then "/approve" to a human who
+does not exist). Next: exclude refused, denied and review-rejected results from the trigger.
+
+The ops API had served code loaded before d341f6f for a day (a long-running process keeps the modules it imported);
+arm A is the first drill run of d341f6f's agent changes, and seen cases stay at 29/30.

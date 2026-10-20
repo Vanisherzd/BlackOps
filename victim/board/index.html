@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>廠務看板</title>
+<!-- The victim's own page, served by edge-victim at /board/ (faults.py GOOD_CONF). The stage story: the IT layer of a
+     fab's air-gapped facility network, a line board in front of the MES API. The fab is fictional and the line figures
+     are illustrative (labelled so on the page); the only live signal is the HTTP status of /api/, polled every 2 s.
+     Static, no external requests. Compact layout when shown small (the dashboard's iframe). -->
+<style>
+:root{--bg:#f5f6f8;--panel:#fff;--text:#14181f;--dim:#5b6472;--line:#dde1e7;--ok:#13864a;--okbg:#e6f5ec;--bad:#c62828;--badbg:#fdeaea}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Noto Sans TC",sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:14px 20px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{font-size:22px;margin:0}
+.tag{font-size:13px;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:2px 8px}
+#clock{margin-left:auto;font-variant-numeric:tabular-nums;color:var(--dim)}
+#banner{display:flex;align-items:center;gap:18px;padding:18px 20px;font-weight:700;font-size:26px}
+#banner .dot{width:28px;height:28px;border-radius:50%;flex:none}
+#banner.ok{background:var(--okbg);color:var(--ok)}#banner.ok .dot{background:var(--ok)}
+#banner.bad{background:var(--badbg);color:var(--bad)}#banner.bad .dot{background:var(--bad);animation:blink 1s infinite}
+#banner .sub{font-size:16px;font-weight:500;margin-left:auto;font-variant-numeric:tabular-nums}
+@keyframes blink{50%{opacity:.25}}
+main{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:16px 20px}
+.line{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;border-top:6px solid var(--ok)}
+.line.bad{border-top-color:var(--bad)}
+.line h2{font-size:18px;margin:0 0 2px}.line .step{color:var(--dim);font-size:13px;margin-bottom:10px}
+.big{font-size:40px;font-weight:700;font-variant-numeric:tabular-nums}
+.line.bad .big{color:var(--bad)}
+.row{display:flex;justify-content:space-between;font-size:14px;color:var(--dim);margin-top:4px;font-variant-numeric:tabular-nums}
+.state{font-weight:700;color:var(--ok)}.line.bad .state{color:var(--bad)}
+footer{padding:0 20px 16px;color:var(--dim);font-size:12px;display:flex;gap:16px;flex-wrap:wrap}
+@media (max-width:900px){main{grid-template-columns:repeat(2,1fr)}}
+@media (max-width:480px){main{grid-template-columns:1fr}#banner{font-size:20px}}
+/* small embed (the dashboard's iframe): banner and a one-line strip of the lines only */
+@media (max-height:340px){
+  header,footer,.line .step,.row{display:none}
+  #banner{padding:10px 14px;font-size:20px}#banner .sub{font-size:14px}
+  main{padding:8px 14px;gap:8px;grid-template-columns:repeat(4,1fr)}.line{padding:8px;border-top-width:4px}.line h2{font-size:14px}.big{font-size:22px}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>示範晶圓廠 廠務看板</h1>
+  <span class="tag">廠務網段（氣隙）</span>
+  <span class="tag">MES 派工 API</span>
+  <span id="clock"></span>
+</header>
+<div id="banner" class="ok"><span class="dot"></span><span id="b-text">產線正常運作</span><span class="sub" id="b-sub"></span></div>
+<main id="lines"></main>
+<footer>
+  <span id="api">MES API —</span>
+  <span id="last">本頁啟動後無停線紀錄</span>
+  <span>廠名為虛構，稼動率與 WIP 為示意數據；唯一的即時訊號是 MES API 的回應</span>
+</footer>
+<script>
+const LINES = [
+  {name: 'L1 微影', step: 'Photo · EUV/DUV', base: 92},
+  {name: 'L2 蝕刻', step: 'Etch · Dry/Wet', base: 89},
+  {name: 'L3 薄膜', step: 'CVD / PVD', base: 94},
+  {name: 'L4 量測', step: 'Metrology · CD/OVL', base: 90},
+];
+const box = document.getElementById('lines');
+LINES.forEach((l, i) => {
+  l.util = l.base; l.wip = 120 + i * 37; l.el = document.createElement('div'); l.el.className = 'line';
+  l.el.innerHTML = `<h2>${l.name}</h2><div class="step">${l.step}</div><div class="big">—</div>
+    <div class="row"><span>稼動率</span><span class="state">—</span></div><div class="row"><span>WIP（lot）</span><span class="wip">—</span></div>`;
+  box.appendChild(l.el);
+});
+let downSince = null, lastOutage = null, code = null;
+const mmss = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const hms = () => new Date().toLocaleTimeString('zh-TW', {hour12: false});
+
+function render(){
+  const ok = code === 200;
+  document.getElementById('clock').textContent = hms();
+  document.getElementById('banner').className = ok ? 'ok' : 'bad';
+  document.getElementById('b-text').textContent = ok ? '產線正常運作' : 'MES 斷線：派工暫停，產線待料';
+  document.getElementById('b-sub').textContent = ok ? (lastOutage ? `上次停線 ${mmss(lastOutage)}` : '')
+    : `停線累計 ${mmss((Date.now() - (downSince || Date.now())) / 1000)}`;
+  LINES.forEach(l => {
+    l.el.className = 'line' + (ok ? '' : ' bad');
+    l.el.querySelector('.big').textContent = `${l.util.toFixed(0)}%`;
+    l.el.querySelector('.state').textContent = ok ? '運轉中' : '待料停機';
+    l.el.querySelector('.wip').textContent = ok ? l.wip : `${l.wip}（卡站）`;
+  });
+  document.getElementById('api').textContent = `MES API /api/ → ${code === null ? '檢查中' : code || '無回應'}`;
+}
+
+function drift(){   // illustrative figures: wander near the base while the API answers, run down while it does not
+  const ok = code === 200;
+  LINES.forEach(l => {
+    if (ok){ l.util = Math.min(99, Math.max(80, l.util + (l.base - l.util) * .2 + (Math.random() - .5) * 1.5)); l.wip += Math.random() < .3 ? 1 : 0; }
+    else l.util = Math.max(0, l.util * .8);
+  });
+}
+
+async function poll(){
+  let c = 0;
+  try { c = (await fetch('/api/', {cache: 'no-store'})).status; } catch (e) {}
+  if (c !== 200 && downSince === null) downSince = Date.now();
+  if (c === 200 && downSince !== null){
+    lastOutage = (Date.now() - downSince) / 1000; downSince = null;
+    document.getElementById('last').textContent = `上次停線 ${mmss(lastOutage)}，於 ${hms()} 恢復`;
+  }
+  code = c; drift(); render();
+}
+poll(); setInterval(poll, 2000); setInterval(render, 1000);
+</script>
+</body>
+</html>

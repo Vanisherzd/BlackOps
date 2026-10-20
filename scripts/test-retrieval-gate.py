@@ -5,6 +5,7 @@ Asserts the property the prompt could not buy: no action reaches the stack befor
 import os
 import pathlib
 import sys
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import agent  # noqa: E402
@@ -16,6 +17,7 @@ def main():
     agent._incident.update(runbook_seen=False, refusals=0)
     first = agent.run_tool("write_config", {"content": CONF}, dry_run=True)
     assert first.startswith("refused:"), f"a cold write_config must be refused, got: {first[:120]}"
+    assert "Next:" in first and "docker_logs" in first, "a refusal names the next call"
     assert "nginx-config-error.md" in first, "the refusal must list the catalogue"
     assert not agent._incident["runbook_seen"], "a refusal alone must not count as having read anything"
 
@@ -50,6 +52,51 @@ def main():
     assert "insufficient" in kb.splitlines()[0] and "not a basis for repair" in kb, kb[:200]
     assert agent.run_tool("search_incident_knowledge", {}, dry_run=True).startswith("error:")
     assert agent.run_tool("write_config", {"content": CONF}, dry_run=True).startswith("refused:"), "knowledge alone must not open the gate"
+
+    # A confident knowledge card rides along with the runbook (the model never pulled it on its own); a vague or
+    # stack-specific symptom gets no card; the card is never what opens the gate.
+    with_card = agent.search_runbooks("x509: certificate has expired or is not yet valid")
+    assert "--- knowledge card" in with_card and "tls-certificate-expired" in with_card, with_card[-300:]
+    assert "--- knowledge card" not in agent.search_runbooks("nginx emerg invalid directive in the config")
+    assert "--- knowledge card" not in agent.search_runbooks("printer toner low in tray two")
+    assert agent.knowledge_note("upstream connect error connection refused") == "", "a generic phrase is not a match"
+
+    # Evidence survives a cleanup, and a full scratch volume is not a reason to delete host logs.
+    victims, _ = agent.cleanup_candidates(now=time.time() + 10 ** 6)          # as if everything were old
+    assert not [f for f, _ in victims if "/drills-" in f or "/ab-" in f], "drill and A/B logs are evidence, never cleanup victims"
+    allowed = (".out", "/trt-serve.log", "/tmp/edge-agent-")
+    assert all(f.endswith(allowed[:2]) or allowed[2] in f for f, _ in victims), [f for f, _ in victims]
+    import reviewer as _rv
+    tr = [{"tool": "disk_usage", "args": "{}", "result": "scratch volume edge-cache (/var/cache/nginx in edge-victim): "
+           "space 0%, inodes 100%  host, space: /dev/nvme0n1p2 916G 812G 58G 94% /"}]
+    ok, why = _rv.sufficient("cleanup_disk", {}, _rv.computed_facts("cleanup_disk", {}, tr))
+    assert not ok and "scratch volume" in why, why
+    ok, _ = _rv.sufficient("clear_scratch_volume", {}, _rv.computed_facts("clear_scratch_volume", {}, tr))
+    assert ok, "a measured full scratch volume is the condition for clearing it"
+    space_only = [{"tool": "disk_usage", "args": "{}", "result": "scratch volume edge-cache (/var/cache/nginx in edge-victim): space 0%"}]
+    ok, why = _rv.sufficient("clear_scratch_volume", {}, _rv.computed_facts("clear_scratch_volume", {}, space_only))
+    assert not ok and "not measured" in why and '{"inodes": true}' in why and "not what is full" not in why, why
+    # Every code-key refusal names its next call, and the wrapper says no human approval exists (an agent once
+    # answered "the change reviewer did not approve" with "/approve" and stopped).
+    for action, a in (("recreate_stack", {"name": "edge-victim-app", "replace": True}), ("kill_process", {"pid": 4242}),
+                      ("clear_scratch_volume", {}), ("cleanup_disk", {})):
+        ok, why = _rv.sufficient(action, a, _rv.computed_facts(action, a, []))
+        assert not ok and "Next:" in why, (action, why)
+    real_review = _rv.review
+    _rv.review = lambda *a, **k: (False, "x. Next: do y")
+    msg = agent.reviewed("cleanup_disk", {})
+    _rv.review = real_review
+    assert msg.startswith("review-rejected:") and "no human approval" in msg and "/approve" in msg and "Next:" in msg, msg
+
+    # restore_config is an action: gated like write_config, and a dry run names the copy it would restore.
+    saved_trace = list(agent._incident["trace"])
+    agent._incident.update(runbook_seen=False, refusals=0)
+    assert agent.run_tool("restore_config", {}, dry_run=True).startswith("refused:"), "restore_config must be gated"
+    agent._incident.update(runbook_seen=True, refusals=0)
+    out = agent.run_tool("restore_config", {}, dry_run=True)
+    assert out.startswith("DRY-RUN") or out.startswith("error: no known-good"), out
+    assert "memory limit" in agent.TOOLS[[t["name"] for t in agent.TOOLS].index("docker_ps")]["description"]
+    agent._incident["trace"] = saved_trace
 
     assert agent.symptom_query("all fine\nstarting up") is None, "clean output must not trigger an attachment"
     assert agent.symptom_query('nginx: [emerg] invalid number of arguments in "return" directive'), \

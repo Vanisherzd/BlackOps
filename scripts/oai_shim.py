@@ -6,6 +6,12 @@ Normalizations (only on /v1/chat/completions): role "developer" -> "system"; arr
 drops fields TensorRT-LLM does not know (`store`, `metadata`, `reasoning_effort`); enables the model's thinking mode via
 `chat_template_kwargs` (SHIM_THINK=0 to disable), and recovers tool calls the model leaves inside its thinking
 channel. Everything else is passed through unchanged, streaming too.
+
+Measured health on the incident agent's last word (requests that carry a check_health tool): when a turn ends in text
+with no tool call, the shim measures the health URLs itself and appends the result, so a report can never stand
+alone as the record of whether the stack recovered; and when that text claims the stack is healthy while the
+measurement says it is not, the turn is turned into a check_health call instead (at most twice per incident), so the
+agent sees the failure and carries on. With thinking off, 6 of 18 drills ended on such an unverified claim.
 """
 import json
 import os
@@ -17,6 +23,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 UPSTREAM = os.environ.get("UPSTREAM", "http://127.0.0.1:8000").rstrip("/")
 DROP = ("store", "metadata", "reasoning_effort")   # reasoning_effort: TensorRT-LLM does not take it; we set thinking below
 THINK = os.environ.get("SHIM_THINK", "1") == "1"   # Nemotron/Qwen thinking is a chat-template flag, not an API field
+# Adaptive thinking (SHIM_ADAPTIVE=1): on an incident request whose last tool results already name the next call
+# ("Next: ...") or report the stack recovered ("The incident is resolved: report ..."), this turn is decided, so it
+# runs without thinking. Thinking is 71% of drill time; off everywhere it halved the resolution rate (2026-10-19).
+ADAPTIVE = os.environ.get("SHIM_ADAPTIVE", "0") == "1"
+DECIDED = re.compile(r"\bNext: |The incident is resolved: report")
+# A blocked call also says "Next:", but that turn has to re-plan, so it keeps thinking (HANDOFF-kb-retrieval-v2 §4.1).
+BLOCKED = re.compile(r"^\s*(?:refused|denied|review-rejected|approval-rejected):")
 
 
 DEBUG = os.environ.get("SHIM_DEBUG") == "1"
@@ -51,9 +64,31 @@ def normalize(body: dict) -> dict:
             m.clear(); m.update(keep)
     for k in DROP:
         body.pop(k, None)
-    if THINK and "messages" in body:               # same switch scripts/agent.py uses; OpenClaw cannot send it itself
+    # Output floor. One turn arrived with room for a single token (10.7k input, 32k window, stopReason=length, out=1)
+    # and the drill ended on it; where the client's budget came from is not pinned down. Only when the request asks
+    # for less than MIN_OUTPUT and the prompt, over-estimated at 3 characters a token, leaves room for the floor.
+    asked = body.get("max_tokens") or body.get("max_completion_tokens")
+    if "messages" in body:
+        est = len(json.dumps(body.get("messages"), ensure_ascii=False)) // 3 + len(json.dumps(body.get("tools") or [])) // 3
+        raised = isinstance(asked, int) and asked < MIN_OUTPUT and est + FLOOR_OUTPUT < SERVER_WINDOW
+        if raised:
+            body.pop("max_completion_tokens", None)
+            body["max_tokens"] = FLOOR_OUTPUT
+        log(max_tokens=asked, prompt_est=est, raised_to=FLOOR_OUTPUT if raised else None)
+    if "messages" in body:                         # same switch scripts/agent.py uses; OpenClaw cannot send it itself
         kw = body.setdefault("chat_template_kwargs", {})
-        kw.setdefault("enable_thinking", True)   # the template's own default; set explicitly so it survives upgrades
+        if ADAPTIVE and THINK and health_tool(body.get("tools")):
+            last = []
+            for m in reversed(body["messages"]):
+                if m.get("role") != "tool":
+                    break
+                last.append(m.get("content") or "")
+            if last and not any(BLOCKED.match(c) for c in last) and any(DECIDED.search(c) for c in last):
+                kw.setdefault("enable_thinking", False)
+                log(adaptive="no thinking", why=next(DECIDED.search(c).group(0) for c in last if DECIDED.search(c)))
+        # Sent either way: the template's default is True, so SHIM_THINK=0 that only left the flag out still thought
+        # (a thinking-off A/B on 2026-10-19 ran both arms with thinking on).
+        kw.setdefault("enable_thinking", THINK)
     if DEBUG:
         log(messages=shapes, tools=len(body.get("tools") or []), stream=body.get("stream"),
             keys=sorted(k for k in body if k not in ("messages", "tools")))
@@ -61,6 +96,13 @@ def normalize(body: dict) -> dict:
 
 
 TOOLCALL_RE = re.compile(r"<tool_call>\s*<function=([A-Za-z0-9_.\-]+)>(.*?)</function>\s*</tool_call>", re.S)
+# The same block with its <tool_call> opener (or closer) dropped: seen 2026-10-14, a turn ended empty on
+# "<function=ops__clear_scratch_volume>\n</function>\n</tool_call>" in the thinking. Only the last such block is
+# taken, because deliberation can quote earlier calls.
+LOOSE_CALL_RE = re.compile(r"<function=([A-Za-z0-9_.\-]+)>(.*?)</function>", re.S)
+MIN_OUTPUT = 1024              # below this the turn cannot hold a thought and a call
+FLOOR_OUTPUT = 4096
+SERVER_WINDOW = int(os.environ.get("SHIM_WINDOW", "32768"))   # trtllm-serve max_seq_len (trt/nano.yaml)
 PARAM_RE = re.compile(r"<parameter=([A-Za-z0-9_.\-]+)>(.*?)</parameter>", re.S)
 
 
@@ -93,7 +135,11 @@ def salvage_calls(text, tools):
         props = ((fn.get("parameters") or {}).get("properties") or {})
         types[fn.get("name")] = {k: (v or {}).get("type") for k, v in props.items() if isinstance(v, dict)}
     calls = []
-    for name, inner in TOOLCALL_RE.findall(text or ""):
+    found = TOOLCALL_RE.findall(text or "")
+    if not found:
+        loose = LOOSE_CALL_RE.findall(text or "")
+        found = [loose[-1]] if loose and loose[-1][0] in types else []
+    for name, inner in found:
         args = {}
         for k, v in PARAM_RE.findall(inner):
             v, ty = v.strip(), types.get(name, {}).get(k)
@@ -134,7 +180,67 @@ def json_text_calls(content, tools):
     return calls
 
 
-def stream_with_salvage(resp, tools):
+# --- measured health on the last word ----------------------------------------------------------------------------
+HEALTH_URLS = dict(u.split("=", 1) for u in os.environ.get(
+    "SHIM_HEALTH_URLS", "front=http://127.0.0.1:8880/,api=http://127.0.0.1:8880/api/").split(",") if "=" in u)
+# the scorer's own patterns (scripts/score.py): what counts as a health claim, and as an honest escalation
+HEALTHY_CLAIM = re.compile(r"both .{0,40}200|return(?:ing|s|ed)? (?:http )?200|are (?:now )?healthy|is (?:now )?healthy|"
+                           r"resolved|restored|operating normally|back to normal", re.I)
+ESCALATION = re.compile(r"escalat|cannot (?:fix|resolve|repair)|unable to (?:fix|resolve|repair)|could not "
+                        r"(?:fix|resolve|repair)|needs? (?:a )?human|manual intervention|out of (?:my )?scope", re.I)
+MAX_VERIFY = 2
+VERIFY_ID = "call_verify_"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def measure_health():
+    out = {}
+    for name, url in HEALTH_URLS.items():
+        try:
+            with urllib.request.build_opener(_NoRedirect).open(url, timeout=5) as r:
+                out[name] = r.status
+        except urllib.error.HTTPError as e:
+            out[name] = e.code
+        except Exception as e:
+            out[name] = f"unreachable ({type(e).__name__})"
+    return out
+
+
+def health_tool(tools):
+    """The incident agent's check_health tool (ops__check_health over MCP), or None for any other kind of request."""
+    for t in tools or []:
+        name = (t.get("function") or t).get("name") or ""
+        if name.endswith("check_health"):
+            return name
+    return None
+
+
+def verdict(text, tools, messages):
+    """For a turn that ended in text: (note to append, check_health call to inject or None)."""
+    tool = health_tool(tools)
+    if not tool or not (text or "").strip():
+        return None, None
+    h = measure_health()
+    ok = all(v == 200 for v in h.values())
+    note = (f"\n\n[measured by the system at {time.strftime('%H:%M:%S')}: "
+            + ", ".join(f"{k} {v}" for k, v in h.items()) + (" -> healthy]" if ok else " -> NOT recovered]"))
+    claimed = HEALTHY_CLAIM.search(text) and not ESCALATION.search(text)
+    done = sum(1 for m in messages or [] for c in (m.get("tool_calls") or []) if str(c.get("id", "")).startswith(VERIFY_ID))
+    if claimed and not ok and done < MAX_VERIFY:
+        log(verify="claim refuted", health=h, injected=tool, n=done + 1)
+        return (note + " The report above says the stack is healthy; the measurement says it is not. Checking again "
+                "instead of ending."), {"id": f"{VERIFY_ID}{done}", "type": "function",
+                                       "function": {"name": tool, "arguments": "{}"}}
+    log(verify="claim confirmed" if claimed and ok else "claim refuted, cap reached" if claimed else "no claim",
+        health=h)
+    return note, None
+
+
+def stream_with_salvage(resp, tools, messages=None):
     """Yield upstream SSE lines as they arrive; decide about salvage only at the end.
 
     Every chunk is forwarded the moment it lands, so a long thinking phase keeps bytes flowing and the client's idle
@@ -189,10 +295,28 @@ def stream_with_salvage(resp, tools):
                     pass
             yield ln
     else:
-        yield from held
+        note, call = verdict(text, tools, messages) if not saw_calls else (None, None)
+        if note:
+            yield b"data: " + json.dumps(dict(ident, object="chat.completion.chunk", choices=[{
+                "index": 0, "finish_reason": None, "delta": {"content": note}}])).encode() + b"\n\n"
+        if call:
+            yield b"data: " + json.dumps(dict(ident, object="chat.completion.chunk", choices=[{
+                "index": 0, "finish_reason": None,
+                "delta": {"role": "assistant", "tool_calls": [dict(call, index=0)]}}])).encode() + b"\n\n"
+        for ln in held:
+            if call and ln.startswith(b"data:") and b"finish_reason" in ln:
+                try:
+                    d = json.loads(ln[5:].strip())
+                    for ch in d.get("choices") or []:
+                        if ch.get("finish_reason"):
+                            ch["finish_reason"] = "tool_calls"
+                    ln = b"data: " + json.dumps(d).encode() + b"\n\n"
+                except ValueError:
+                    pass
+            yield ln
 
 
-def salvage_json(payload, tools):
+def salvage_json(payload, tools, messages=None):
     try:
         d = json.loads(payload)
     except ValueError:
@@ -208,14 +332,21 @@ def salvage_json(payload, tools):
             m["tool_calls"], ch["finish_reason"] = calls, "tool_calls"
             log(salvaged=[c["function"]["name"] for c in calls], via="json")
             return json.dumps(d).encode()
+        note, call = verdict(m.get("content"), tools, messages)
+        if note:
+            m["content"] = (m.get("content") or "") + note
+            if call:
+                m["tool_calls"], ch["finish_reason"] = [call], "tool_calls"
+            return json.dumps(d).encode()
     return payload
 
 
 class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def _forward(self, data=None, tools=None):
-        req = urllib.request.Request(UPSTREAM + self.path, data=data, method=self.command,
+    def _forward(self, data=None, tools=None, messages=None):
+        import tier                                       # TIER_MODE=off by default: returns UPSTREAM unchanged
+        req = urllib.request.Request(tier.upstream(UPSTREAM) + self.path, data=data, method=self.command,
                                      headers={k: v for k, v in self.headers.items() if k.lower() not in ("host", "content-length", "transfer-encoding")})
         try:
             resp = urllib.request.urlopen(req, timeout=900)
@@ -232,7 +363,7 @@ class H(BaseHTTPRequestHandler):
             if k.lower() not in ("transfer-encoding", "connection", "content-length"):
                 self.send_header(k, v)
         chunked = "text/event-stream" in (resp.headers.get("Content-Type") or "")
-        payload = None if chunked else salvage_json(resp.read(), tools)
+        payload = None if chunked else salvage_json(resp.read(), tools, messages)
         if payload is not None:
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -240,7 +371,7 @@ class H(BaseHTTPRequestHandler):
         else:
             self.send_header("Transfer-Encoding", "chunked")
             self.end_headers()
-            for line in stream_with_salvage(resp, tools):
+            for line in stream_with_salvage(resp, tools, messages):
                 self.wfile.write(f"{len(line):x}\r\n".encode() + line + b"\r\n")
             self.wfile.write(b"0\r\n\r\n")
         self.wfile.flush()
@@ -250,14 +381,14 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         raw = self.rfile.read(int(self.headers.get("Content-Length", 0)) or 0)
-        tools = None
+        tools = messages = None
         if self.path.startswith("/v1/chat/completions"):
             try:
                 body = normalize(json.loads(raw))
-                tools, raw = body.get("tools"), json.dumps(body).encode()
+                tools, messages, raw = body.get("tools"), body.get("messages"), json.dumps(body).encode()
             except Exception:
                 pass
-        self._forward(raw, tools)
+        self._forward(raw, tools, messages)
 
     def log_message(self, *_):
         pass

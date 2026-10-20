@@ -60,7 +60,14 @@ git：`integrate-vllm` 從 `demo-infra` 分出，`demo-infra` 已包含 `kb-retr
 | bad-config | 66 s | 79 s |
 | upstream-500 | **106 s** | 48–65 s |
 
-upstream-500 變慢：Bolt 在重啟之後、重建之前，多查了幾步。第二幕有 2 分鐘，加上人工核准仍然放得下，但比較緊。可以考慮開 `SHIM_ADAPTIVE=1 TRIAGE=1` 再量一次。驗證的完整輸出在 `~/edge-agent-demo/logs/validate-vllm-20261020-235009/`。
+upstream-500 變慢：Bolt 在重啟之後、重建之前，多查了幾步。
+
+**開 `SHIM_ADAPTIVE=1 TRIAGE=1` 重量 upstream-500 × 5**（2026-10-21 01:14–01:29，shim 用整合分支的版本，含 §4.1 修正，`~/edge-agent/logs/drills-20261021-011404.log`）：
+- 結果：**5/5 自主修復**，中位 **131 s**（92–160 s），**沒有比 106 s 快**。
+- 5 場裡有 4 場，agent 拿到開場資料後就直接要求重建，被程式鑰匙以 `denied:` 擋下，之後才先重啟、再重建。
+- evidence-first 只有 20%，這是計分方式造成的：triage 的呼叫發生在清空 log 之前，所以不算進 agent 自己的證據。實際上 agent 在動手前已經拿到證據。
+- **結論**：在 Bolt 上，這兩個設定對 upstream-500 沒有幫助，樣本也少（5 場對 3 場），舞台上預設不開。
+- 副作用可以利用：開了 TRIAGE 之後，第二幕幾乎一定會出現 `denied:` 那一行，很適合展示程式鑰匙。代價是第二幕要排 2.5 分鐘以上。驗證的完整輸出在 `~/edge-agent-demo/logs/validate-vllm-20261020-235009/`。
 
 ## 4. 對簡報和評分的影響（要改的地方）
 

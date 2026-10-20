@@ -69,9 +69,9 @@
 | 0:55–1:50 | 架構 | **切回投影片**：三把鑰匙、Tier、工具分級 | （背景：watchdog 開事故 → agent 修） | 平時規則巡檢不推論，異常才由 Tier-1 接手 |
 | 1:50–2:10 | 第一幕收尾 | 切回 dashboard，捲一下軌跡 | 看板已綠、「上次停線 0:xx」 | 沒人叫它修，它只收到一句警報 |
 | 2:10–2:30 | 斷網 | 按「切斷外網」，在終端跑一次 `curl` 打外部 API | curl 失敗、WAN offline、對外連線計數 | 模擬 ISP 中斷，內網照常，這是 L1；在廠務網段這是常態 |
-| 2:30–4:30 | 第二幕 | 按「注入 upstream-500」，審批卡跳出時按「核准」 | 四個階段，見 §3.4 | 一個事故、四層調整；Self-Healing ≠ Root Shell |
-| 4:30–5:30 | 數據 | 投影片 | 夜跑結果：有調度 vs 全程 Tier-2 的 Wh、Tier-1 承接比例、計分卡 | 算力是 Agent 自己要管的資源 |
-| 5:30–6:00 | 收尾 | 投影片 | 既有成果揭露 | Observe / Reason / Recover locally |
+| 2:30–4:45 | 第二幕 | 按「注入 upstream-500」，審批卡跳出時按「核准」 | 四個階段，見 §3.4 | 一個事故、四層調整；Self-Healing ≠ Root Shell |
+| 4:45–5:35 | 數據 | 投影片 | 夜跑結果：有調度 vs 全程 Tier-2 的 Wh、Tier-1 承接比例、計分卡 | 算力是 Agent 自己要管的資源 |
+| 5:35–6:00 | 收尾 | 投影片 | 既有成果揭露 | Observe / Reason / Recover locally |
 
 ### 3.3 抽卡的 4 張
 
@@ -96,7 +96,11 @@
    - 人：審批卡跳出，通道顯示「Jetson 本機（外網不可用）」。
 4. **收尾**：台上按核准，容器重建，/api/ 回 200，看板轉綠，Tier 降回 1，功耗回落。
 
-2026-10-20 在 Spark 上以 host 迴圈加上 `APPROVAL=auto TIER_MODE=adaptive` 跑過一次，結果 PASS，Tier 1→2→1 都有紀錄。**NemoClaw 路徑上的這一幕還沒驗證。**
+驗證紀錄：
+- 2026-10-20：Spark 上以 host 迴圈加上 `APPROVAL=auto TIER_MODE=adaptive` 跑過一次，結果 PASS，Tier 1→2→1 都有紀錄。
+- 2026-10-21：Bolt/vLLM 的 NemoClaw 路徑 3/3（中位 106 s），開 `SHIM_ADAPTIVE=1 TRIAGE=1` 時 5/5（中位 131 s，其中 4 場出現 `denied:`）。
+
+**第二幕要排 2–2.5 分鐘**，加上人工核准的時間。審批與 Tier 在 NemoClaw 路徑上一起打開的情況還沒驗證。
 
 ---
 

@@ -367,6 +367,12 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | `docs/plan-trtllm-nemoclaw.md` | TRT-LLM 與 NemoClaw 遷移：事實查核、執行日誌、每個坑的修法 |
 | `docs/agent-design.md` | Agent 迴圈設計、工具白名單、兩條 drill 路徑與結果 |
 | `docs/hackathon-runbook.md` | 當天流程、離線 bundle、Jetson 對照 |
+| `docs/BOLT_RUNTIME_STATUS.md` | Bolt vLLM 基線狀態、阻塞項目與驗收門檻 |
+| `docs/HANDOFF.md` | Bolt 分支接手與 DGX Spark 驗證步驟 |
+| `docs/BOLT_VLLM_PLAN.md` | Bolt vLLM 基線範圍、階段與設計決策 |
+| `docs/BOLT_VLLM_BASELINE.md` | Bolt vLLM 部署重現、環境變數與本機量測 |
+| `docs/ARCHITECTURE.md` | Bolt vLLM 閘道、代理、工具與基準架構 |
+| `docs/current_state.md` | 現有 TRT-LLM、NemoClaw 與工具鏈盤點 |
 | `kb/README.md`、`kb/docs/*.md` | 知識庫：安裝、查詢 API、RAG schema、來源、交付稽核 |
 | `docs/kb-eval.md`、`docs/kb-eval/` | 知識庫 RAG 實測：壓縮比 × 正確率 × token × 能耗曲線、有無檢索對照、檢索命中分析（`scripts/kb-eval.py`） |
 | `datasets/README.md`、`datasets/docs/p0_rag_usage.md` | 資料集清單、授權、答案隔離與實驗切分規則 |

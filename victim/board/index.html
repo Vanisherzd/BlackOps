@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>廠務看板</title>
+<!-- The victim's own status page, served by edge-victim at /board/ (see docs/demo-pending-edits.md for the mount).
+     Polls /api/ every 2 s: green while the upstream answers 200, red otherwise. Static, no external requests. -->
+<style>
+:root{--ok:#1f9d55;--bad:#d64045;--bg:#f4f5f7;--text:#1b1f24}
+body{margin:0;font:16px system-ui,"Noto Sans TC",sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;align-items:center;justify-content:center}
+.card{text-align:center;padding:24px 32px}
+.dot{width:96px;height:96px;border-radius:50%;margin:0 auto 12px;background:#999;transition:background .3s}
+.ok .dot{background:var(--ok)}.bad .dot{background:var(--bad)}
+h1{font-size:20px;margin:0 0 4px}#detail{color:#555;font-size:14px}
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="dot"></div>
+  <h1 id="title">產線 API 檢查中…</h1>
+  <div id="detail"></div>
+</div>
+<script>
+async function tick(){
+  let code = 0;
+  try { code = (await fetch('/api/', {cache: 'no-store'})).status; } catch (e) {}
+  const ok = code === 200;
+  document.getElementById('card').className = 'card ' + (ok ? 'ok' : 'bad');
+  document.getElementById('title').textContent = ok ? '產線 API 正常' : '產線 API 異常';
+  document.getElementById('detail').textContent = `/api/ → ${code || '無回應'} · ${new Date().toLocaleTimeString()}`;
+}
+tick(); setInterval(tick, 2000);
+</script>
+</body>
+</html>

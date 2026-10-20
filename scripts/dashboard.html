@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blackout Ops</title>
+<style>
+:root{--bg:#0f1115;--panel:#181b22;--line:#2a2f3a;--text:#e6e8ec;--dim:#8b93a3;--ok:#2fbf71;--bad:#e5484d;--warn:#f5a524;--info:#4c8dff;--rej:#c36bff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,"Noto Sans TC",sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0 12px 0 0}
+.pill{padding:3px 10px;border-radius:999px;border:1px solid var(--line);font-size:13px;white-space:nowrap}
+.pill.ok{border-color:var(--ok);color:var(--ok)}.pill.bad{border-color:var(--bad);color:var(--bad)}
+.pill.warn{border-color:var(--warn);color:var(--warn)}.pill.info{border-color:var(--info);color:var(--info)}
+#replay-badge{display:none;background:var(--warn);color:#000;font-weight:700;padding:3px 12px;border-radius:4px}
+main{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 16px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;min-width:0}
+section h2{font-size:13px;color:var(--dim);margin:0 0 8px;font-weight:600;letter-spacing:.04em}
+#trace-panel{grid-row:span 2}
+.lights{display:flex;gap:16px}
+.light{flex:1;padding:14px;border-radius:8px;text-align:center;font-size:16px;font-weight:600;background:#222}
+.light.ok{background:rgba(47,191,113,.15);color:var(--ok)}.light.bad{background:rgba(229,72,77,.18);color:var(--bad)}
+iframe{width:100%;height:150px;border:1px solid var(--line);border-radius:6px;margin-top:10px;background:#fff;display:none}
+#trace{height:62vh;overflow-y:auto;font:12.5px/1.4 ui-monospace,Menlo,monospace}
+.row{padding:5px 6px;border-left:3px solid var(--line);margin-bottom:4px;word-break:break-word}
+.row .t{color:var(--dim);margin-right:6px}.row .tool{font-weight:700;margin-right:6px}
+.row.ok{border-color:var(--ok)}.row.refused{border-color:var(--warn);background:rgba(245,165,36,.08)}
+.row.denied{border-color:var(--bad);background:rgba(229,72,77,.08)}.row.review-rejected{border-color:var(--rej);background:rgba(195,107,255,.1)}
+.row.info{border-color:var(--info)}.row.review{font-style:italic}
+.row .txt{color:#c7ccd6;display:block;margin-top:2px}
+canvas{width:100%;height:170px;display:block}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px}.kv b{color:var(--dim);font-weight:500}
+#approval{margin-top:10px;padding:10px;border:2px solid var(--warn);border-radius:8px;display:none}
+#approval .acts{display:flex;gap:8px;margin-top:8px}
+button{background:#232833;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:7px 12px;font-size:13px;cursor:pointer}
+button:hover{border-color:var(--info)}button:disabled{opacity:.4;cursor:not-allowed}
+button.go{border-color:var(--ok);color:var(--ok)}button.stop{border-color:var(--bad);color:var(--bad)}
+footer{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 16px;align-items:center}
+footer .sep{width:1px;height:24px;background:var(--line);margin:0 6px}
+#msg{color:var(--dim);font-size:12px;margin-left:8px}
+select{background:#232833;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px}
+@media (max-width:900px){main{grid-template-columns:1fr}#trace-panel{grid-row:auto}#trace{height:45vh}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Blackout Ops</h1>
+  <span id="replay-badge">REPLAY</span>
+  <span id="p-health" class="pill">服務 —</span>
+  <span id="p-incident" class="pill">事故 —</span>
+  <span id="p-tier" class="pill">Tier —</span>
+  <span id="p-wan" class="pill">WAN —</span>
+  <span id="p-link" class="pill">連線 —</span>
+</header>
+<main>
+  <section>
+    <h2>服務狀態（被監控系統）</h2>
+    <div class="lights"><div id="l-front" class="light">/ —</div><div id="l-api" class="light">/api/ —</div></div>
+    <iframe id="board" title="廠務看板"></iframe>
+  </section>
+  <section id="trace-panel">
+    <h2>Agent 軌跡（工具呼叫 · 審核 · 事故）</h2>
+    <div id="trace"></div>
+  </section>
+  <section>
+    <h2>功耗（模組電源軌）</h2>
+    <canvas id="power" width="600" height="170"></canvas>
+    <div id="power-note" style="color:var(--dim);font-size:12px"></div>
+  </section>
+  <section>
+    <h2>網路與審批</h2>
+    <div class="kv">
+      <b>WAN</b><span id="k-wan">—</span>
+      <b>對外連線（sandbox）</b><span id="k-blocked">—</span>
+      <b>審批通道</b><span id="k-channel">Jetson 本機</span>
+      <b>審批模式</b><span id="k-mode">—</span>
+      <b>巡檢</b><span id="k-watchdog">—</span>
+    </div>
+    <div id="approval">
+      <div><b>待審批</b> <span id="a-action"></span></div>
+      <div id="a-reason" style="color:#c7ccd6;margin-top:4px"></div>
+      <div class="acts"><button class="go" onclick="decide('approve')">核准</button><button class="stop" onclick="decide('reject')">拒絕</button></div>
+    </div>
+  </section>
+</main>
+<footer>
+  <span style="color:var(--dim)">注入</span>
+  <button class="act" data-case="nginx-stopped">nginx-stopped</button>
+  <button class="act" data-case="container-removed">container-removed</button>
+  <button class="act" data-case="bad-config">bad-config</button>
+  <button class="act" data-case="upstream-paused">upstream-paused</button>
+  <button class="act" data-case="upstream-500">upstream-500</button>
+  <button class="act" data-a="reset">reset</button>
+  <span class="sep"></span>
+  <button class="act stop" data-a="wan-down">切斷外網</button>
+  <button class="act go" data-a="wan-up">恢復外網</button>
+  <span class="sep"></span>
+  <select id="runs"><option value="">回放：選一場…</option></select>
+  <button onclick="startReplay()">回放</button>
+  <button onclick="stopReplay()">回到即時</button>
+  <span id="msg"></span>
+</footer>
+<script>
+const $ = id => document.getElementById(id);
+let replaying = false, replayTimers = [], power = [], lastSeen = Date.now(), pending = null;
+
+function pill(el, text, cls){ el.textContent = text; el.className = 'pill ' + (cls || ''); }
+function hms(t){ if (typeof t === 'string') return t; const d = new Date(t * 1000); return d.toTimeString().slice(0, 8); }
+function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function addRow(r){
+  const div = document.createElement('div');
+  div.className = 'row ' + (r.cls || 'ok') + (r.src === 'review' ? ' review' : '');
+  const args = r.args && Object.keys(r.args).length ? ' ' + esc(JSON.stringify(r.args)) : '';
+  const tag = r.src === 'review' ? '審核 ' : r.src === 'incident' ? '事故 ' : r.src === 'tier' ? '' : '';
+  div.innerHTML = `<span class="t">${hms(r.t)}</span><span class="tool">${tag}${esc(r.tool || '')}</span>${args}<span class="txt">${esc(r.text || '')}</span>`;
+  const box = $('trace'), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.appendChild(div);
+  while (box.children.length > 400) box.removeChild(box.firstChild);
+  if (atEnd) box.scrollTop = box.scrollHeight;
+}
+
+function drawPower(){
+  const c = $('power'), g = c.getContext('2d'), W = c.width = c.clientWidth * devicePixelRatio, H = c.height = 170 * devicePixelRatio;
+  g.clearRect(0, 0, W, H);
+  const pts = power.slice(-240).filter(p => p.mw != null);
+  if (pts.length < 2){ $('power-note').textContent = pts.length ? '' : '尚無功耗資料（scripts/power.py 未啟動）'; return; }
+  const t0 = pts[0].ts, t1 = pts[pts.length - 1].ts, max = Math.max(...pts.map(p => p.mw)) * 1.15 || 1;
+  g.strokeStyle = '#2a2f3a'; g.lineWidth = 1;
+  for (let i = 1; i < 4; i++){ g.beginPath(); g.moveTo(0, H * i / 4); g.lineTo(W, H * i / 4); g.stroke(); }
+  g.strokeStyle = '#4c8dff'; g.lineWidth = 2 * devicePixelRatio; g.beginPath();
+  pts.forEach((p, i) => { const x = (p.ts - t0) / Math.max(1, t1 - t0) * W, y = H - p.mw / max * H; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke();
+  const last = pts[pts.length - 1].mw;
+  $('power-note').textContent = `現在 ${(last / 1000).toFixed(1)} W · 視窗峰值 ${(Math.max(...pts.map(p => p.mw)) / 1000).toFixed(1)} W · ${Math.round(t1 - t0)} s`;
+}
+
+function render(s){
+  const codes = Object.values(s.health || {});
+  const [front, api] = [codes[0], codes[1]];
+  $('l-front').textContent = `/  ${front || '無回應'}`; $('l-front').className = 'light ' + (front === 200 ? 'ok' : 'bad');
+  $('l-api').textContent = `/api/  ${api || '無回應'}`; $('l-api').className = 'light ' + (api === 200 ? 'ok' : 'bad');
+  pill($('p-health'), s.healthy ? '服務正常' : '服務異常', s.healthy ? 'ok' : 'bad');
+  if (s.incident) pill($('p-incident'), `事故 ${s.incident.id}${s.incident.last ? ' · ' + s.incident.last : ''}`, 'bad');
+  else pill($('p-incident'), s.drill_running ? '演練進行中' : '無事故', s.drill_running ? 'warn' : 'ok');
+  if (s.tier) pill($('p-tier'), `Tier-${s.tier.tier}${s.tier.mode ? ' · ' + s.tier.mode : ''}`, s.tier.tier === 2 ? 'warn' : 'ok');
+  else pill($('p-tier'), 'Tier —（無控制器）', '');
+  const wan = String(s.wan || '');
+  const online = wan.startsWith('online'), offline = wan.startsWith('offline');
+  pill($('p-wan'), online ? 'WAN online' : offline ? 'WAN offline' : 'WAN ?', online ? 'ok' : offline ? 'bad' : '');
+  $('k-wan').textContent = wan;
+  const m = wan.match(/sandbox_blocked=(\d+)/); $('k-blocked').textContent = m ? `${m[1]} 次被擋（成功 0）` : (online ? '—' : '?');
+  $('k-channel').textContent = offline ? 'Jetson 本機（外網不可用）' : 'Jetson 本機';
+  $('k-mode').textContent = s.approval_mode; $('k-watchdog').textContent = s.watchdog ? '規則巡檢中（不推論）' : '未啟動';
+  pending = s.approval;
+  $('approval').style.display = pending ? 'block' : 'none';
+  if (pending){ $('a-action').textContent = `${pending.action} ${JSON.stringify(pending.args || {})}`; $('a-reason').textContent = pending.reason || ''; }
+  document.querySelectorAll('.act').forEach(b => b.disabled = !s.actions || s.drill_running);
+}
+
+function connect(){
+  const es = new EventSource('events');
+  es.onmessage = e => {
+    lastSeen = Date.now(); pill($('p-link'), '連線正常', 'ok');
+    if (replaying) return;
+    const m = JSON.parse(e.data);
+    if (m.reset && m.reset.includes('ops-api.log')) addRow({t: Date.now() / 1000, tool: '— 新一場 —', cls: 'info', text: ''});
+    (m.trace || []).forEach(addRow);
+    if (m.power){ power.push(...m.power); power = power.slice(-600); drawPower(); }
+    render(m.state);
+  };
+  es.onerror = () => {};
+}
+setInterval(() => { if (Date.now() - lastSeen > 5000) pill($('p-link'), '連不到 Thor（改用回放）', 'bad'); }, 1000);
+
+function loadBoard(){
+  // nginx's catch-all answers 200 text/plain until /board/ exists, so only an HTML answer is the board
+  fetch('board/').then(r => { if (r.ok && (r.headers.get('Content-Type') || '').includes('html')){ $('board').src = 'board/'; $('board').style.display = 'block'; } }).catch(() => {});
+}
+
+async function post(url, body){
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  $('msg').textContent = r.ok ? `✓ ${j.cmd || ''}` : `✗ ${j.error || j.out || r.status}`;
+}
+document.querySelectorAll('.act').forEach(b => b.onclick = () =>
+  post('api/action', b.dataset.case ? {action: 'inject', case: b.dataset.case} : {action: b.dataset.a}));
+function decide(d){ if (pending) post('api/approval', {id: pending.id, decision: d}); }
+
+async function loadRuns(){
+  const j = await fetch('api/runs').then(r => r.json()).catch(() => ({runs: []}));
+  const sel = $('runs');
+  j.runs.forEach(r => { const o = document.createElement('option'); o.value = r.run; o.textContent = `${r.run} · ${r.verify || '?'} · ${r.seconds || '?'}s`; sel.appendChild(o); });
+}
+async function startReplay(){
+  const run = $('runs').value; if (!run) return;
+  const j = await fetch('api/replay?run=' + encodeURIComponent(run)).then(r => r.json());
+  stopReplay(); replaying = true; $('replay-badge').style.display = 'inline-block';
+  $('trace').innerHTML = ''; power = [];
+  const start = j.meta.start || (j.rows[0] && j.rows[0].t) || 0;
+  addRow({t: start, tool: `REPLAY ${run}`, cls: 'info', text: `case=${j.meta.case} verify=${j.meta.verify} ${j.meta.seconds}s（依原始時間重播）`});
+  j.rows.forEach(r => replayTimers.push(setTimeout(() => addRow(r), Math.max(0, (r.t - start) * 1000))));
+  j.power.forEach(p => replayTimers.push(setTimeout(() => { power.push(p); drawPower(); }, Math.max(0, (p.ts - start) * 1000))));
+}
+function stopReplay(){
+  replayTimers.forEach(clearTimeout); replayTimers = []; replaying = false; $('replay-badge').style.display = 'none';
+}
+connect(); loadBoard(); loadRuns(); drawPower();
+</script>
+</body>
+</html>

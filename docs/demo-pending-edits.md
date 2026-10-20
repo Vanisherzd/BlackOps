@@ -1,5 +1,11 @@
 # Demo: pending edits to existing files (2026-10-20)
 
+> **Update, 2026-10-20 late evening:** §1–§4 are applied on branch `demo-infra` (commit a71e100, worktree
+> `~/edge-agent-demo`). Also on the branch: `overnight.sh` and `score-runs.py` (#13/#14), and the Thor serving prep
+> (`serve-trt.sh` uses the NVIDIA runtime on a Jetson; `trt/thor-*.yaml`, `trt/tier1.yaml`, `serve-tier1.sh`).
+> The shared `~/edge-agent` tree has not been touched. **Not yet regression-tested on the victim**: see "Regression
+> before merging" at the end.
+
 On 2026-10-20 a repair experiment was running on the Spark (`ab-drill.sh` → `nemoclaw-drill.sh`). It restarts
 `ops_api.py` and `oai_shim.py` from the working tree before every drill, so editing an existing file under
 `scripts/`, `runbooks/` or `nemoclaw/workspace/` would have changed the experiment while it ran. Everything added
@@ -115,3 +121,14 @@ DASHBOARD_URL=http://127.0.0.1:8097 T1_URL=http://127.0.0.1:8010 scripts/preflig
 `APPROVAL` and `TIER_MODE` must be set in the environment of the process that runs `agent.py`'s tools, which is
 `ops_api.py`. `TIER_MODE` must also be set in the shim's environment. The dashboard's `APPROVAL` only sets what it
 displays.
+
+## Regression before merging (the victim is shared, so coordinate first)
+
+1. Nobody is drilling: `pgrep -af nemoclaw-drill` returns nothing.
+2. Host loop, same containers: from `~/edge-agent-demo`, run `.venv/bin/python scripts/faults.py setup`
+   (rebuilds edge-victim with the /board/ mount), then `faults.py run <case>` for the nine seen cases.
+   This worktree has no `.venv`; use `~/edge-agent/.venv/bin/python`.
+3. **Restore**: from `~/edge-agent`, run `faults.py setup`. The container mounts point at this worktree's
+   `victim/conf.d`, and the next drill from the shared tree would write to a different file.
+4. The NemoClaw path (drill + ops_api + shim from the branch) needs the services restarted from the branch. Do it
+   only after merging, or in an agreed window.

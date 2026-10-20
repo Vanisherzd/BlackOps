@@ -57,19 +57,19 @@
 | # | 項目 | 狀態 | 剩下要做的 |
 |---|---|---|---|
 | 1 | 遠端 victim | ❌ | 改 `faults.py`、`agent.py`（1–1.5 天，另開 branch/worktree） |
-| 2 | prompt 去掉 8880 | ⚠️ | `upstream-502.md:4`、`AGENTS.md:13` 的 diff 已備好 |
-| 3 | 看板頁 | ⚠️ 頁面已完成 | GOOD_CONF 掛載、write_config 規則 |
+| 2 | prompt 去掉 8880 | ✅ branch | `upstream-502.md`、`AGENTS.md` 已改；8880 只有遠端 victim 才需要動 |
+| 3 | 看板頁 | ✅ branch | 掛載與 write_config 規則已加；需要 `faults.py setup` 重建容器並跑回歸 |
 | 4 | watchdog | ✅ 骨架 | 實際叫醒 agent 的路徑還沒測 |
 | 5 | 歸檔 | ✅ `run-archive.sh` | 實跑一場（要等實驗結束） |
 | 6 | wan.sh | ✅ 骨架 | 在有 sudo 的機器上實測 down/up |
 | 7 | dashboard | ✅ 骨架 | 用瀏覽器看版面；從台上筆電經會場網路連線 |
 | 8 | preflight | ✅ | — |
-| 9 | Thor serve | ⚠️ | `--runtime nvidia`、4B 模型與 parser、128/64 GB yaml；**只能在 Thor 上驗證** |
-| 10 | 人工審批 | ✅ 模組 | 接進 `agent.py` `reviewed()`（3 行） |
-| 11 | Tier 控制器 | ✅ 模組 | 接進 `agent.py` 與 `oai_shim.py:346`；驗證 4B/30B 的 parser 相容性 |
+| 9 | Thor serve | ⚠️ branch 已準備 | Jetson 自動用 `--runtime nvidia`；`trt/thor-*.yaml`、`serve-tier1.sh` 已備；剩 4B 模型 ID、parser 相容性、記憶體比例，**只能在 Thor 上驗證** |
+| 10 | 人工審批 | ✅ branch 已接線 | 回歸測試 |
+| 11 | Tier 控制器 | ✅ branch 已接線 | 驗證 4B/30B 的 parser 相容性（需要 Tier-1 server） |
 | 12 | power | ✅ | Thor 的 rail 名稱 |
-| 13 | overnight.sh | ❌ | 可沿用 `ab-drill.sh`，改成 `TIER_MODE=adaptive` vs `always2`、`APPROVAL=auto` |
-| 14 | score.py 新欄位 | ❌ | Tier、能耗、審批 |
+| 13 | overnight.sh | ✅ branch | 實跑 |
+| 14 | 能耗計分 | ✅ `score-runs.py` | score.py 不動；以合成資料驗證 |
 
 既有檔的精確修改見 `docs/demo-pending-edits.md`。**實驗結束後**，由檔案的負責人套用，再跑回歸。
 

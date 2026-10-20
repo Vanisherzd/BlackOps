@@ -132,3 +132,19 @@ displays.
    `victim/conf.d`, and the next drill from the shared tree would write to a different file.
 4. The NemoClaw path (drill + ops_api + shim from the branch) needs the services restarted from the branch. Do it
    only after merging, or in an agreed window.
+
+### Result, 2026-10-20 22:56–23:18 (host loop, `faults.py run`, one run per cell)
+
+| case | demo-infra, round 1 | demo-infra, rerun | kb-retrieval-v2 (main tree) |
+|---|---|---|---|
+| nginx-stopped, bad-config, upstream-down, container-removed, crashloop, upstream-paused | PASS ×6 | — | — |
+| bad-upstream-name | FAIL | PASS | FAIL |
+| upstream-detached | FAIL | FAIL | FAIL |
+| upstream-500 | FAIL | PASS | PASS |
+| upstream-500 with `APPROVAL=auto TIER_MODE=adaptive` | PASS: reviewer APPROVE → auto-approval → rebuild; tier 1→2→1 logged | | |
+
+No failure involved the new code: no `/board/` denial, approval or tier event in any failing trace; all three ran
+out of the host loop's 8 steps. On the three failing cases the branch went 2/3 and the base 1/3, i.e. run-to-run
+variance (HANDOFF §2: single runs are not to be trusted). upstream-detached fails on both in the host loop. The
+victim was rebuilt from `~/edge-agent` afterwards (mounts point at `~/edge-agent/victim/conf.d` again). The NemoClaw
+path on the branch is still untested: it needs the branch checked out where `nemoclaw-drill.sh` runs.

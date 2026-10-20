@@ -4,9 +4,10 @@
 
 ## 0. 先看這裡：現況與注意事項
 
-- **分支**：`kb-retrieval-v2`，比 `main` 多 24 個 commit，**全部還沒 push**。只存在 DGX Spark（`hsnl@192.168.2.60:~/edge-agent`）。
-  push 卡在權限：GitHub 帳號 Ivan711031 沒有 `Vanisherzd/BlackOps`（原 `dgx-spark-edge-agent`）的寫入權限。
-  需要 repo 擁有者加協作者，或 fork 後發 PR。**在那之前，這 24 個 commit 只有一份。**
+- **分支**：`kb-retrieval-v2`，比 `main` 多 25 個 commit，2026-10-20 已 push 到 `https://github.com/Vanisherzd/BlackOps`
+  （原 `dgx-spark-edge-agent`）。Spark 上的工作目錄是 `hsnl@192.168.2.60:~/edge-agent`。
+  GitHub 憑證只放在推送者自己的電腦上，不放在 Spark：先從 Spark `git fetch` 到自己的電腦，再推上 GitHub。
+  `logs/` 沒有進 git，實驗紀錄只存在 Spark 上。
 - **共用帳號**：Spark 上所有人都用 `hsnl`，權限相同。2026-10-20 晚上有組員在 `~/edge-agent-demo`（`demo-infra` 分支）
   工作，而且**重建了測試容器，把前端設定改成從 `~/edge-agent-demo/victim/conf.d` 掛載**。
   要在 `~/edge-agent` 跑演練前，先協調時段，再用 `.venv/bin/python scripts/faults.py setup` 重建回本分支的設定

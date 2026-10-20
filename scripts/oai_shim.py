@@ -28,6 +28,8 @@ THINK = os.environ.get("SHIM_THINK", "1") == "1"   # Nemotron/Qwen thinking is a
 # runs without thinking. Thinking is 71% of drill time; off everywhere it halved the resolution rate (2026-10-19).
 ADAPTIVE = os.environ.get("SHIM_ADAPTIVE", "0") == "1"
 DECIDED = re.compile(r"\bNext: |The incident is resolved: report")
+# A blocked call also says "Next:", but that turn has to re-plan, so it keeps thinking (HANDOFF-kb-retrieval-v2 §4.1).
+BLOCKED = re.compile(r"^\s*(?:refused|denied|review-rejected|approval-rejected):")
 
 
 DEBUG = os.environ.get("SHIM_DEBUG") == "1"
@@ -81,7 +83,7 @@ def normalize(body: dict) -> dict:
                 if m.get("role") != "tool":
                     break
                 last.append(m.get("content") or "")
-            if last and any(DECIDED.search(c) for c in last):
+            if last and not any(BLOCKED.match(c) for c in last) and any(DECIDED.search(c) for c in last):
                 kw.setdefault("enable_thinking", False)
                 log(adaptive="no thinking", why=next(DECIDED.search(c).group(0) for c in last if DECIDED.search(c)))
         # Sent either way: the template's default is True, so SHIM_THINK=0 that only left the flag out still thought

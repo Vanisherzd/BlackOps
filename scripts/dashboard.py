@@ -11,6 +11,7 @@ logs/ops-api.log and is safe to leave open beside a running drill.
   GET  /api/runs          archived runs (logs/runs/*/meta.json, newest first)
   GET  /api/replay?run=X  every row of one archived run with its time, for the page's REPLAY mode
   GET  /board/            reverse proxy to the victim's board page (DASH_BOARD_URL), so the stage sees it off-segment
+  GET  /api/              the victim's /api/, for that page's own poll (exact path only)
   POST /api/action        {"action": "inject"|"reset"|"wan-down"|"wan-up", "case": ...}   only with DASH_ACTIONS=1
   POST /api/approval      {"id": ..., "decision": "approve"|"reject"}
 
@@ -295,14 +296,16 @@ class H(BaseHTTPRequestHandler):
             r = replay((urllib.parse.parse_qs(u.query).get("run") or [""])[0])
             return self._send(200 if r else 404, r or {"error": "no such run"})
         if u.path.startswith("/board"):
-            return self.proxy_board(u.path[len("/board"):].lstrip("/"))
+            return self.proxy_board(BOARD + u.path[len("/board"):].lstrip("/"))
+        if u.path == "/api/":           # the board page polls /api/ on its own origin; through this proxy that is here
+            return self.proxy_board(BOARD.rsplit("/board/", 1)[0] + "/api/")
         if u.path == "/events":
             return self.events()
         self._send(404, {"error": "not found"})
 
-    def proxy_board(self, rest):
+    def proxy_board(self, url):
         try:
-            with urllib.request.urlopen(BOARD + rest, timeout=3) as r:
+            with urllib.request.urlopen(url, timeout=3) as r:
                 return self._send(r.status, r.read(), r.headers.get("Content-Type", "text/html"))
         except urllib.error.HTTPError as e:
             return self._send(e.code, e.read() or b"", e.headers.get("Content-Type", "text/plain"))

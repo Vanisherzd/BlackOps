@@ -5,7 +5,7 @@
 # before the run. Same victim containers as every other drill: never run it while another drill or A/B is going.
 #   scripts/run-archive.sh <case>                    e.g. TRIAGE=1 scripts/run-archive.sh upstream-500
 # logs/runs/ is outside agent.CLEANUP_GLOBS, so cleanup_disk never touches it.
-cd ~/edge-agent || exit 1
+cd "$(dirname "$0")/.." || exit 1
 CASE="${1:?usage: scripts/run-archive.sh <case>}"
 TS=$(date +%Y%m%d-%H%M%S); OUT="logs/runs/$TS-$CASE"; mkdir -p "$OUT"
 lines() { [ -f "$1" ] && wc -l < "$1" || echo 0; }

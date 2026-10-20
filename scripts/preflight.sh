@@ -5,7 +5,7 @@
 #   scripts/preflight.sh --warm     # also one short completion per model, so the stage never sees a cold start
 # Endpoints (env): T2_URL (default http://127.0.0.1:8000, trtllm-serve), T1_URL (unset = no Tier-1 server yet, SKIP),
 # SHIM_URL (8001), OPS_URL (8790), DASHBOARD_URL (unset = SKIP), SERVED_NAME (edge-agent), T1_SERVED_NAME.
-cd ~/edge-agent || exit 1
+cd "$(dirname "$0")/.." || exit 1
 T2_URL="${T2_URL:-http://127.0.0.1:8000}"; SHIM_URL="${SHIM_URL:-http://127.0.0.1:8001}"
 OPS_URL="${OPS_URL:-http://127.0.0.1:8790}"; WARM=0; [ "$1" = "--warm" ] && WARM=1
 FAILS=0

@@ -29,12 +29,14 @@ import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONF_DIR = ROOT / "victim" / "conf.d"
+BOARD_DIR = ROOT / "victim" / "board"      # the factory status page the audience watches (served at /board/)
 # Canonical config lives in the script, not on disk: the agent may rewrite the file in its own style, and the fault
 # injection must still produce a broken file afterwards.
 GOOD_CONF = """server {
     listen 80;
     server_name _;
     location / { return 200 "ok\\n"; add_header Content-Type text/plain; }
+    location /board/ { alias /usr/share/nginx/board/; }
     location /api/ { proxy_pass http://edge-victim-app:80/; proxy_connect_timeout 2s; proxy_read_timeout 5s; }
 }
 """
@@ -135,7 +137,8 @@ def http(path):
 SPECS = {
     APP: f"docker run -d --name {APP} --network {NET} --restart no nginx:latest",
     FRONT: (f"docker run -d --name {FRONT} --network {NET} --restart no -p 127.0.0.1:8880:80 "
-            f"-v {CONF_DIR}:/etc/nginx/conf.d:ro -v {CACHE_VOL}:/var/cache/nginx nginx:latest"),
+            f"-v {CONF_DIR}:/etc/nginx/conf.d:ro -v {BOARD_DIR}:/usr/share/nginx/board:ro "
+            f"-v {CACHE_VOL}:/var/cache/nginx nginx:latest"),
     CACHE: f"docker run -d --name {CACHE} --network none --restart no -v {CACHE_VOL}:/cache nginx:latest sleep infinity",
 }
 

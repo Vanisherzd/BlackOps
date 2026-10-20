@@ -329,7 +329,8 @@ class H(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def _forward(self, data=None, tools=None, messages=None):
-        req = urllib.request.Request(UPSTREAM + self.path, data=data, method=self.command,
+        import tier                                       # TIER_MODE=off by default: returns UPSTREAM unchanged
+        req = urllib.request.Request(tier.upstream(UPSTREAM) + self.path, data=data, method=self.command,
                                      headers={k: v for k, v in self.headers.items() if k.lower() not in ("host", "content-length", "transfer-encoding")})
         try:
             resp = urllib.request.urlopen(req, timeout=900)

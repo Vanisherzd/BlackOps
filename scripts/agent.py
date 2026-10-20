@@ -48,9 +48,13 @@ DESTRUCTIVE = {"kill_process", "cleanup_disk", "clear_scratch_volume"}          
 def reviewed(name, args):
     """Second-agent approval for an irreversible action. Returns None to proceed, or the refusal text."""
     import reviewer
+    import tier                                            # an irreversible action is the hard judgement: Tier-2
+    tier.set_tier(2, f"review of {name}")
     ok, reason = reviewer.review(name, args, _incident["trace"], _incident["runbook_seen"])
     if ok:
-        return None
+        import approval                                    # third key, a human (APPROVAL=off by default: passes)
+        approved, text = approval.request(name, args, reason)
+        return None if approved else text
     # Every refusal names who refused and the next call. "the change reviewer did not approve" once read as a request
     # for a human: the agent answered "/approve" and the drill ended (2026-10-14).
     return (f"review-rejected: refused by the automatic change reviewer (no human approval exists: do not ask for one or send /approve). "
@@ -105,15 +109,18 @@ def with_health(result):
     """Append the health check to an action's result. The agent that fixed the stack and kept digging for five
     minutes had not run check_health after acting; now the answer arrives with the action."""
     health = {k: http_status(u) for k, u in HEALTH.items()}
+    import tier                                            # TIER_MODE=off by default: both calls are no-ops
     if all(v == 200 for v in health.values()):
         _incident.update(runbook_seen=False, refusals=0, trace=[])
         snapshot_known_good()
+        tier.set_tier(1, "health green after an action")
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
     state = docker_ps()
     hint = ""
     for line in state.splitlines():
         if "Exited" in line or "MISSING" in line or "Restarting" in line:
             hint = f" {line.split(chr(9))[0]} is {line.split(chr(9))[1][:40]}: that is the next thing to fix."
+    tier.set_tier(2, "an action left the stack failing")
     return f"{result}\nhealth now: {json.dumps(health)} -> still failing.{hint}\ncontainers now:\n{state}"
 
 
@@ -533,6 +540,9 @@ def _run_tool(name, args, dry_run):
         # cannot pick the procedure for it. Send it back for the symptom. Bounded, so a stubborn model cannot
         # deadlock: after two refusals the action goes through and the log shows it did.
         _incident["refusals"] += 1
+        if _incident["refusals"] >= 2:
+            import tier
+            tier.set_tier(2, "guards refused twice in this incident")
         if _incident["refusals"] <= 2:
             import rag
             catalogue = "\n".join(f"- {n}: {t}" for n, t, _ in rag.documents())
@@ -549,6 +559,8 @@ def _run_tool(name, args, dry_run):
         if all(v == 200 for v in health.values()):
             _incident.update(runbook_seen=False, refusals=0, trace=[])   # incident over; the next one starts clean
             snapshot_known_good()
+            import tier
+            tier.set_tier(1, "health green")
         return json.dumps(health)
     if name == "docker_ps":
         out = docker_ps()
@@ -616,9 +628,9 @@ def _run_tool(name, args, dry_run):
         return out
     if name == "write_config":
         content = args["content"]
-        if len(content) > 20000 or "proxy_pass" not in content:
-            return ("denied: config must stay under 20 KB and keep the /api/ proxy_pass. Next: read_config, keep its "
-                    "proxy_pass line, and write_config the complete corrected file.")
+        if len(content) > 20000 or "proxy_pass" not in content or "/board/" not in content:
+            return ("denied: config must stay under 20 KB and keep the /api/ proxy_pass and the /board/ location. "
+                    "Next: read_config, keep those lines, and write_config the complete corrected file.")
         if dry_run:
             return "DRY-RUN: would write default.conf"
         KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)

@@ -1,106 +1,116 @@
-# Blackout Ops 專案進度（2026-10-20 晚）
+# Blackout Ops 專案進度（2026-10-20 23:40 更新）
 
-離 10/21 工作坊 1 天、10/22–23 黑客松 2 天、10/23 12:30 code freeze。
-資料來源：git log（kb-retrieval-v2 共 50 個 commit，比 main 多 23 個）、`docs/`、`logs/`、決賽 Demo 執行手冊（10/14）。
+時程：10/21 工作坊（剩 1 天）→ 10/22–23 黑客松 → 10/23 12:30 code freeze。
+資料來源：三條分支的 git log、`docs/HANDOFF-kb-retrieval-v2.md`（vanli）、`logs/`、今晚的回歸測試。
 
 ## 1. 一句話現況
 
-診斷修復的核心（agent、guards、雙鑰匙審核、知識庫、計分）在 DGX Spark 上**已經成熟**，並且經過盲測量化。
-**demo 外殼**（遠端 victim、dashboard、watchdog、斷網、審批、Tier、功耗）今天才補上骨架，**還沒接到既有程式，也還沒在 Thor 上跑過**。
+- **診斷修復核心**已經成熟並有量化數據：agent、安全規則、三把鑰匙、知識庫、計分卡，都在 kb-retrieval-v2 上。
+- **demo 外殼**：決賽手冊 14 項中 12 項已在 `demo-infra` 上完成並接線，host 迴圈回歸無退步。
+- **還沒驗證的兩件事**：NemoClaw 路徑上的 demo 外殼，以及**整套系統在 Thor 上跑**。
 
-## 2. 時程對照
+## 2. 分支
 
-| 時間 | 計畫 | 狀態 |
-|---|---|---|
-| 9/27 | agent 迴圈、runbook 閘門、scorecard、雙鑰匙 change reviewer | ✅ 9/9 seen cases autonomous |
-| 9/29 | 12 頁企劃書（Beamer v1→v2） | ✅ 已交 |
-| 9/30 | 知識庫遷入 repo、`search_incident_knowledge`、KB eval（壓縮曲線） | ✅ |
-| 10/13–14 | retrieval v3、第一次盲測（5 案） | ✅ |
-| 10/17–19 | 盲測 batch 2–4、KB v4 repair cards、expert pruning、guards 放寬 | ✅ |
-| 10/19–20 | thinking-off A/B、shim 量測健康並駁回錯誤的「healthy」 | ✅；**A/B 仍在 DGX 上跑**（`logs/ab-20261020-155259*`） |
-| 10/20 前（手冊） | #1–#8 基礎設施，加上 victim 筆電、離線包、向主辦確認 | ⚠️ 見 §4；**落後約 3–4 人天** |
-| 10/21 | Thor 實機：機型、nvpmodel、MIG、推論引擎、NemoClaw onboard、tegrastats rail 名稱 | ⬜ |
-| 10/22 | 部署到 Thor、#10–#12、傍晚檢查點（第二幕連續 3 次成功）、夜跑 | ⬜ |
-| 10/23 | 收數據、排練 3 次、12:30 freeze | ⬜ |
+```
+main (aec7c0c, 9/30)
+ ├─ kb-retrieval-v2 (vanli, 48b16f9, 10/20 23:08)   主線：agent、guards、KB、shim 加速
+ │    └─ demo-infra (我們, 已 merge 48b16f9)          demo 外殼；PR 目標：kb-retrieval-v2 → 最後到 main
+ └─ feat/blackbox-bolt-vllm (ca74d6a, 10/17)          獨立的 blackbox/ 系統＋Bolt 74B on vLLM :8200
+```
+
+- repo 已改名為 **https://github.com/Vanisherzd/BlackOps**，舊網址會自動轉過去。
+- demo-infra 合進 kb-retrieval-v2 **沒有程式碼衝突**，並已 merge 最新的 48b16f9。
+- bolt 分支從 9/30 的 main 分出，沒有 kb-retrieval-v2 和 demo-infra 的任何東西。demo 外殼在 bolt 分支上**無效**，因為它不走 `scripts/agent.py`、`ops_api`、`shim`。合併時只有 `.gitignore` 會有文字衝突。
+- Bolt 模型可以當 Tier-2 用：以 `edge-agent` 的名稱開在 :8200，設 `UPSTREAM_T2=http://127.0.0.1:8200`。要注意記憶體，這台沒有 swap。
+- `~/edge-agent`（kb-retrieval-v2）已清乾淨，我們的檔案都在 `~/edge-agent-demo`（demo-infra）。
 
 ## 3. 已完成而且有數據的部分（可直接上簡報）
 
-**Agent 能力**（Nemotron-3-Nano-30B-A3B-NVFP4，TensorRT-LLM，Spark）
-- seen 9 案：29/30 autonomous（`docs/scorecard.md`；最早期歷史 28/34）
+### Agent 能力
+環境：Nemotron-3-Nano-30B-A3B-NVFP4、TensorRT-LLM、DGX Spark。
+
+- 見過的 9 案：29/30 autonomous（`docs/scorecard.md`）。
 - 盲測：
   - batch 1：6/15
-  - batch 2：11/15，根因說對 8/15
+  - batch 2：11/15
   - batch 3：v3 4/12、v4 5/12
   - batch 4：v3 6/12、v4 3/12
-- 盲測的主要限制：需要的資訊沒有工具拿得到（記憶體上限、known-good 設定），或 guards 的條件是為已知故障寫的。
-- 對照模型 Bolt（branch `feat/blackbox-bolt-vllm`，worktree `~/edge-agent-bolt`）：seen 20/20、blind 8/15；Nano 為 29/30、6/15。
-- thinking off：4–5× 快，但 6/18 vs 11/18，且有 6 次錯誤的健康宣稱。shim 加上「系統自己量測健康」後：錯誤宣稱 6→0，resolved 6→9/18。
-- expert pruning（128→112/層）：21/25，與未剪枝相同；18.5→16.1 GiB。
+  - 主要限制：需要的資訊沒有工具拿得到，或安全規則只為已知的故障寫好。
+- **分情況開關思考＋開場資料**（vanli，`fd7a79a`，各 54 場）：修好 43/54 vs 41/54，模型呼叫少 45%，見過的題目中位時間 56→38 秒，0 謊報、0 越修越壞。
+- shim 的健康保護網（`189de86`）：關閉思考時，謊報從 6 降到 0。
+- 對照 Bolt：見過的題目 20/20、盲測 8/15；Nano 是 29/30、6/15。
+- expert 剪枝 128→112：21/25，和原版相同，18.5→16.1 GiB，但推論不會變快。
 
-**安全機制**
-- runbook 閘門：沒讀過 runbook 就拒絕動作。
-- 雙鑰匙：程式檢查前置條件，加上 reviewer agent 判斷。
-- 每次拒絕都寫明是誰拒絕、下一步該呼叫什麼。
-- cleanup 只刪 allowlist 裡的檔案，證據 log 不可刪。
-- 已記錄的 made-worse 案例：batch 4 有 2 次（誤修了健康的前端設定）。
+### 知識庫
+詳見 `docs/kb-coverage-survey.md`。
 
-**知識庫**（詳見 `docs/kb-coverage-survey.md`）
-- 1,612 筆，其中可執行的卡 31 張、演練經驗 17 筆。
-- 公開 held-out 上 RAG 的效果在雜訊內。
-- 對真實機房錯誤句的覆蓋率 20%（14/70）。硬體、電源、Proxmox、K8s、L2/L3 網路幾乎是零。
-- 壓縮曲線已有：none 的工作點 16×、rag 的工作點 32×，準確率持平，輸入 token 降 47–56%（`docs/kb-eval-v3-unseen.md`）。
+- v4 沒有可量測的效果，**預設維持 v3**。
+- 對真實機房錯誤句的覆蓋率 20%（14/70）：硬體、電源、Proxmox、K8s、L2/L3 網路幾乎是零。
+- 壓縮曲線：準確率持平，輸入 token 降 47–56%。
 
-## 4. Demo 外殼（決賽手冊的 14 項）
+## 4. Demo 外殼（決賽手冊 14 項；細節見 `docs/demo.md` §6）
 
-10/20 新增於 branch `demo-infra`。全部是新檔，預設 inert 或 opt-in，沒有改動既有檔。
+| 狀態 | 項目 |
+|---|---|
+| ✅ 完成且接線 | #2 prompt 修正、#3 廠務看板、#7 dashboard、#8 preflight、#10 人工審批、#11 Tier、#12 功耗、#14 能耗計分（`score-runs.py`） |
+| ✅ 骨架完成，未實跑 | #4 watchdog（叫醒 NemoClaw 未測）、#5 run-archive、#6 wan.sh（需要 sudo）、#13 overnight |
+| ⚠️ 已準備，要在 Thor 驗證 | #9 Thor 推論：runtime nvidia、`thor-128g`／`64g`、`tier1.yaml`、`serve-tier1.sh` |
+| ⏸ 延後 | #1 遠端 victim：10/22 傍晚檢查點後再決定 |
 
-| # | 項目 | 狀態 | 剩下要做的 |
-|---|---|---|---|
-| 1 | 遠端 victim | ❌ | 改 `faults.py`、`agent.py`（1–1.5 天，另開 branch/worktree） |
-| 2 | prompt 去掉 8880 | ✅ branch | `upstream-502.md`、`AGENTS.md` 已改；8880 只有遠端 victim 才需要動 |
-| 3 | 看板頁 | ✅ branch | 掛載與 write_config 規則已加；需要 `faults.py setup` 重建容器並跑回歸 |
-| 4 | watchdog | ✅ 骨架 | 實際叫醒 agent 的路徑還沒測 |
-| 5 | 歸檔 | ✅ `run-archive.sh` | 實跑一場（要等實驗結束） |
-| 6 | wan.sh | ✅ 骨架 | 在有 sudo 的機器上實測 down/up |
-| 7 | dashboard | ✅ 骨架 | 用瀏覽器看版面；從台上筆電經會場網路連線 |
-| 8 | preflight | ✅ | — |
-| 9 | Thor serve | ⚠️ branch 已準備 | Jetson 自動用 `--runtime nvidia`；`trt/thor-*.yaml`、`serve-tier1.sh` 已備；剩 4B 模型 ID、parser 相容性、記憶體比例，**只能在 Thor 上驗證** |
-| 10 | 人工審批 | ✅ branch 已接線 | 回歸測試 |
-| 11 | Tier 控制器 | ✅ branch 已接線 | 驗證 4B/30B 的 parser 相容性（需要 Tier-1 server） |
-| 12 | power | ✅ | Thor 的 rail 名稱 |
-| 13 | overnight.sh | ✅ branch | 實跑 |
-| 14 | 能耗計分 | ✅ `score-runs.py` | score.py 不動；以合成資料驗證 |
+**今晚另外做的**：
+- 廠務包裝：示範晶圓廠的看板頁，dashboard 改用「產線看板前端／MES API」的名稱。
+- 看板頁改由 dashboard 提供：前端掛掉時頁面會轉紅，不會變成白頁。
+- 修正 vanli 交接文件 §4.1 的 bug：被拒絕的那一輪不再關掉思考，`approval-rejected:` 也一併排除（`f34a08e`，**未經 drill 量測**）。
+- `docs/demo.md` 依實際狀況修訂（原版保留在 git 歷史 `087b503`）。
 
-既有檔的精確修改見 `docs/demo-pending-edits.md`。**實驗結束後**，由檔案的負責人套用，再跑回歸。
-
-**今天就能跑的退路 demo**：`faults.py setup`，然後 `scripts/nemoclaw-drill.sh <case>`，在終端看 log（Spark 上可用）。
+**回歸測試**（host 迴圈，共用 victim，22:56–23:18）：
+- 見過的 9 案中 6 案一次就過。另外 3 案重跑 1 次，branch 版過 2 案、原版過 1 案，差距在隨機波動範圍內；失敗的紀錄都沒有碰到新加的程式。
+- 打開審批和 Tier 跑 upstream-500：PASS，Tier 1→2→1 都有紀錄。
+- 跑完後，victim 已用 `~/edge-agent` 的程式重建回原狀。
+- 細節見 `docs/demo-pending-edits.md`。
 
 ## 5. 主要風險（依嚴重度）
 
-1. **硬體平台還沒在實機驗證。** 企劃書與手冊寫的是 Jetson Thor，但 `docs/hackathon-runbook.md` 和全部實驗都在 DGX Spark 上。trtllm-serve 在 Tegra 上未驗證，這台也沒有 4B 模型。10/21 是唯一的驗證窗口。
-2. **企劃書的主張還沒有數據。** 「信心分級調度＋nvpmodel」的能耗（表一、表二）一筆都沒有，MIG 也還不確定。10/22 傍晚的檢查點如果沒過，要改用口頭和夜跑數據交代。
-3. **demo 外殼落後。** 接線和遠端 victim 都會改到核心檔，跟仍在進行的實驗衝突，需要協調誰在什麼時候改。
-4. **知識庫廣度。** 評審若問硬體或電源類故障，目前答不出來。補卡建議見 `docs/kb-coverage-survey.md` §4；比賽前只建議做 D 組與少量 A 組。
-5. **共用主機。** 多人共用同一個工作目錄，experiment 會從工作目錄熱載入程式。建議每人用 `git worktree`，不要在共用目錄切 branch。
+1. **硬體平台還沒驗證。** 到目前為止全部在 DGX Spark 上做；trtllm-serve 在 Tegra 上沒跑過；Tier-1 的 4B 模型 ID、parser 相容性、記憶體比例都還不知道。10/21 是唯一的驗證窗口。
+2. **企劃書主張的能耗還沒有數據。** 表一、表二仍然空白。要等 Thor 上有 Tier-1 server 和 nvpmodel，才能跑 `overnight.sh`。MIG 也還不確定。
+3. **NemoClaw 路徑的 demo 外殼還沒測。** drill 只在 `~/edge-agent` 裡跑，要等 demo-infra 合進去，或直接在 Thor 上一次 clone。
+4. **既有成果揭露。** 審批和能耗治理原本計畫在黑客松期間完成，現在已提前做完，揭露頁要照實寫。
+5. **共用的 Spark。** victim、沙盒、shim、推論服務都只有一套，跑 drill 前要先跟 vanli 協調時段（HANDOFF §0）。
+6. **知識庫廣度。** 評審若問硬體或電源類故障，目前答不出來。
 
-## 6. 建議的下一步（依序）
+## 6. 接下來（依序）
 
-1. 等 A/B 實驗結束，寫結論並 commit（負責人：vanli）。
-2. 套用 `docs/demo-pending-edits.md` 的 §1（prompt）與 §2（審批）。風險低，套完跑 9 案回歸。
-3. 在 Spark 上實跑一次 `run-archive.sh upstream-500`、`watchdog.py`、`dashboard.py`，用瀏覽器看畫面。
-4. 10/21 Thor：照手冊工作坊的清單做，並優先確認 #9。
-5. 10/22：§3 的 Tier 接線、遠端 victim（如果要做）、`overnight.sh`。
-6. 器材清單、離線包、向主辦確認的事項（電源、sudo、switch、有線網路）：repo 裡看不到進度，**請負責人自行確認**。
+**今晚／10/21 早上**
+1. push demo-infra，開 PR 到 `kb-retrieval-v2`，請 vanli review；之後一路合到 main。
+2. 跟 vanli 協調一個時段，在 `~/edge-agent` 用合併後的版本跑 NemoClaw 路徑：
+   - 5 張卡 × 3 次。
+   - watchdog 叫醒 agent 實測一場。
+   - `run-archive.sh` 實跑一場。
+   - 打開 `SHIM_ADAPTIVE` 重跑 B 組，驗證 §4.1 的修正。
+3. 準備離線包：Thor 推論映像、4B 模型、HF cache、wheels。
+
+**10/21 工作坊**
+4. 照 `docs/demo.md` §7 的清單做，**第一優先是 #9 Thor 推論能跑起來**。
+
+**10/22**
+5. 部署到 Thor → 9 案回歸 → 傍晚檢查點（第二幕連續 3 次成功）→ 決定遠端 victim 要不要做 → 夜跑。
+
+**簡報**
+6. 加上廠務包裝；措辭改成「規則巡檢不推論」；加上同機部署的 Q&A 答案；更新揭露頁。
+
+**器材與主辦**
+7. 電源供應器、sudo、switch、有線網路：**repo 裡看不到進度，請負責人確認**。
 
 ## 7. 檔案索引
 
 | 主題 | 檔案 |
 |---|---|
+| Demo 執行手冊（修訂版） | `docs/demo.md` |
+| demo 修改紀錄與回歸 | `docs/demo-pending-edits.md` |
+| kb-retrieval-v2 交接文件（vanli） | `docs/HANDOFF-kb-retrieval-v2.md` |
 | 架構與每項設計決策 | `docs/agent-design.md` |
-| 計分卡 | `docs/scorecard.md`、`scripts/score.py` |
-| KB 評估 | `docs/kb-eval*.md`、`docs/kb-retrieval-v2.md`、`docs/kb-repair-cards.md` |
-| KB 覆蓋度與 survey | `docs/kb-coverage-survey.md`、`scripts/kb-probe.py` |
-| demo 待辦 diff | `docs/demo-pending-edits.md` |
+| 計分卡 | `docs/scorecard.md`、`scripts/score.py`、`scripts/score-runs.py` |
+| KB 評估、覆蓋度與 survey | `docs/kb-eval*.md`、`docs/kb-repair-cards.md`、`docs/kb-coverage-survey.md`、`scripts/kb-probe.py` |
 | 企劃書 | `docs/proposal-12-pages.md`、`docs/proposal/` |
 | Spark 部署 | `docs/hackathon-runbook.md`、`scripts/bootstrap-spark.sh` |
 | 效能 | `docs/bench-2026-09-22.md`、`docs/serving-metrics-2026-09-22.md`、`docs/expert-pruning.md` |

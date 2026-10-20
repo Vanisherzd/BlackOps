@@ -66,10 +66,15 @@ OFFLINE_ENV=
 [ -n "${HF_TOKEN:-}" ] && TOKEN_ENV='-e HF_TOKEN'
 [ -n "${HF_HUB_OFFLINE:-}" ] && OFFLINE_ENV='-e HF_HUB_OFFLINE'
 
+# BOLT_GPU_FLAGS: the Spark takes --gpus all; a Jetson (Thor) needs the NVIDIA runtime instead.
+if [ -z "${BOLT_GPU_FLAGS:-}" ]; then
+  if [ -f /etc/nv_tegra_release ]; then BOLT_GPU_FLAGS="--runtime nvidia"; else BOLT_GPU_FLAGS="--gpus all"; fi
+fi
+
 # shellcheck disable=SC2086
 docker run -d \
   --name "$BOLT_CONTAINER" \
-  --gpus all \
+  $BOLT_GPU_FLAGS \
   --ipc=host \
   --network host \
   --restart no \

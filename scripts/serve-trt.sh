@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Serve with TensorRT-LLM (trtllm-serve, OpenAI-compatible) in the NGC container. Offline: model must be in the HF cache.
+# LEGACY since 2026-10-20: the default engine is vLLM (scripts/serve-vllm.sh). Kept to reproduce the results measured on it.
 # Runs in the foreground so systemd can supervise it; `docker stop trtllm-edge` stops it.
 set -euo pipefail
 cd "$(dirname "$0")/.."

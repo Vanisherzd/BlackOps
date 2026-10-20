@@ -10,7 +10,8 @@ logs/ops-api.log and is safe to leave open beside a running drill.
   GET  /api/state         the same state once (scripts/preflight.sh checks it)
   GET  /api/runs          archived runs (logs/runs/*/meta.json, newest first)
   GET  /api/replay?run=X  every row of one archived run with its time, for the page's REPLAY mode
-  GET  /board/            reverse proxy to the victim's board page (DASH_BOARD_URL), so the stage sees it off-segment
+  GET  /board/            the victim's board page, from victim/board/ (proxied from DASH_BOARD_URL if the file is
+                          missing): served here so a front end that is down shows red instead of a blank page
   GET  /api/              the victim's /api/, for that page's own poll (exact path only)
   POST /api/action        {"action": "inject"|"reset"|"wan-down"|"wan-up", "case": ...}   only with DASH_ACTIONS=1
   POST /api/approval      {"id": ..., "decision": "approve"|"reject"}
@@ -43,6 +44,7 @@ PAGE = pathlib.Path(__file__).resolve().parent / "dashboard.html"
 HEALTH = [u.strip() for u in os.environ.get(
     "DASH_HEALTH", "http://127.0.0.1:8880/,http://127.0.0.1:8880/api/").split(",") if u.strip()]
 BOARD = os.environ.get("DASH_BOARD_URL", "http://127.0.0.1:8880/board/")
+BOARD_FILE = ROOT / "victim" / "board" / "index.html"   # the same page the victim serves; DASH_BOARD_URL is the fallback
 ACTIONS = os.environ.get("DASH_ACTIONS") == "1"
 CARDS = ("nginx-stopped", "container-removed", "bad-config", "upstream-paused", "upstream-500")   # stage buttons
 APPROVALS = LOGS / "approvals"
@@ -296,6 +298,8 @@ class H(BaseHTTPRequestHandler):
             r = replay((urllib.parse.parse_qs(u.query).get("run") or [""])[0])
             return self._send(200 if r else 404, r or {"error": "no such run"})
         if u.path.startswith("/board"):
+            if BOARD_FILE.exists():     # served from here: a front end that is down must show red, not a blank page
+                return self._send(200, BOARD_FILE.read_bytes(), "text/html; charset=utf-8")
             return self.proxy_board(BOARD + u.path[len("/board"):].lstrip("/"))
         if u.path == "/api/":           # the board page polls /api/ on its own origin; through this proxy that is here
             return self.proxy_board(BOARD.rsplit("/board/", 1)[0] + "/api/")

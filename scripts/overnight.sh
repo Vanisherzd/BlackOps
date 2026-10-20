@@ -7,7 +7,7 @@
 # Runs detached; logs/overnight-<time>.log ends with ALL_DONE. Uses the shared victim: nothing else may drill meanwhile.
 # The ops API and the shim are restarted per arm by pid file (as ab-drill.sh and logs/shim-env.sh do), because the
 # tier and approval switches live in those processes' environments. power.py is started if it is not running.
-cd "$(dirname "$0")/.." || exit 1
+cd "${EDGE_HOME:-$HOME/edge-agent}" || exit 1   # where nemoclaw-drill.sh runs and writes its logs
 ROUNDS="${1:-3}"; shift
 CASES="${*:-nginx-stopped container-removed bad-config upstream-paused upstream-500}"
 [ -z "$UPSTREAM_T1" ] && echo "warning: UPSTREAM_T1 unset, arm B routes every turn to Tier-2 as well" >&2

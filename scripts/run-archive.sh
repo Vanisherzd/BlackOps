@@ -5,9 +5,9 @@
 # before the run. Same victim containers as every other drill: never run it while another drill or A/B is going.
 #   scripts/run-archive.sh <case>                    e.g. TRIAGE=1 scripts/run-archive.sh upstream-500
 # RUN_LABEL names the arm in meta.json (scripts/overnight.sh sets it); scripts/score-runs.py groups by it.
-# nemoclaw-drill.sh always works in ~/edge-agent, so run this from that checkout.
+# nemoclaw-drill.sh always works in ~/edge-agent, so this does too (EDGE_HOME overrides).
 # logs/runs/ is outside agent.CLEANUP_GLOBS, so cleanup_disk never touches it.
-cd "$(dirname "$0")/.." || exit 1
+cd "${EDGE_HOME:-$HOME/edge-agent}" || exit 1   # where nemoclaw-drill.sh runs and writes its logs
 CASE="${1:?usage: scripts/run-archive.sh <case>}"
 TS=$(date +%Y%m%d-%H%M%S); OUT="logs/runs/$TS-$CASE"; mkdir -p "$OUT"
 lines() { [ -f "$1" ] && wc -l < "$1" || echo 0; }

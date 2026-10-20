@@ -928,3 +928,26 @@ Without thinking the agent claimed fixes it never verified and ended several dri
 the thinking-off arm (`ab-20261019-195910-B`) was invalid: the shim's SHIM_THINK=0 only left the flag out and the
 template's default is on, so both arms thought (974 and 818 tokens per call). It doubles as an A/A run: 11/18 and
 12/18 with single cases flipping both ways, the noise any one-run-per-case comparison has to beat.
+
+## Measured health on the last word (2026-10-20)
+
+`scripts/oai_shim.py`, on requests that carry a check_health tool: when a turn ends in text, the shim measures the
+health URLs itself (no redirects followed) and appends `[measured by the system at ...: front .., api .. -> healthy |
+NOT recovered]`; when the text claims the stack is healthy (the scorer's own pattern, an escalation excepted) and
+the measurement disagrees, the turn becomes a check_health call instead, at most twice per incident (counted from
+the injected call ids in the history). It measures directly rather than through the ops API so the scorer does not
+credit the agent with a closure check it did not make. Same 18 cases, one run each:
+
+| | resolved | false claims in the final report | made worse | timeouts | total s |
+|---|---|---|---|---|---|
+| thinking on (`ab-20261019-195910-A`) | 11/18 | 0 | 1 | 2 | 4743 |
+| thinking off (`ab-20261019-231122-B`) | 6/18 | 6 | 1 | 0 | 1340 |
+| thinking off + verifier (`ab-20261020-132501-B`) | 9/18 | 0 | 0 | 1 | 1945 |
+| thinking on + verifier (`ab-20261020-141410-B`) | 14/18 | 0 | 0 | 0 | 2842 |
+
+With thinking off it refuted 17 claims and 3 more drills were resolved. With thinking on it never intervened (12
+claims confirmed, 3 turns without a claim), so 14 against 11 is run-to-run variance and the time difference is mostly
+the two timeouts; there it costs nothing and turns "no false claim" from an observation into a guarantee. The scorer
+still counted 3 false claims in the thinking-off run: one intercepted mid-run claim (it scans the whole turn) and two
+honest reports ("the front-end is healthy" while /api/ fails; "restored the known-good config"), its pattern is too
+loose.

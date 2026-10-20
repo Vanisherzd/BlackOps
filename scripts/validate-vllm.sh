@@ -37,7 +37,7 @@ log "NemoClaw drills, five stage cases x $N"
 CASES=""; for r in $(seq 1 "$N"); do CASES="$CASES nginx-stopped container-removed bad-config upstream-paused upstream-500"; done
 DLOG=$(cd "$EDGE_HOME" && bash scripts/drill-all.sh $CASES)
 echo "drill log: $EDGE_HOME/$DLOG" | tee -a "$OUT/summary.txt"
-until grep -q ALL_DONE "$EDGE_HOME/$DLOG" 2>/dev/null; do sleep 20; done
+for _ in $(seq 1 540); do grep -q ALL_DONE "$EDGE_HOME/$DLOG" 2>/dev/null && break; sleep 20; done   # at most 3 h
 cp "$EDGE_HOME/$DLOG" "$OUT/"
 (cd "$EDGE_HOME" && "$PY" scripts/score.py "$DLOG") > "$OUT/scorecard.md" 2>&1
 grep "^headline" "$OUT/scorecard.md" | tee -a "$OUT/summary.txt"

@@ -42,11 +42,25 @@ git：`integrate-vllm` 從 `demo-infra` 分出，`demo-infra` 已包含 `kb-retr
 |---|---|
 | merge 後 33 個單元測試（mock server） | ✅ 33/33 |
 | 各 Python 腳本可以編譯 | ✅ |
-| Spark 上用 `serve-vllm.sh` 啟動 Bolt 並通過 `/health` | ⬜ 需要先停掉 `trtllm-edge`（vanli 的服務），要先協調 |
-| Bolt 加上整套 agent 的回歸：9 案，host 迴圈加 NemoClaw 路徑 | ⬜ 同上 |
+| Spark 上用 `serve-vllm.sh` 啟動 Bolt 並通過 `/health` | ✅ 約 5 分鐘到 healthy；smoke OK（2026-10-20 23:50） |
+| Bolt 加上整套 agent，host 迴圈，9 案 × 3 | ✅ **26/27**（唯一失敗是 upstream-detached 第 1 輪；這案在 TRT 上兩個版本也都失敗過） |
+| Bolt 加上整套 agent，**NemoClaw 路徑**，5 張舞台卡 × 3 | ✅ **15/15 autonomous**，made-worse 0、謊報 0、evidence-first 100%、closure 100%（`~/edge-agent/logs/drills-20261021-003040.log`） |
+| vllm 分支的 tool_eval，打 :8000 | 26/27，跟組員 10/17 在 :8200 量到的結果一樣；只錯 `unsupported_rotate_cert`（遇到不支援的請求時沒有好好結束）。腳本回報 FAIL，是因為它把「沒有全部通過」視為失敗 |
 | 分情況思考、健康保護網在 Bolt 上的效果 | ⬜ 原本是在 Nano/TRT 上量的 |
 | Thor 上跑 vLLM | ⬜ Bolt 映像是為 GB10（sm121）建的，Thor 能不能跑未知；退路是 jetson-containers 的 vLLM |
 | 64 GB Thor 放不放得下 Bolt | ⬜ 權重 24 GB；放不下就改用 Nano-30B-A3B-NVFP4 跑在 vLLM 上 |
+
+### 舞台卡的中位時間：Bolt 與 Nano 比較（NemoClaw 路徑）
+
+| 卡 | Bolt／vLLM（2026-10-21，每卡 3 次） | Nano／TRT（`docs/scorecard.md`） |
+|---|---|---|
+| nginx-stopped | 40 s | 44 s |
+| container-removed | 31 s | 30 s |
+| upstream-paused | 46 s | 46 s |
+| bad-config | 66 s | 79 s |
+| upstream-500 | **106 s** | 48–65 s |
+
+upstream-500 變慢：Bolt 在重啟之後、重建之前，多查了幾步。第二幕有 2 分鐘，加上人工核准仍然放得下，但比較緊。可以考慮開 `SHIM_ADAPTIVE=1 TRIAGE=1` 再量一次。驗證的完整輸出在 `~/edge-agent-demo/logs/validate-vllm-20261020-235009/`。
 
 ## 4. 對簡報和評分的影響（要改的地方）
 
@@ -58,9 +72,7 @@ git：`integrate-vllm` 從 `demo-infra` 分出，`demo-infra` 已包含 `kb-retr
 
 ## 5. 接下來
 
-1. **協調一個時段**：停掉 `trtllm-edge`，執行 `scripts/serve-vllm.sh`，然後跑：
-   - `scripts/smoke.py`
-   - 9 案回歸：host 迴圈加 NemoClaw 路徑，每題至少 3 次。
-   - `blackbox/benchmarks/tool_eval.py`，對著 `:8000`。
-2. 回歸沒有退步，就開 PR `integrate-vllm` → `main`。
+1. ✅ 驗證完成，無退步（見 §3）。Bolt 目前以 `vllm-edge` 這個容器名稱、`edge-agent` 這個模型名稱，留在 :8000 上服務。
+2. 開 PR：`integrate-vllm` → `main`。
+3. 用 Bolt 重新量盲測與分情況思考。原本的數據是在 Nano 上量的。
 3. 10/21 在 Thor 上驗證 vLLM。

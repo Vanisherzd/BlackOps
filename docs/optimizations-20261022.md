@@ -90,9 +90,13 @@ Lightning 的 model card 在 Spark 上推薦 DSpark drafter（`nvidia/NVIDIA-Nem
 | long-context（8.9k prompt，700 tokens） | 68.0 | **91.0** | +34% | 3.71 → 3.57 |
 
 輸出密度一樣（上次 NGram 壞掉時 chars/token 崩到一個字；這次沒有；`report` 兩邊都被 bench 標 OUTPUT BROKEN 是那個 prompt 自己把 700 tokens
-想完，A/B 相同）。容器 RSS 4.08 GiB 對 3.57 GiB（+0.5 GB），unified memory 多一份 draft 權重。speculative decoding 帶驗證在理論上不改分布，
-但 2026-10-19 NGram 的教訓是「量過才算」：drill 品質驗證見下。啟用方式：`SPEC=dspark scripts/serve-vllm.sh`（lightning profile 的選配；
-Thor 不設就是原配方）。
+想完，A/B 相同）。容器 RSS 4.08 GiB 對 3.57 GiB（+0.5 GB），unified memory 多一份 draft 權重。
+
+**drill 品質驗證（04:47–05:00，shim 指到 DSpark 實例，`logs/drills-20261022-024654.log`）**：五張舞台牌＋三個複合故障 **8/8 autonomous**，
+made-worse 0、false health claims 0、evidence-first 100%、closure 100%（`scripts/score.py`）。牆鐘：nginx-stopped 17 s（原 24–25）、
+container-removed 16 s（21）、upstream-500 24 s（28–33）、bad-config 38 s（30–33）、upstream-paused 46 s（35，多一次無關呼叫）、複合 38／57／95 s
+（原 64–76／42–47／52–77）——牆鐘被模型變異蓋過，品質沒掉。**採用（Spark）**：`SPEC=dspark GPU_MEMORY_UTILIZATION=0.20 scripts/stage-up.sh`；
+serve-vllm 的 generic 與 lightning 路徑都認 SPEC。Thor 的 NGC 映像沒驗過 DSpark／FlashInfer Mamba，不設就是原配方。
 
 ## 給隊友
 

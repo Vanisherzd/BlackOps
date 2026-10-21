@@ -52,15 +52,16 @@ if [ "$PROFILE" = lightning ]; then
          REASONING_PARSER="${REASONING_PARSER:-nemotron_v3}" \
          EXTRA_ARGS="${EXTRA_ARGS:---moe-backend marlin --kv-cache-dtype fp8 --mamba-cache-mode align}" \
          GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.30}"
-  # SPEC=dspark: the model card's DGX Spark recipe, DSpark speculative decoding (draft nvidia/...-DSpark, 1.35 GB, must be
-  # in the HF cache) with the FlashInfer Mamba backend. Opt-in: measured on the Spark 2026-10-22 (docs/optimizations-
-  # 20261022.md); the Thor keeps the plain recipe unless someone sets it there. SPEC_TOKENS and MAMBA_BACKEND override.
-  if [ "${SPEC:-}" = dspark ]; then
-    EXTRA_ARGS="$EXTRA_ARGS --speculative_config.model ${DSPARK_MODEL_ID:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark}"
-    EXTRA_ARGS="$EXTRA_ARGS --speculative_config.num_speculative_tokens ${SPEC_TOKENS:-3} --mamba-backend ${MAMBA_BACKEND:-flashinfer}"
-    export EXTRA_ARGS
-  fi
   PROFILE=generic
+fi
+# SPEC=dspark: the model card's DGX Spark recipe for Lightning, DSpark speculative decoding (draft nvidia/...-DSpark,
+# 1.35 GB, must be in the HF cache) with the FlashInfer Mamba backend. Applies to the lightning alias and to a generic
+# start of the same model (stage-up uses generic). Opt-in, measured on the Spark 2026-10-22: +27-49 % decode tokens/s,
+# 8/8 drills (docs/optimizations-20261022.md). The Thor keeps the plain recipe unless SPEC is set there.
+if [ "${SPEC:-}" = dspark ]; then
+  EXTRA_ARGS="${EXTRA_ARGS:-} --speculative_config.model ${DSPARK_MODEL_ID:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark}"
+  EXTRA_ARGS="$EXTRA_ARGS --speculative_config.num_speculative_tokens ${SPEC_TOKENS:-3} --mamba-backend ${MAMBA_BACKEND:-flashinfer}"
+  export EXTRA_ARGS
 fi
 NAME="${NAME:-${BOLT_CONTAINER:-vllm-edge}}"
 PORT="${PORT:-${BOLT_PORT:-8000}}"

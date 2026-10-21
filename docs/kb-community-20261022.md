@@ -272,6 +272,23 @@ reranker 的分數幾乎是二值的（runbook 那邊也是：1.0 一堆、0.0 �
 `RERANK_URL=http://127.0.0.1:8020/rerank`；沒設或 sidecar 沒回就是 BM25 排序。stage-up 不啟動它（計畫規定：旗標預設關，
 排練乾淨才開）。
 
+## Phase 4 補充 — 資料擴增：archive.org 傾印（v2，05:00）
+
+serverfault + unix 完整傾印（CC BY-SA，`scripts/kb-community.py fetch-dump`，作者從 Users.xml 補齊、ContentLicense 保留）：
+事故樣貌的題目（標題含錯誤字或內文有錯誤行／程式碼行、有已接受答案、在 12 類標籤內）serverfault 41,749、unix 24,591，
+加 API 批次、扣掉 v1 的 held-out → **66,340 筆**（v1 的 10 倍），每站一個 gzip 分片放 `kb/artifacts/community_v2/`。
+索引改倒排表（結果與全掃逐位相同），載入 5.7 s（ops_api 啟動時背景預熱），泛用 token 的 posting 長，每查詢 63 ms（v1 5.5 ms）。
+
+| | v1（6,456） | v2（66,340） |
+|---|---|---|
+| P2 category@1（BM25，同一組 held-out） | 0.702 | **0.722** |
+| P3 探針 對／錯／無（BM25） | 31／5／2 | 28／**8**／2 |
+
+資料多了，BM25 的 top-1 在 held-out 上好一點，在 38 句探針上反而多 3 句錯：更大的池子裡近似但不相關的題目更多
+（`ping -M do -s 1472` 排到「SSH 貼大段文字失敗」）。這正是 reranker 該做的事；v2 + rerank 的數字見下一段。
+
+（v2 + rerank：待補。）
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

@@ -66,9 +66,10 @@ def screen(tool, text):
             continue
         blocked, rail = check(OUTPUT, probe)
         if not blocked:
-            # a second opinion before letting a candidate through: at temperature 0 Lightning still answered "No"
-            # once in six on the same injected line (batching makes vLLM nondeterministic); this rail fails closed
-            blocked, rail = check(OUTPUT, probe)
+            # a second opinion, framed differently, before letting a candidate through: Lightning answered "No" to one
+            # injected line every time while "Log line: <the same line>" got "Yes" (the identical prompt only repeats
+            # the same answer). This rail fails closed: either verdict blocks
+            blocked, rail = check(OUTPUT, f"Log line: {probe}")
         if blocked:
             redacted.append(dict(line=line.strip()[:300], rail=rail))
             lines[i] = f"[guardrail: line removed, it addressed the agent from inside {tool}'s output ({rail})]"

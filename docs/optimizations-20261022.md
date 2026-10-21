@@ -108,6 +108,25 @@ MemAvailable 最低 44 GiB，切回單一實例後 74 GiB。這台 vLLM 的 usag
 
 drill harness：`nemoclaw-drill.sh` 的 `TRIAGE` 改為預設開（與舞台 watchdog 一致；`TRIAGE=0` 回到裸告警）。
 
+## 文獻對照：哪些頂會技術對我們「量得到」（Phase 0 判定，06:00）
+
+對照標準是我們量到的瓶頸（一場事故：模型 decode 中位 14 s、OpenClaw 啟動 2.8 s、工具 4 s；統一記憶體 119 GB，舞台用掉 ~45 GB；
+KV cache 在 util 0.20 時 53k tokens / 3.9 GiB）。引用請在上簡報前核對原文與 DOI。
+
+| 技術（代表作） | 解決的問題 | 對本案 | 判定 |
+|---|---|---|---|
+| **Palu**：KV cache 低秩投影壓縮（Chang, …, Kai-Chiang Wu，ICLR 2025）；KIVI 2-bit KV（Liu et al., ICML 2024） | attention 模型的 KV 記憶體 | Lightning 是 Mamba-2/MoE 混合、KV 已 fp8、KV 只佔 3.9 GiB、記憶體還剩 70 GB：壓一半省 2 GiB，瓶頸不在這；要改 vLLM kernel | **不做**（記下來給 Thor 64 GB 版本或純 transformer 模型時） |
+| Speculative decoding（Leviathan et al., ICML 2023；EAGLE, Li et al., ICML 2024；DSpark/DFlash/MTP，Nemotron 3.5 card） | decode 慢（我們最大的成本） | **已做**：DSpark +27–49% tok/s、8/8 drill。下一步 A/B **MTP**（內建多 token 頭，0 額外權重、少 1.35 GB），並量兩者是否保住 prefix cache | **做**（下一輪） |
+| Prefix／prompt caching（SGLang RadixAttention，Zheng et al., NeurIPS 2024；vLLM APC） | 每輪重算 7–10k 固定前綴 | 已開，但 DSpark 實例命中 0%；plain 實例待量（機器安靜時） | **查**（DSpark 是否與 APC 互斥） |
+| Cross-encoder rerank（Nogueira & Cho 2019；NVIDIA Nemotron rerank） | BM25 排錯 | **已做**：top-1 類別對 0.70 → 0.78 | 做完，調參中（網格） |
+| Corrective／Self-RAG 的「判斷再用」（Asai et al., ICLR 2024；Yan et al., 2024） | 檢索到不相關東西就該棄權 | reranker 分數當棄權依據已量：無效（0.05 門檻就砍掉一半對的）。可試 LLM 判官（Lightning no-think 一次 ~0.5 s） | **候選**（要先有相關性標註，不是類別標籤） |
+| ReAct／Reflexion（Yao et al., ICLR 2023；Shinn et al., NeurIPS 2023） | 工具迴圈與自我修正 | 已是：工具迴圈＋reviewer 兩把鑰匙＋健康檢查附在每個動作後 | 做完 |
+| 查詢改寫（HyDE, Gao et al., ACL 2023） | agent 用裸「504」查知識庫 | 斷詞後為空、什麼都配不到；可用事故 trace 的最後一行錯誤補查詢。drill 裡 agent 從沒呼叫這工具，量不到效果 | **候選**（無法離線量） |
+
+**結論**：本案的加速與品質槓桿在 speculative decoding、prefix caching、rerank；KV 壓縮是別的瓶頸的解。
+新增兩個機房形狀的故障（`upstream-cpu-throttled` fail-slow、`front-hosts-poisoned` 壞掉的 hosts 項）：都是「沒東西掛、但壞了」，
+log 乾淨、容器 Up，考 agent 的證據蒐集（`docker_exec cat /sys/fs/cgroup/cpu.max`、`cat /etc/hosts`）；drill 結果見下輪。
+
 ## 給隊友
 
 - Thor 早上：`cd ~/BlackOps && git pull --ff-only && scripts/stage-up.sh`，再跑一次 `demo.md` 的流程。

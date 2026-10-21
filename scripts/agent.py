@@ -360,17 +360,44 @@ def settle(max_s=2.0, step=0.25):
         time.sleep(step)
 
 
+HEALTH_TIMEOUT = float(os.environ.get("HEALTH_TIMEOUT", "3"))   # was 5: a hung dependency made every probe wait the full budget
+
+
+def hosts_oddities(text):
+    """Lines of a container's /etc/hosts that Docker did not write: loopback, IPv6 boilerplate and the container's own
+    id line are defaults; anything else pins a name to an address by hand, which is how a stale entry breaks name
+    resolution while every log stays clean (front-hosts-poisoned took one drill nine minutes to see, 2026-10-22)."""
+    odd = []
+    for line in str(text).splitlines():
+        parts = line.split()
+        if not parts or parts[0].startswith("#"):
+            continue
+        ip, names = parts[0], parts[1:]
+        if ip in ("127.0.0.1", "::1") or ip.startswith(("fe00::", "ff00::", "ff02::")):
+            continue
+        if len(names) == 1 and re.fullmatch(r"[0-9a-f]{12}", names[0]):
+            continue                                    # the container's own id, written by Docker
+        odd.append(line.strip())
+    return odd
+
+
 def http_status(url):
     """The status the URL answers with. A redirect is reported, not followed: following a 301 to a name the host
     cannot resolve read "unreachable", and the agent went repairing the network (upstream-redirect, 2026-10-19)."""
     try:
-        with urllib.request.build_opener(_NoRedirect).open(url, timeout=5) as r:
+        with urllib.request.build_opener(_NoRedirect).open(url, timeout=HEALTH_TIMEOUT) as r:
             return r.status
     except urllib.error.HTTPError as e:
         if 300 <= e.code < 400:
             return f"{e.code} redirect to {e.headers.get('Location', '?')}"
         return e.code
     except Exception as e:
+        # A timeout and a refusal are different faults: nothing answering within the budget is a hung process, a
+        # paused container or a dependency that never replies; a refusal is nothing listening. The dependency-timeout
+        # drills spent 220-295 s mostly in 5 s probes that all ended the same way (2026-10-22).
+        reason = getattr(e, "reason", e)
+        if isinstance(e, TimeoutError) or isinstance(reason, TimeoutError) or "timed out" in str(e).lower():
+            return f"timed out after {HEALTH_TIMEOUT:g} s (nothing answered: a hung or paused process, or a dependency that never replies; not a refused connection)"
         return f"unreachable ({type(e).__name__})"
 
 
@@ -737,7 +764,13 @@ def _run_tool(name, args, dry_run):
         # 8 s, not the default 30: `cat /var/log/nginx/error.log` blocks forever in the nginx image (the file is a link
         # to the container's stderr) and once cost a drill 30 s of silence that read like model thinking (2026-10-22).
         try:
-            return sh(["docker", "exec", args["name"], *command], timeout=8)
+            out = sh(["docker", "exec", args["name"], *command], timeout=8)
+            if command[:2] == ["cat", "/etc/hosts"]:
+                odd = hosts_oddities(out)
+                out += ("\n[hosts entries beyond Docker's defaults: " + "; ".join(odd) + ". An entry that names a stack container pins "
+                        "its address by hand; if it is wrong or stale, name resolution fails while every log stays clean. A restart "
+                        "re-renders /etc/hosts.]" if odd else "\n[only Docker's default hosts entries]")
+            return out
         except subprocess.TimeoutExpired:
             return (f"(no output in 8 s: {' '.join(command)} is still waiting for data, stopped). In this image "
                     "/var/log/nginx/access.log and error.log are links to the container's stdout/stderr, so reading them "

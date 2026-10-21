@@ -42,7 +42,8 @@ if SIGNALS:
 # after a fix (memory notes, a clear_scratch_volume the rules refused), holding the host lock the next agent needs
 GRACE = float(os.environ.get("AGENT_GRACE", "60"))
 ALERT = ("Alert: the web stack is degraded. Diagnose it and repair it with your ops tools, then verify both health "
-         "URLs return 200. Report root cause, actions taken, and final health.")   # same words as nemoclaw-drill.sh
+         "URLs return 200. Finish with exactly three lines and nothing else, each under 40 words: "
+         "Root cause: ... / Actions: ... / Final health: ...")   # same words as nemoclaw-drill.sh; the report turn was 3.9 s median
 
 
 def status(url):

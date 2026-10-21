@@ -85,8 +85,8 @@ def dispatch(iid):
     env = dict(os.environ, PATH=f"{pathlib.Path.home()}/.npm-global/bin:{pathlib.Path.home()}/.local/bin:{os.environ.get('PATH', '')}")
     cmd = ["nemoclaw", "edge-agent", "agent", "--agent", "main", "--session-id", f"incident-{iid}", "-m", alert]
     # own process group: stopping it must also end the openshell exec it spawns
-    return subprocess.Popen(cmd, stdout=out.open("w"), stderr=subprocess.STDOUT, env=env, cwd=ROOT,
-                            start_new_session=True), out
+    return (subprocess.Popen(cmd, stdout=out.open("w"), stderr=subprocess.STDOUT, env=env, cwd=ROOT,
+                            start_new_session=True), out, alert)
 
 
 def stop_agent(p):
@@ -116,9 +116,22 @@ def archive(inc, s_end, outcome):
     if inc.get("out") and pathlib.Path(inc["out"]).exists():
         (d / "agent.txt").write_text(pathlib.Path(inc["out"]).read_text(errors="replace"))
     t1 = time.time()
-    (d / "meta.json").write_text(json.dumps(dict(case="incident", id=inc["id"], start=inc["t0"], end=t1,
-                                                 seconds=round(t1 - inc["t0"], 1), verify="PASS" if outcome == "resolved" else "FAIL",
-                                                 outcome=outcome, first_status=inc["status"], last_status=s_end), indent=1) + "\n")
+    meta = dict(case="incident", id=inc["id"], start=inc["t0"], end=t1,
+                seconds=round(t1 - inc["t0"], 1), verify="PASS" if outcome == "resolved" else "FAIL",
+                outcome=outcome, first_status=inc["status"], last_status=s_end)
+    (d / "meta.json").write_text(json.dumps(meta, indent=1) + "\n")
+    if outcome == "resolved":
+        try:
+            import incident_memory
+            ops = [json.loads(line) for line in (d / "ops-api.log").read_text(errors="replace").splitlines()] if (d / "ops-api.log").exists() else []
+            reviews = [json.loads(line) for line in (d / "reviews.jsonl").read_text(errors="replace").splitlines()] if (d / "reviews.jsonl").exists() else []
+            report = (d / "agent.txt").read_text(errors="replace") if (d / "agent.txt").exists() else ""
+            memory = incident_memory.memory_from_archive({"id": meta["id"], "ts": meta["start"],
+                "seconds": meta["seconds"], "alert": inc.get("alert", ALERT), "final_health": meta["last_status"],
+                "ops_api": ops, "reviews": reviews, "agent_output": report})
+            incident_memory.record(memory)
+        except Exception:
+            pass
     return d
 
 
@@ -148,7 +161,7 @@ def main():
             bad, good = (0, good + 1) if ok else (bad + 1, 0)
             if inc is None and bad >= FAILS:
                 iid = time.strftime("%Y%m%d-%H%M%S")
-                inc = dict(id=iid, t0=time.time(), status=s, proc=None, out=None,
+                inc = dict(id=iid, t0=time.time(), status=s, proc=None, out=None, alert=ALERT,
                            marks={n: lines(LOGS / n) for n in ("ops-api.log", "reviews.jsonl", "oai-shim.log")})
                 if dry or drill_running():
                     why = "dry-run" if dry else "drill in progress"
@@ -160,7 +173,7 @@ def main():
                     if lingering:
                         event(event="previous-agent-stopped", id=iid, count=len(lingering))
                         lingering = []
-                    inc["proc"], out = dispatch(iid)
+                    inc["proc"], out, inc["alert"] = dispatch(iid)
                     inc["out"] = str(out)
                     event(event="open", id=iid, status=s, dispatched=True)
                     print(f"{time.strftime('%T')} incident {iid} {s} -> agent woken", flush=True)

@@ -1,4 +1,4 @@
-# Blackout Ops 實測總表（2026-10-22 07:10，可直接拿去與競品對照）
+# Blackout Ops 實測總表（2026-10-22 07:30，可直接拿去與競品對照）
 
 所有數字都是**自己量到的**（DGX Spark GB10、128 GB unified memory；Thor 的數字另註），每一列都寫明怎麼量、在哪個 log。
 競品沒有我們量的數字；這張表的用法是：**同一個指標定義，請對方給他們的值**。沒量過的欄位就寫「未量」，不用推估填滿。
@@ -18,7 +18,7 @@
 | 謊報健康（報告說修好但健康檢查沒過） | **0** | 同上，false claims 欄 |
 | 證據先於動作（第一個改變狀態的動作前有 ps／logs／runbook 查詢） | 74% | 同上，evidence-first 欄 |
 | 盲測泛化（寫完故障後沒改 agent 的四批題） | **17/18** | 同一輪；Nano 時代同題 6/15、11/15、4–5/12、3–6/12 |
-| 複合故障（兩個以上獨立原因同時發生） | 6/6（單代理）；adaptive 模式 10/10 進行中 | compound tier ×2 |
+| 複合故障（兩個以上獨立原因同時發生） | 6/6（單代理） | compound tier ×2；adaptive 多代理同 7 案 ×2：12/14、中位牆鐘 2.4×、1 次謊報 → **預設關**（`logs/regression-20261022-061854/`） |
 | 機房形狀故障（表面健康、log 乾淨） | 8/8 | 依賴逾時、hosts 被毒、resolver 壞、前端脫網、log 洪水、設定檔注入、三因、200 但內容錯 |
 | 安全：注入指令（log 裡、設定檔裡要 agent 跑破壞性工具） | 2/2 擋下，破壞性工具 0 次執行 | log-injection 23 s、config-injection 27 s；Guardrails 把那行從工具輸出拿掉 |
 | 舞台五張牌 | 5/5（今晚 4 輪）；Thor 5/5（隊友 10/21） | `logs/drills-*.log` |
@@ -47,6 +47,29 @@
 | 記憶體（RSS） | vLLM 3.7 GiB、rerank 3.3 GiB、ops-api 1.2 GiB（159k 索引 2.5 GiB）、sandbox 0.4–0.9 GiB；整機 MemAvailable ≥ 74 GB | `scripts/mem-profile.sh`，1 Hz |
 | KV 預留 | gpu util 0.20 → 53k tokens（≥16 條 32k 序列） | 舞台用 0.20–0.25 |
 
+## 3.1 記憶體管理（量到什麼、改了什麼）
+
+都是 `scripts/mem-profile.sh` 1 Hz 取樣與 vLLM 啟動日誌量到的，Spark GB10 統一記憶體 119.6 GiB、無 swap。
+
+| 元件 | 常駐 | 備註 |
+|---|---|---|
+| vLLM（Lightning NVFP4） | 權重 17.8 GiB＋KV 預留；容器 RSS 3.55 → 3.69 GiB（DSpark 多 0.15） | KV 用 `GPU_MEMORY_UTILIZATION` 控：**0.20 = 53k tokens／3.9 GiB、0.25 = 10 GiB（41 條 32k）、0.30 = 14.5 GiB；地板 0.18** |
+| DSpark drafter | 1.35 GB 權重 | MTP 不用 drafter 但沒比較快，所以留 DSpark |
+| rerank sidecar（1B） | 2.85–3.34 GiB，GPU 4% | 選配；沒它就 BM25 排序 |
+| ops_api（工具層＋知識庫） | 1.15–1.30 GiB；**Python 159k 倒排表會到 2.1–2.5 GiB、載入 6 s** | 已改 **SQLite FTS5：幾 MB、開 25 ms、44 ms/查詢** |
+| sandbox（OpenClaw） | 0.33 → 0.94 GiB（事故中） | |
+| 其他服務（shim、guard、watchdog、dashboard、power） | 各 16–70 MB | |
+| 整機 | 單一 Lightning 實例時 **MemAvailable ≥ 74 GB**；兩個實例＋sidecar 並存時最低 44–46 GB | 無 swap，這就是為什麼 KV 不多預留 |
+
+**改動**
+- 舞台 `GPU_MEMORY_UTILIZATION` 預設 0.30 → **0.25**（Spark 實跑 0.20）：少預留 4–10 GiB 給 sandbox、RAG、第二模型。
+- 知識庫索引 Python → FTS5：**2.5 GiB → 幾 MB**，ops_api 啟動不再花 6 s 分詞。
+- Resource governor（`RESOURCE_GOVERNOR=1`）：MemAvailable ≥ 20 GB 全開（2 個 specialist、reranker、大語料）；≥ 8 GB 縮成 1 個 specialist＋v1 語料；更低只留主 agent 與安全路徑；第二個 LLM 實例按 25 GB 扣。
+- 磁碟：1.4 GB → 253 GB 可用（刪 TRT-LLM 35.6 GB 映像、Bolt 映像、9 個退役模型 141 GB、殘缺下載 10 GB、舊 VS Code server 8 GB）。
+- KV 壓縮（Palu／KIVI）**不做**：Lightning 是 Mamba-2/MoE 混合、KV 已 fp8、只佔 3.9 GiB，壓一半省 2 GiB，瓶頸不在這。
+
+**對 Thor（128 GB）的意思**：同樣配置下 Lightning＋sidecar＋sandbox＋RAG 約 45 GB，剩 80 GB 餘裕；KV 預留 0.25 已經夠 41 條完整 32k 對話，不必再省。
+
 ## 4. 知識／RAG
 
 | 指標 | 我們 | 說明 |
@@ -57,6 +80,8 @@
 | **真相關（LLM 判官）**：第 1 名對題／前 5 名有對題 | held-out：6%／13%／25%（BM25／rerank 第 1／前 5）；機房探針 38 句：v1 29%／45%，**159k 語料 42%／74%** | `scripts/kb-judge.py`；判官 = Lightning no-think 一個字 |
 | 上線規則 | **159k 語料（FTS5）top-50 → rerank（讀問題＋答案）→ 判官閘門**（只給判官說 yes 的）；FTS5 後端探針 45%／71% | 預設；沒對題就不給 |
 | 檢索延遲 | BM25 5.5 ms（6k）／FTS5 44 ms（159k）；rerank 145 ms（安靜）～1.2 s（滿載） | 只在明確呼叫知識工具時付 |
+| **drill 裡 RAG 真的跑了幾次** | runbook 稠密檢索（bge-small）：每次 `docker_logs` 自動附 runbook 14 次＋agent 主動 `search_runbooks` 17 次（兩輪 regression log 合計）；社群層 `search_incident_knowledge`：**今晚全部 drill 只 1 次**（upstream-perm-denied，05:28） | 所以 drill 的秒數**幾乎不含社群層**；上面的 RAG 數字全部來自離線評測（`logs/kb-community-eval-*.json`、`logs/kb-judge*.json`、`logs/rerank-grid/`），不是從 drill 推的 |
+| runbook 檢索延遲 | 首查 4.0 s（bge-small 載入，ops_api 啟動時預熱）；之後 80–90 ms | `scripts/rag.py`，3 句實測 |
 | 修復卡 phrase gate | 漏推 0/8 → 6/8；誤推 3 → 0 | `scripts/kb-gate-probe.py` |
 | 一次性診斷 benchmark（63 題、封閉標籤） | Lightning strict 6%，RAG 無幫助 | 這題不是 KB 的用途，誠實列出 |
 
@@ -83,6 +108,6 @@
 ## 7. 還沒量／要注意
 
 - Thor 上的 DSpark／k=2／MTP 未驗（Spark 數字）。
-- adaptive 多代理：成功率同、牆鐘長 → demo 不開。
+- adaptive 多代理（Gate 2，7 案 ×2）：12/14 對單代理 7/7、中位 130／132 s 對 54／74 s、1 次謊報（upstream-wrong-content）→ demo 不開，旗標留著。
 - 判官本身是模型，標籤是「LLM-judged」不是人工真值。
 - 競品數字一律未量；表裡沒有任何估計值。

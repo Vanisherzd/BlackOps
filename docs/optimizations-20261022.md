@@ -289,3 +289,21 @@ Spark 的 `logs/edge-agent-results-uncommitted.patch`，要併就從那裡起。
   （Nano-30B-BF16 63 GB、Qwen3.6-FP8 37.5、Bolt 24、Qwen3.8 23、gemma-4 23、Qwen3-8B 16、SD 1.5、Qwen3.6-NVFP4 殘檔、diffusiongemma 等）共 141 GB
   → **242 GB 可用**。保留：Lightning、Nano-30B-NVFP4、Nano-4B-FP8、bge-small。沒碰隊友的 `logs/prune-calib`（17 GB）、`~/workspace`、CVAT／ctai 容器與 volume、
   `autoresearch_uv_cache`（仍被容器引用）。`~/.cache/vllm-bolt` 有 root 擁有的檔案刪不掉（<1 GB）。
+
+## Gate 2 結果：adaptive 多代理（07:16，`logs/regression-20261022-061854/`）
+
+`AGENT_MODE=adaptive`，compound 3 案＋datacenter 4 案各 ×2（victim 上同時只有一個 runner；期間 :8000 另有 k=2/k=3 對照在打，牆鐘偏高）。
+`parallel_diagnosis` 被叫 26 次，確實有觸發。
+
+| 指標 | adaptive（14 場） | single（同 7 案，`regression-20261022-055520`） |
+|---|---|---|
+| 自主修復 | 12/14（86%） | 7/7 |
+| made-worse | 0 | 0 |
+| 謊報健康 | **1**（upstream-wrong-content 其中一場） | 0 |
+| compound 中位牆鐘 | 130 s | 54 s |
+| datacenter 中位牆鐘 | 132 s | 74 s |
+| compound-triple | 320 s（32 次呼叫） | 67 s（13 次） |
+
+結論：成功率沒變好、牆鐘 1.8–2.4×、多一次謊報 → **預設維持 `single`，demo 不開**；旗標與單元測試留著，
+Gate 2 的判準（成功率或 RC 正確率或 MTTR 要變好、made-worse 0）沒過。瓶頸還是模型 decode：兩個 specialist 各自多 4 輪 no-think 呼叫，
+在 max-num-seqs 2 的 vLLM 上是排隊不是並行。

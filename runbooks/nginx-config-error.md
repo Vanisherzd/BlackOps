@@ -1,9 +1,5 @@
-# nginx fails to start: configuration error
-Symptoms: container `edge-victim` exits immediately after start; logs show `nginx: [emerg] ... in /etc/nginx/conf.d/default.conf:<line>`
-(unexpected token, unknown directive, missing semicolon).
-Ignore the entrypoint's `can not modify /etc/nginx/conf.d/default.conf (read-only file system?)` info line: the
-config is a host file mounted read-only into the container, and `ops__write_config` changes it on the host.
-Rebuilding the container (`recreate_stack`) does not touch that file and does not help.
-Steps: 1) `docker logs edge-victim --tail 20` and read the [emerg] line and line number. 2) Read the config file at
-`victim/conf.d/default.conf`. 3) Fix the syntax at that line (each directive ends with `;`, braces balanced), write it
-back. 4) `docker restart edge-victim`. 5) Verify the health URL returns 200 and `/api/` still proxies.
+# nginx syntax error: first identify the failing container and file
+Symptoms: [emerg], invalid parameter listen, missing semicolon, unknown directive, or exited nginx. docker_ps and docker_logs of the failing container identify the target; identical default.conf paths exist in BOTH containers.
+FRONTEND edge-victim with bad /etc/nginx/conf.d/default.conf: read_config then restore_config from a trusted snapshot (or write full approved config), docker_restart edge-victim, check_health. This is a host bind mount; recreating the container keeps the bad file.
+BACKEND edge-victim-app with its own syntax failure: docker_start it once if stopped (restart if running), read fresh logs and check_health. An unchanged own-layer error and failing /api/ after that attempt may permit reviewer-approved recreate_stack {"name":"edge-victim-app","replace":true}. Do not rewrite or restart a healthy frontend for a backend error.
+Missing frontend mime.types or altered main nginx.conf is an image-layer branch, not restore_config. Exec cannot run in a stopped container. nginx -t success alone does not prove a working listener or connection capacity. Require both health URLs 200 and stable.

@@ -20,3 +20,27 @@ victim/known-good/
 
 # NeMo sidecar venv (scripts/guard_api.py, scripts/nat_profile.py), built with uv pip, not part of uv.lock
 .nemo-venv/
+
+# DGX dataset provenance is curated explicitly; runtime receipts and backups stay local.
+/kb/artifacts/*-backup-*/
+/kb/artifacts/*-backup-*.npz
+/datasets/derived/**/replay-*/
+/datasets/derived/**/replay_worker_*.py
+/datasets/derived/**/replay-stop-request.json
+/datasets/derived/**/procedures-worker.out
+/datasets/derived/**/runtime-preparation.json
+/datasets/derived/**/installation-*.json
+/datasets/derived/**/completion-report.json
+/datasets/derived/**/live-rag-*
+/datasets/derived/**/offline-validation.json
+/datasets/derived/**/manifest.pre-install.json
+/datasets/derived/**/install.py
+
+# Model weights and local caches are transferred separately from Git.
+/.cache/
+/.hf-cache/
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth

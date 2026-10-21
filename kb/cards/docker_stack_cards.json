@@ -620,9 +620,12 @@
       "403 forbidden upstream",
       "api 403 forbidden",
       "directory index of is forbidden",
-      "permission denied",
       "open failed no such file or directory",
-      "missing index"
+      "missing index",
+      "Permission denied edge-victim-app",
+      "Permission denied while reading static file",
+      "403 forbidden nginx edge-victim-app",
+      "directory index forbidden"
     ],
     "root_causes": [
       "the upstream's served files were deleted or replaced",
@@ -632,41 +635,54 @@
     "checks": [
       {
         "level": "R",
-        "command": "docker_logs <upstream>",
-        "purpose": "'directory index ... is forbidden', 'Permission denied' or 'open() ... failed (2:' names the missing file"
+        "command": "docker_logs {\"name\":\"edge-victim-app\",\"tail\":60}",
+        "purpose": "Confirm backend 403/404 and exact missing/permission-denied content path; not a frontend routing error."
       },
       {
         "level": "R",
-        "command": "docker_exec <upstream> ls -la /usr/share/nginx/html",
-        "purpose": "is the content there, and readable"
+        "command": "docker_exec {\"name\":\"edge-victim-app\",\"cmd\":\"ls -l /usr/share/nginx/html/index.html\"}",
+        "purpose": "Missing file differs from present but mode 000; compare with approved image baseline."
       },
       {
         "level": "R",
-        "command": "docker_ps",
-        "purpose": "container Up: the server runs, its content is the problem"
+        "command": "docker_exec {\"name\":\"edge-victim-app\",\"cmd\":\"cat /etc/nginx/conf.d/default.conf\"}",
+        "purpose": "Confirm backend document root/index; wrong /api path in frontend is a different case."
       }
     ],
     "remediation": [
       {
         "level": "W",
-        "action": "docker_restart <upstream> first: the reviewer requires a restart before a replace, and it rules out a transient fault",
+        "action": "For confirmed damaged backend image content, docker_restart {\"name\":\"edge-victim-app\"} once; check_health {}.",
         "approval_required": false
       },
       {
         "level": "W",
-        "action": "still 403/404 after the restart: recreate_stack <upstream> replace=true, which restores the image's content (a restart keeps the damaged filesystem)",
+        "action": "If same missing/unreadable image content and 403/404 persist after restart, recreate_stack {\"name\":\"edge-victim-app\",\"replace\":true} under reviewer; check_health {}.",
         "approval_required": true
+      },
+      {
+        "level": "W",
+        "action": "OPERATOR ONLY alternative: docker cp <approved-index.html> edge-victim-app:/usr/share/nginx/html/index.html. For mode-only corruption restore the recorded original mode on this one file; never chmod -R or 777.",
+        "approval_required": false
       }
     ],
     "rollback": [
-      "the recreated container is the defined state; anything written into the old one is lost, so say so"
+      "Preserve any previous known-good content and mode first. Restore only the approved original single file/mode if repair regresses; never restore the injected missing file or mode 000. Replacement has no automatic writable-layer undo."
     ],
     "verify": [
-      "check_health 200 on /api/",
-      "docker_logs <upstream> shows no new forbidden or permission errors"
+      "check_health {}: / and /api/ both 200, then repeat after a short observation interval; a tool success alone is not recovery.",
+      "docker_ps {}: target stays Up; inspect fresh logs for the original error."
     ],
     "safety": [
-      "docker_restart does not bring deleted files back: do not repeat it"
+      "docker_restart does not bring deleted files back: do not repeat it",
+      "Recorded failure labels are not live proof. Confirm the target and mechanism before any write; search_runbooks first.",
+      "This repair card is for the two disposable demo containers. Container replacement loses its writable layer: preserve required evidence/state first; never apply blindly to a persistent service.",
+      "Follow existing restart, post-restart failing-health and reviewer preconditions. A refusal is not permission to bypass the gate.",
+      "No bulk file/directory deletion, recursive cleanup or arbitrary host process killing. Historical failed actions in case metadata are not repair instructions.",
+      "The proposed fixes have not yet been validated by this new replay; FAIL and TIMEOUT records never become proven_here successes.",
+      "Official reference: https://nginx.org/en/docs/http/ngx_http_index_module.html",
+      "Official reference: https://nginx.org/en/docs/http/ngx_http_autoindex_module.html",
+      "Official reference: https://docs.docker.com/engine/storage/"
     ],
     "escalate": [
       "the content lives on a volume that is missing: restoring data is a human decision"

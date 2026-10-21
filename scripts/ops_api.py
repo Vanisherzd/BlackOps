@@ -119,7 +119,19 @@ class H(BaseHTTPRequestHandler):
         pass
 
 
+def warm_community_index():
+    """Tokenising the community corpus (66k documents in v2) takes seconds; do it once at start, off the request path,
+    so the agent's first search_incident_knowledge call does not pay for it. Failures stay silent: the layer is an extra."""
+    try:
+        import community_knowledge
+        community_knowledge.index()
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
+    import threading
+    threading.Thread(target=warm_community_index, daemon=True).start()
     port = int(os.environ.get("OPS_PORT", "8790"))
     print(f"ops api on 0.0.0.0:{port}, tools: {[t['name'] for t in TOOLS]}", flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), H).serve_forever()

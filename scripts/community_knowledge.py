@@ -13,7 +13,9 @@ from collections import Counter
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS = ROOT / "kb" / "artifacts" / "community_v1.jsonl"
-CORPUS_V2 = CORPUS.with_name("community_v2.jsonl")     # API rows + the archive.org dumps; used when present (KB_COMMUNITY_V1=1 forces v1)
+# API rows + the archive.org dumps; used when present (KB_COMMUNITY_V1=1 forces v1); the .gz form is what git carries
+CORPUS_V2 = next((p for p in (CORPUS.with_name("community_v2.jsonl"), CORPUS.with_name("community_v2.jsonl.gz")) if p.exists()),
+                 CORPUS.with_name("community_v2.jsonl.gz"))
 
 MIN_SHARED = 2          # a reference needs at least this many distinct query tokens in the document, else "no reference"
 K1, B = 1.2, 0.75       # KnowledgeBaseV2's defaults
@@ -39,16 +41,23 @@ def _tokens():
 
 
 class CommunityIndex:
+    """BM25 with an inverted index: a query touches only the postings of its own tokens, so 66k documents (the v2 corpus)
+    cost the same per query as 6k did with a full scan. Same scores as the scan, by construction."""
+
     def __init__(self, docs):
         tokens = _tokens()
         self.tokens = tokens
         self.docs = docs
-        self.tf = [Counter(tokens(d["index_text"])) for d in docs]
-        self.len = [sum(c.values()) for c in self.tf]
+        self.len = []
+        self.postings = {}                    # token -> list of (doc index, term frequency)
+        for i, d in enumerate(docs):
+            tf = Counter(tokens(d["index_text"]))
+            self.len.append(sum(tf.values()))
+            for t, f in tf.items():
+                self.postings.setdefault(t, []).append((i, f))
         self.avglen = sum(self.len) / max(1, len(self.len))
-        df = Counter(t for c in self.tf for t in c)
         n = len(docs)
-        self.idf = {t: math.log((n + 1) / (f + 0.5)) for t, f in df.items()}
+        self.idf = {t: math.log((n + 1) / (len(p) + 0.5)) for t, p in self.postings.items()}
 
     @classmethod
     def load(cls, path=None):
@@ -56,23 +65,24 @@ class CommunityIndex:
             path = CORPUS_V2 if CORPUS_V2.exists() and os.environ.get("KB_COMMUNITY_V1") != "1" else CORPUS
         if os.environ.get("KB_COMMUNITY", "1") == "0" or not path.exists():
             return cls([])
-        return cls([json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()])
+        if str(path).endswith(".gz"):
+            import gzip
+            text = gzip.open(path, "rt", encoding="utf-8").read()
+        else:
+            text = path.read_text(encoding="utf-8")
+        return cls([json.loads(l) for l in text.splitlines() if l.strip()])
 
     def search(self, query, k=2, min_shared=MIN_SHARED):
         """[(score, shared_tokens, doc)] best first; only documents sharing >= min_shared distinct query tokens."""
         q = Counter(self.tokens(query))
         if not q or not self.docs:
             return []
-        out = []
-        for i, tf in enumerate(self.tf):
-            shared = [t for t in q if t in tf]
-            if len(shared) < min_shared:
-                continue
-            s = 0.0
-            for t in shared:
-                f = tf[t]
-                s += self.idf[t] * f * (K1 + 1) / (f + K1 * (1 - B + B * self.len[i] / self.avglen))
-            out.append((s, shared, self.docs[i]))
+        acc, shared = {}, {}
+        for t in q:
+            for i, f in self.postings.get(t, ()):
+                acc[i] = acc.get(i, 0.0) + self.idf[t] * f * (K1 + 1) / (f + K1 * (1 - B + B * self.len[i] / self.avglen))
+                shared.setdefault(i, []).append(t)
+        out = [(s, shared[i], self.docs[i]) for i, s in acc.items() if len(shared[i]) >= min_shared]
         out.sort(key=lambda x: -x[0])
         return out[:k]
 

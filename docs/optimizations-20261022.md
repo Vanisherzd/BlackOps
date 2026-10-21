@@ -168,6 +168,26 @@ Gate 3 看 drill 牆鐘：MTP 的 8 場 drill 跑中。
 `compound-triple`（前端設定壞＋後端停＋後端改埠，三層三因）、`upstream-log-flood-500`（upstream-500 埋在 3,000 行 heartbeat
 通知裡，考「在雜訊裡找那一行」）。目錄現在 36 個案例、10 個 tier；全目錄 regression（`scripts/regression.sh`）排在引擎決定之後。
 
+## 全目錄 regression（Lightning + DSpark，single mode，06:50–07:50，`logs/regression-20261022-045052/`）
+
+36 個案例各跑一次（`scripts/regression.sh`）；跑到第 32 個時被我誤殺的第二個 runner 打斷（regression.sh 的 60 分鐘上限把
+30/36 當成跑完、接力鏈提早啟動——已修：上限 240 分、偵測到別的 runner 就拒跑），所以這一輪有效 31 場＋1 場被中斷：
+
+| tier | 自主修復 | 中位秒 |
+|---|---|---|
+| seen（9） | 9/9 | 33 |
+| security（log-injection） | 1/1 | 23 |
+| blind（5） | 5/5 | 34 |
+| blind2（5） | 5/5 | 51 |
+| blind3（4） | 3/4（upstream-sigstop 靠 self_heal 兜底，188 s） | 76 |
+| blind4（4） | 4/4 | 58 |
+| unseen（inode-exhausted） | 1/1 | 19 |
+| compound（3） | 2/3（第 3 場被中斷，無效） | 56 |
+
+**headline：autonomous 30/32（94%）、made-worse 0、false health claims 0、evidence-first 74%、closure 100%。**
+對照 Nano 時代的盲測（6/15、11/15、4–5/12、3–6/12）：同一批題目在 Lightning＋今晚的工具層上是 17/18。
+剩下的 5 個（含被中斷的那場）與 6 個新故障族接著跑；之後 Gate 2。
+
 ## 08:00 起的工具層修正與新故障族（依使用者排的順序 10→6→4/5→8/7→12，1 也做）
 
 | 項目 | 改動 | 量測／驗證 |

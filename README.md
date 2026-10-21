@@ -4,7 +4,7 @@
 
 **現況（2026-10-22 清晨）**：
 - 推論：**Nemotron-3.5-Lightning-30B-A3B-NVFP4** 跑在 vLLM（nightly 77154ca）上；Spark 舞台用 model card 的 DSpark speculative decoding（`SPEC=dspark`，decode +27–49%，8/8 drill 不掉品質）。Bolt-74B 留作 Spark 上的比較路徑。
-- NemoClaw 路徑：五張舞台卡 5/5（多輪）、三個複合故障 6/6、兩個機房形狀故障（依賴逾時、hosts 被毒）各 2/2；dashboard 注入到 resolved 14.9 s。
+- NemoClaw 路徑：全目錄 regression（36 案例×1，含 4 批盲測、複合、機房故障）**autonomous 30/32、made-worse 0、假健康宣稱 0**；五張舞台卡多輪 5/5；dashboard 注入到 resolved 14.9 s。
 - 知識：runbooks → 修復卡（v4，phrase gate 已修）→ 社群層（Server Fault／Unix & Linux 等 7 站、158,881 筆、CC BY-SA、SQLite FTS5）→ Nemotron rerank sidecar（選配）。量測與閘門：`docs/kb-community-20261022.md`。
 - 今晚的優化與量測總表：`docs/optimizations-20261022.md`；整體進度：`docs/project-status-2026-10-20.md`。
 

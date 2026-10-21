@@ -159,6 +159,16 @@ thinking off 的一句話診斷不是它的強項），RAG 一樣沒有幫助、
 DSpark decode 快 2–7%；MTP 保住前綴快取、少一份 drafter。MTP 第一次啟動失敗是暫時的（第二次順利，架構 NemotronHMTPModel）。
 Gate 3 看 drill 牆鐘：MTP 的 8 場 drill 跑中。
 
+**DSpark 推測 token 掃描（09:21–09:42，第二實例 :8002，機器滿載，同一時刻對照）**：
+
+| k | tool-turn tok/s | report | long-context | prefix cache 命中 |
+|---|---|---|---|---|
+| 2 | 32.5 | 44.8 | 32.0 | **21.6%** |
+| 3（舞台） | 12.7* | 36.0 | 23.8 | 0% |
+| 5 | 24.4 | 36.6 | 34.8 | 21.9% |
+
+*k=3 的對照是在 Gate 2 drill 同時打 :8000 時量的，偏低；但 k=2 不比 k=3 慢、少一個推測 token、而且保住前綴快取 → 最終驗證鏈用 **k=2** 起舞台並重跑五張牌。
+
 **Gate 3 判定（07:48）**：MTP 的 8 場 drill 8/8 PASS，但牆鐘 34／78／27／78／53／231／80／97 s 對 DSpark 的 17／46／16／38／24／38／57／95 s
 （兩組都在機器有其他負載時跑，不是乾淨對照，但方向一致：MTP 沒有比較快）。MTTR ≤ DSpark 不成立 → **留 DSpark**，MTP 實例停掉；
 `SPEC=mtp` 保留給 Thor 試（不用 drafter、保住 prefix cache）。

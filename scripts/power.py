@@ -5,7 +5,7 @@ number is the module's rails (or the GPU alone), not the wall: say so on every s
   .venv/bin/python scripts/power.py energy <t0> <t1>     # Wh between two epoch times
   .venv/bin/python scripts/power.py incidents            # Wh, average and peak W per closed incident (logs/incidents.jsonl)
   env: POWER_INTERVAL_MS (500), POWER_LOG (logs/power.jsonl), POWER_SRC (auto|tegrastats|nvidia-smi),
-       POWER_TOTAL_RAIL (the rail that is the module input; default VDD_IN / VIN_* when present, else the sum)
+       POWER_TOTAL_RAIL (the rail that is the module input; default VDD_IN, then VIN (Thor), then VIN_*, else the sum)
 
 tegrastats prints rails as `NAME 1234mW/1200mW` (current/average); Thor's names may differ from Orin's, so the
 pattern takes any name and the total rail can be named at the stage.
@@ -29,8 +29,13 @@ def total(rails):
     want = os.environ.get("POWER_TOTAL_RAIL")
     if want and want in rails:
         return rails[want]
+    # The module input: VDD_IN on Orin, VIN on Thor (2026-10-21: Thor's rails are VDD_GPU, VDD_CPU_SOC_MSS,
+    # VIN_SYS_5V0 and VIN; VIN_SYS_5V0 is one 5 V branch, not the total, so exact names win over the VIN_ prefix).
+    for exact in ("VDD_IN", "VIN"):
+        if exact in rails:
+            return rails[exact]
     for name in rails:
-        if name == "VDD_IN" or name.startswith("VIN"):
+        if name.startswith("VIN"):
             return rails[name]
     return sum(rails.values())
 

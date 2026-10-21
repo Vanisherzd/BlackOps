@@ -145,6 +145,13 @@ thinking off 的一句話診斷不是它的強項），RAG 一樣沒有幫助、
 （runbook 與卡片跟著 docker_logs 走），不在一次性診斷；頂會式的 RAG 技巧（rerank、棄權）要在能量到的地方量：我們量的是
 社群層的 held-out 與探針，不是這個 benchmark。
 
+## Repo 狀態（06:05）
+
+GitHub 只剩 `main`（刪掉已併入的 `docs/rag-rerank-20261021`）。Spark 刪掉已併入的 `fix/thor-power-rail`、`fix/ops-tool-safety-20261021`、
+`wip/kb-cards-runbooks-20261021`、`results/bolt-vs-nano-hard` 與兩個乾淨的 worktree。**保留** `~/edge-agent-results`（分支 `feat/bolt-opt`）：
+裡面有 93 行未 commit 的改動（AGENTS.md 的「三行結案格式」、agent.py／faults.py／reviewer.py），不是我的，沒動；diff 存在
+Spark 的 `logs/edge-agent-results-uncommitted.patch`，要併就從那裡起。
+
 ## 給隊友
 
 - Thor 早上：`cd ~/BlackOps && git pull --ff-only && scripts/stage-up.sh`，再跑一次 `demo.md` 的流程。

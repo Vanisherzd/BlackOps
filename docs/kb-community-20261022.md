@@ -229,6 +229,10 @@ drill 一致）。之後 `scripts/stage-up.sh` 還原舞台，dashboard 注入 n
 傾印（serverfault 860 MB、unix 706 MB 的 7z）而不是 API 配額。**兩者今晚被擋：DGX 根磁碟 03:10 只剩 1.3 GB（100%）**，
 下載不了模型也解不開傾印；見最終報告的磁碟一節。
 
+**Gate A 量到了（03:40，`scripts/kb-rerank-eval.py --dry-run`）**：BM25 top-20 裡有正確類別的比例 held-out 半 B **0.977**、Q_gap **1.0**，
+而 top-1 只有 0.71／0.87——正是「候選在、排錯」。計畫的 Gate A（≥ 0.90）通過，Gate B（reranker 是否把它排對、分數能不能判「無」）
+的腳本已寫好、模型路徑照 model card 寫、未跑（磁碟）。
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

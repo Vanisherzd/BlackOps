@@ -83,5 +83,12 @@ triage 讓第一輪 prompt 多 2.7k tokens，但少 2–3 輪（省 5–7 s）�
 - 想把審核再快 12 s：在 stage-up 的 ops-api 那行環境加 `REVIEW_THINK=0`。今晚 3/3 判決相同，但只有 upstream-500 這張牌需要審核，樣本小，所以沒有改預設。
 - 評審問「runbook 以外的故障怎麼辦」：agent 問 `search_incident_knowledge` 會拿到有出處的社群修復假設（CC BY-SA，標明未在本機驗證）；可以現場用
   `.venv/bin/python scripts/kb-community.py probe "NVRM: Xid 79, GPU has fallen off the bus"` 示範。排名品質是 BM25 等級，罕見症狀可能只是同類別的弱匹配。
-- 已知未修：`scripts/eval-hard-repairs.py` 的 v3 是 7/8（10/21 語料合併後就是如此，對應 `tests/agent/test_repair_knowledge.py` 的 3 個失敗）；
-  survey 提到的 `permission denied` 誤推仍在（SSH 句會配到一張 K8s crashloop 卡）。
+- v4 修復卡的 phrase gate（survey §4 D 組，分支 `ragd` 已併入 main）：22 句固定探針 `scripts/kb-gate-probe.py`——漏推 0/8 → **6/8**
+  （inode、OOMKilled/137、CrashLoopBackOff 各補兩個雙字 phrase；`500 internal server error` 結構上到不了 bar 8.0，沒改 bar）；
+  `permission denied` 誤推 3 → **0**（`kb/cards/pack_overrides.json` 用 `exec permission denied` 覆蓋那張 K8s 卡的 v4 版本）；
+  8 句對照句、`kb-cards.py eval` 的 drill 查詢、`corpus_v3.jsonl` 都逐位元不變。只影響 `KB_RETRIEVAL=v4`；舞台的 v3 不受影響。
+- 已知未修：`scripts/eval-hard-repairs.py` 在這個 HEAD 上 v3 7/8、v4 7/8（10/21 語料合併後就是如此，對應 `tests/agent/test_repair_knowledge.py`
+  的 3 個失敗），不是今晚造成的。
+- **磁碟**：DGX 根磁碟 03:10 起 100%（剩 1.3 GB；00:50 還有 26 GB）。可讀目錄裡找不到今晚新長的 25 GB（`logs/prune-calib` 17 GB 是
+  10/18 的、HF blobs 是 23:52 的 Lightning）；最可能在 `/var/lib/docker`（需要 sudo 才看得到）。沒有刪任何東西。這擋住了 reranker
+  模型下載（2.5 GB）與 SE 傾印；騰出 ≥ 10 GB 後跑 `scripts/kb-rerank-eval.py`（Gate B）就有數字。

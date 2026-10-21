@@ -795,6 +795,19 @@ def _run_tool(name, args, dry_run):
                 out = sh(["docker", "exec", args["name"], "sh", "-c", PROC_TABLE], timeout=8)
                 out = ("[ps is not in this image; process table from /proc: PID STATE COMMAND, state T = stopped/traced "
                        "(a SIGSTOP), D = uninterruptible wait, Z = zombie]\n" + out)
+            if command[0] == "curl":
+                # a curl to a stack name that hangs is a name-resolution question before it is a connectivity one: show
+                # what the name resolves to inside this container right away (front-hosts-poisoned spent 3.5 min curling
+                # before a restart happened to re-render /etc/hosts, 2026-10-22)
+                m = re.search(r"https?://(edge-victim(?:-app)?)(?=[:/]|$)", " ".join(command))
+                if m and re.search(r"timed out|Connection timed out|\(28\)|Failed to connect|Could not resolve|no output", out, re.I):
+                    name = m.group(1)
+                    resolved = sh(["docker", "exec", args["name"], "getent", "hosts", name], timeout=5).strip()
+                    odd = hosts_oddities(sh(["docker", "exec", args["name"], "cat", "/etc/hosts"], timeout=5))
+                    out += (f"\n[inside {args['name']}, {name} resolves to: {resolved or '(nothing)'}"
+                            + (f"; /etc/hosts carries hand-written entries: {'; '.join(odd)}" if odd else "")
+                            + ". Docker's embedded DNS gives a stack container its current address; a hosts entry or a broken "
+                            "resolver overrides it. A restart re-renders /etc/hosts and resolv.conf.]")
             if command[:2] == ["cat", "/etc/hosts"]:
                 odd = hosts_oddities(out)
                 out += ("\n[hosts entries beyond Docker's defaults: " + "; ".join(odd) + ". An entry that names a stack container pins "

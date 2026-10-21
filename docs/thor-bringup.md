@@ -188,5 +188,11 @@ DASHBOARD_URL=http://127.0.0.1:8097 scripts/preflight.sh --warm
 | 每次重啟都重編 FlashInfer 30 分鐘以上 | 生成的 CUTLASS 原始碼留在容器裡，每次都比快取的 .o 新 | 用 `serve-vllm.sh`（會掛 `~/.cache/flashinfer-gen`）；不要手動 `docker run` |
 | 編譯時 MemAvailable 一路往下掉 | nvcc 平行數沒限制（曾經 49 個） | `MAX_JOBS=4`（`serve-vllm.sh` 在 Jetson 上的預設） |
 | 從筆電上傳到 Thor 很慢、ssh 偶爾逾時 | 連到的是 Thor 的 Wi-Fi（`wlP1p1s0`） | 改連有線介面的 IP（10/21 是 192.168.1.108）；會場上 Thor 要插網路線 |
+| 事故 agent 一啟動就 `Failed to acquire lock on ~/.nemoclaw-portable-host.lock ... owner PID is still running` | 上一場的 agent 還在跑，或已結束但成了殭屍行程 | 新版 watchdog 會回收並先停掉舊的；手動處理：`scripts/stage-up.sh` |
+| 修好之後 agent 還在改東西，看板又轉紅 | OpenClaw 延續已結束的 session（`Runtime event continuation`），Lightning 會去寫事故記憶、改設定 | `agent.py` 的 `HEALTHY_GUARD`（系統健康時拒絕改動）與 watchdog 的 `AGENT_GRACE`（結案 60 秒後停掉）；sandbox 裡還在跑就 `nemoclaw edge-agent gateway restart` |
+| 結案後 shim 日誌出現一連串 prompt 長度完全相同的請求 | vLLM 0.32 的思考欄位叫 `reasoning`，舊版 shim 只讀 `reasoning_content`，空回應讓 OpenClaw 一直重試 | 已修（`oai_shim.py` 兩個欄位都讀） |
+| `nemoclaw edge-agent gateway restart` 報 readiness timeout | gateway 起來得比檢查慢 | 等 1 分鐘再 `nemoclaw edge-agent status`，通常已經 `Inference: healthy` |
+| drill 的 upstream-500 FAIL，`approvals.jsonl` 裡是 `"by": "timeout"` | `stage-up.sh` 用舞台設定 `APPROVAL=manual`，drill 沒有人按核准，180 秒後視為拒絕（fail-closed，這是設計） | 跑 drill 時有人在 dashboard 按核准，或用 `APPROVAL=auto scripts/stage-up.sh` 起服務，跑完再用預設值重起 |
+| Guardrails 測試偶爾 22/23 | temperature 0 下 vLLM 仍有批次造成的非確定性（同一行 6 次有 1 次判成 No） | `guard_api.py` 對第一次判 No 的候選行再判一次，任何一次判 Yes 就移除 |
 
 相關文件：`docs/demo.md`（舞台流程與 §6.1 的啟動順序）、`docs/integration-vllm.md`（為什麼用 vLLM）、`docs/nemo-integration.md`（Guardrails 與 profiler）、`docs/hackathon-runbook.md`（Jetson 對照表，TRT 時期寫的）。

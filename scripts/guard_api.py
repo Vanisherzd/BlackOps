@@ -65,6 +65,10 @@ def screen(tool, text):
         if not (output_actions.HARD.search(probe) or output_actions.SUSPICIOUS.search(probe)):
             continue
         blocked, rail = check(OUTPUT, probe)
+        if not blocked:
+            # a second opinion before letting a candidate through: at temperature 0 Lightning still answered "No"
+            # once in six on the same injected line (batching makes vLLM nondeterministic); this rail fails closed
+            blocked, rail = check(OUTPUT, probe)
         if blocked:
             redacted.append(dict(line=line.strip()[:300], rail=rail))
             lines[i] = f"[guardrail: line removed, it addressed the agent from inside {tool}'s output ({rail})]"

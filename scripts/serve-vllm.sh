@@ -22,6 +22,10 @@
 #     (Thor, from the model card: without the FlashInfer MoE env the NVFP4 MoE fails "Non-gated activations are only
 #     supported by the flashinfer CUTLASS backend". The first start JIT-compiles FlashInfer for sm_110, 30+ min: use
 #     READY_TIMEOUT=3600; the kernels land in COMPILE_CACHE and later starts reuse them.)
+#   GPU_MEMORY_UTILIZATION=0.30 VLLM_PROFILE=generic MODEL_ID=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 \
+#     REASONING_PARSER=nemotron_v3 EXTRA_ARGS="--moe-backend marlin --kv-cache-dtype fp8 --mamba-cache-mode align" \
+#     scripts/serve-vllm.sh
+#     (the Tier-2 used on Thor from 2026-10-21; default image. Marlin MoE kernels are prebuilt: about 100 s to ready)
 #   Bolt-74B-A9B-24GB does not run on Thor (2026-10-21): its block-quantized dense weights need b12x, built for SM12x
 #   (GB10) only, and the NGC 26.01 image's transformers is too old for its remote code.
 # Environment (both profiles): MODEL_ID, PORT (8000), HOST (0.0.0.0), NAME (vllm-edge), SERVED_NAME (edge-agent),
@@ -103,9 +107,14 @@ case "$PROFILE" in
           --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.45}" --enable-chunked-prefill --trust-remote-code
           --enable-auto-tool-choice --tool-call-parser "${TOOL_PARSER:-qwen3_coder}")
     CC="${COMPILE_CACHE:-$HOME/.cache}"
-    mkdir -p "$CC/flashinfer" "$CC/vllm-compile"
+    mkdir -p "$CC/flashinfer" "$CC/vllm-compile" "$CC/flashinfer-gen"
+    # FlashInfer writes the MoE CUTLASS sources it compiles into its own package directory. Created fresh in each new
+    # container they are newer than every cached object, and ninja rebuilt all 253 (90 min on Thor); kept on the host,
+    # they are rewritten only when their content changes.
+    FI_GEN="${FLASHINFER_GEN_DIR:-/usr/local/lib/python3.12/dist-packages/flashinfer/data/csrc/nv_internal/tensorrt_llm/cutlass_instantiations}"
     MOUNTS=(-v "${HF_HOME:-$HOME/.cache/huggingface}:/root/.cache/huggingface"
-            -v "$CC/flashinfer:/root/.cache/flashinfer" -v "$CC/vllm-compile:/root/.cache/vllm")
+            -v "$CC/flashinfer:/root/.cache/flashinfer" -v "$CC/vllm-compile:/root/.cache/vllm"
+            -v "$CC/flashinfer-gen:$FI_GEN")
     ENVS=(-e HF_HUB_OFFLINE -e HF_HOME=/root/.cache/huggingface)
     JOBS="${MAX_JOBS:-$([ -f /etc/nv_tegra_release ] && echo 4)}"
     [ -n "$JOBS" ] && ENVS+=(-e "MAX_JOBS=$JOBS" -e FLASHINFER_NVCC_THREADS=1)

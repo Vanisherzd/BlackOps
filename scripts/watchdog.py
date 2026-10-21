@@ -8,8 +8,8 @@ NemoClaw agent with a fixed alert, so nobody on stage types a prompt. No model r
 
 One incident at a time: the lock holds until both URLs are 200 twice in a row. If the agent finishes and the stack is
 still down, the incident stays open as `agent-done-unhealthy` (a human takes over) and no second agent is woken.
-While scripts/nemoclaw-drill.sh runs (a drill or A/B injects its own faults and wakes its own agent) the watchdog
-only records what it sees and dispatches nothing.
+While scripts/nemoclaw-drill.sh or scripts/test-guardrails.py runs (both inject their own faults and wake their own
+agent) the watchdog only records what it sees and dispatches nothing.
 
 Log: logs/incidents.jsonl (one row per event, `ts` in epoch seconds); each incident's ops-API calls, reviews and agent
 output are copied to logs/runs/<time>-incident/ when it closes, the same layout as scripts/run-archive.sh.
@@ -67,7 +67,7 @@ def lines(p):
 
 
 def drill_running():
-    r = subprocess.run(["pgrep", "-f", "nemoclaw-drill.sh"], capture_output=True, text=True)
+    r = subprocess.run(["pgrep", "-f", "nemoclaw-drill[.]sh|test-guardrails[.]py"], capture_output=True, text=True)
     return bool(r.stdout.strip())
 
 

@@ -89,6 +89,9 @@ triage 讓第一輪 prompt 多 2.7k tokens，但少 2–3 輪（省 5–7 s）�
   8 句對照句、`kb-cards.py eval` 的 drill 查詢、`corpus_v3.jsonl` 都逐位元不變。只影響 `KB_RETRIEVAL=v4`；舞台的 v3 不受影響。
 - 已知未修：`scripts/eval-hard-repairs.py` 在這個 HEAD 上 v3 7/8、v4 7/8（10/21 語料合併後就是如此，對應 `tests/agent/test_repair_knowledge.py`
   的 3 個失敗），不是今晚造成的。
-- **磁碟**：DGX 根磁碟 03:10 起 100%（剩 1.3 GB；00:50 還有 26 GB）。可讀目錄裡找不到今晚新長的 25 GB（`logs/prune-calib` 17 GB 是
-  10/18 的、HF blobs 是 23:52 的 Lightning）；最可能在 `/var/lib/docker`（需要 sudo 才看得到）。沒有刪任何東西。這擋住了 reranker
-  模型下載（2.5 GB）與 SE 傾印；騰出 ≥ 10 GB 後跑 `scripts/kb-rerank-eval.py`（Gate B）就有數字。
+- **磁碟**：DGX 根磁碟 03:10 100%（剩 1.3 GB；00:50 還有 26 GB，新長的 25 GB 在可讀目錄找不到，最可能在 `/var/lib/docker`）。
+  依使用者指示 04:00 清掉沒用的（`logs/cleanup-1.sh`、`cleanup-2.sh`）：TRT-LLM 1.3.0rc13 映像 35.6 GB（無容器、路線已退役）、Bolt 衍生映像、
+  4 個殘缺 HF 下載 10.3 GB、13 個舊 VS Code server 8 GB、懸空匿名 volume 4.5 GB，以及 9 個退役／從未用於本案的 HF 模型
+  （Nano-30B-BF16 63 GB、Qwen3.6-FP8 37.5、Bolt 24、Qwen3.8 23、gemma-4 23、Qwen3-8B 16、SD 1.5、Qwen3.6-NVFP4 殘檔、diffusiongemma 等）共 141 GB
+  → **242 GB 可用**。保留：Lightning、Nano-30B-NVFP4、Nano-4B-FP8、bge-small。沒碰隊友的 `logs/prune-calib`（17 GB）、`~/workspace`、CVAT／ctai 容器與 volume、
+  `autoresearch_uv_cache`（仍被容器引用）。`~/.cache/vllm-bolt` 有 root 擁有的檔案刪不掉（<1 GB）。

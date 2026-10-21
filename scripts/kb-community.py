@@ -5,6 +5,9 @@ written before any data was fetched: docs/kb-community-20261022.md.
   .venv/bin/python scripts/kb-community.py build            qa.jsonl -> kb/artifacts/community_v1.jsonl (index) + holdout.jsonl (15%, never indexed)
   .venv/bin/python scripts/kb-community.py eval             C1 (wrapper check), P2 (held-out category@1), P3 (38 probe sentences), latency
   .venv/bin/python scripts/kb-community.py probe "<text>"   what the agent's tool would append for this sentence
+  .venv/bin/python scripts/kb-community.py fetch-dump <site> <Posts.xml> <Users.xml>
+                                                            the archive.org data dump of one site -> dump-<site>.jsonl (same rows; no API quota)
+  .venv/bin/python scripts/kb-community.py build --dump     index = API rows + dump rows, v1 hold-out excluded by id -> kb/artifacts/community_v2.jsonl
 
 Stdlib only. The API needs no key: 300 requests per IP per day, 100 items per request; `backoff` is honoured.
 Content is CC BY-SA (2.5 before 2011-04-08, 3.0 before 2018-05-02, 4.0 after); every row keeps link, author and licence.
@@ -284,6 +287,60 @@ def fetch(_):
     print(json.dumps({k: v for k, v in manifest.items() if k != "per_tag"}, ensure_ascii=False, indent=1))
 
 
+# ---------------------------------------------------------------- data dump (archive.org/details/stackexchange)
+def fetch_dump(argv):
+    """Posts.xml rows: PostTypeId 1 = question (Title, Tags like '<nginx><ssl>', AcceptedAnswerId, Body as HTML), 2 = answer
+    (ParentId). Streamed twice: questions in our tag set with an accepted answer and an incident-like body first, then the
+    accepted answers. Users.xml gives the display names the licence asks us to credit. Rows match the API schema."""
+    import xml.etree.ElementTree as ET
+    site, posts, users = argv[2], pathlib.Path(argv[3]), pathlib.Path(argv[4])
+    host = {"serverfault": "serverfault.com", "unix": "unix.stackexchange.com"}[site]
+    names = {}
+    for _, el in ET.iterparse(str(users), events=("end",)):
+        if el.tag == "row":
+            names[el.get("Id")] = el.get("DisplayName", "")
+            el.clear()
+    def epoch(ts):
+        return int(time.mktime(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S")))
+    questions, wanted = {}, {}
+    for _, el in ET.iterparse(str(posts), events=("end",)):
+        if el.tag != "row":
+            continue
+        if el.get("PostTypeId") == "1" and el.get("AcceptedAnswerId"):
+            tags = re.findall(r"<([^<>]+)>", el.get("Tags", "")) or el.get("Tags", "").split("|")
+            tags = [t for t in tags if t]
+            if any(t in TAG_CATEGORY for t in tags):
+                title, body = html.unescape(el.get("Title", "")), el.get("Body", "")
+                if SYMPTOM_RE.search(title) or symptom_lines(body, limit=1):
+                    q = {"site": site, "question_id": int(el.get("Id")), "title": title, "tags": tags, "category": category(tags),
+                         "score": int(el.get("Score", 0)), "creation_date": epoch(el.get("CreationDate")),
+                         "link": f"https://{host}/questions/{el.get('Id')}", "owner": names.get(el.get("OwnerUserId"), el.get("OwnerDisplayName", "")),
+                         "license": el.get("ContentLicense") or licence({"creation_date": epoch(el.get("CreationDate"))}),
+                         "question_text": plain(body), "symptom_lines": symptom_lines(body), "accepted_answer_id": int(el.get("AcceptedAnswerId"))}
+                    questions[q["question_id"]] = q
+                    wanted[q["accepted_answer_id"]] = q["question_id"]
+        el.clear()
+    print(f"{site}: {len(questions)} incident-like questions with accepted answers in our tags", file=sys.stderr)
+    rows, short = [], 0
+    for _, el in ET.iterparse(str(posts), events=("end",)):
+        if el.tag == "row" and el.get("PostTypeId") == "2" and int(el.get("Id")) in wanted:
+            q = questions[wanted[int(el.get("Id"))]]
+            text = plain(el.get("Body", ""))
+            if len(text) < 80:
+                short += 1
+            else:
+                rows.append({**q, "answer_text": text, "answer_score": int(el.get("Score", 0)),
+                             "answer_owner": names.get(el.get("OwnerUserId"), el.get("OwnerDisplayName", "")),
+                             "answer_license": el.get("ContentLicense") or licence({"creation_date": epoch(el.get("CreationDate"))})})
+        if el.tag == "row":
+            el.clear()
+    out = DATA / f"dump-{site}.jsonl"
+    out.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in sorted(rows, key=lambda r: r["question_id"])), encoding="utf-8")
+    print(json.dumps({"site": site, "rows": len(rows), "dropped_short_answer": short, "by_category": dict(Counter(r["category"] for r in rows)),
+                      "by_license": dict(Counter(r["license"] for r in rows)), "out": str(out.relative_to(ROOT)),
+                      "sha256": hashlib.sha256(out.read_bytes()).hexdigest()}, ensure_ascii=False, indent=1))
+
+
 # ---------------------------------------------------------------- build
 def index_text(r):
     return " ".join([r["title"], " ".join(r["tags"]), " ".join(r["symptom_lines"]), r["answer_text"][:300]])
@@ -296,8 +353,35 @@ def excerpt(text, width=320):
     return cut[:cut.rfind(" ")] + "…" if " " in cut[width // 2:] else cut + "…"
 
 
-def build(_):
+def build(argv):
+    """Default: the API rows, 15 % stratified hold-out -> community_v1. With --dump: API rows + dump rows, the v1 hold-out
+    excluded by (site, question_id) so it stays a clean test set -> community_v2 (the runtime loads v2 when present)."""
     rows = [json.loads(l) for l in QA.read_text(encoding="utf-8").splitlines() if l.strip()]
+    if "--dump" in argv:
+        held = {(r["site"], r["question_id"]) for r in (json.loads(l) for l in HOLDOUT.read_text(encoding="utf-8").splitlines() if l.strip())}
+        seen = {(r["site"], r["question_id"]) for r in rows}
+        for f in sorted(DATA.glob("dump-*.jsonl")):
+            for l in f.read_text(encoding="utf-8").splitlines():
+                if not l.strip():
+                    continue
+                r = json.loads(l)
+                if (r["site"], r["question_id"]) not in seen:
+                    rows.append(r)
+                    seen.add((r["site"], r["question_id"]))
+        rows = [r for r in rows if r["category"] != "other" and (r["site"], r["question_id"]) not in held]
+        docs = [{"id": f"se-{r['site']}-{r['question_id']}", "site": r["site"], "title": r["title"], "tags": r["tags"],
+                 "category": r["category"], "score": r["score"], "link": r["link"], "owner": r["owner"], "license": r["license"],
+                 "answer_owner": r["answer_owner"], "answer_license": r["answer_license"], "answer_id": r["accepted_answer_id"],
+                 "index_text": index_text(r), "answer_excerpt": excerpt(r["answer_text"])} for r in rows]
+        out = INDEX.with_name("community_v2.jsonl")
+        out.write_text("".join(json.dumps(d, ensure_ascii=False) + "\n" for d in docs), encoding="utf-8")
+        m = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        m["build_v2"] = {"indexed": len(docs), "holdout_excluded": len(held), "by_category": dict(Counter(d["category"] for d in docs)),
+                         "by_site": dict(Counter(d["site"] for d in docs)), "sha256_index": hashlib.sha256(out.read_bytes()).hexdigest(),
+                         "index_bytes": out.stat().st_size}
+        MANIFEST.write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding="utf-8")
+        print(json.dumps(m["build_v2"], ensure_ascii=False, indent=1))
+        return
     rows = [r for r in rows if r["category"] != "other"]
     by_cat = {}
     for r in sorted(rows, key=lambda r: (r["category"], r["site"], r["question_id"])):
@@ -418,4 +502,4 @@ def probe(argv):
 
 
 if __name__ == "__main__":
-    {"fetch": fetch, "build": build, "eval": evaluate, "probe": probe}[sys.argv[1]](sys.argv)
+    {"fetch": fetch, "fetch-dump": fetch_dump, "build": build, "eval": evaluate, "probe": probe}[sys.argv[1]](sys.argv)

@@ -13,6 +13,7 @@ from collections import Counter
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS = ROOT / "kb" / "artifacts" / "community_v1.jsonl"
+CORPUS_V2 = CORPUS.with_name("community_v2.jsonl")     # API rows + the archive.org dumps; used when present (KB_COMMUNITY_V1=1 forces v1)
 
 MIN_SHARED = 2          # a reference needs at least this many distinct query tokens in the document, else "no reference"
 K1, B = 1.2, 0.75       # KnowledgeBaseV2's defaults
@@ -50,7 +51,9 @@ class CommunityIndex:
         self.idf = {t: math.log((n + 1) / (f + 0.5)) for t, f in df.items()}
 
     @classmethod
-    def load(cls, path=CORPUS):
+    def load(cls, path=None):
+        if path is None:
+            path = CORPUS_V2 if CORPUS_V2.exists() and os.environ.get("KB_COMMUNITY_V1") != "1" else CORPUS
         if os.environ.get("KB_COMMUNITY", "1") == "0" or not path.exists():
             return cls([])
         return cls([json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()])

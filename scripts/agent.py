@@ -340,6 +340,17 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def settle(max_s=2.0, step=0.25):
+    """After an action, wait only as long as the stack needs: poll both health URLs until both answer 200 or max_s
+    passes. A fixed sleep(2) cost 2 s on every start/restart/recreate (measured 2026-10-22: docker_start 3.1 s,
+    docker_restart 2.4-3.3 s wall, most of it the sleep); nginx answers in well under a second once it is up."""
+    end = time.time() + max_s
+    while time.time() < end:
+        if all(http_status(u) == 200 for u in HEALTH.values()):
+            return
+        time.sleep(step)
+
+
 def http_status(url):
     """The status the URL answers with. A redirect is reported, not followed: following a 301 to a name the host
     cannot resolve read "unreachable", and the agent went repairing the network (upstream-redirect, 2026-10-19)."""
@@ -649,7 +660,7 @@ def _run_tool(name, args, dry_run):
         if dry_run:
             return f"DRY-RUN: would run docker {name.split('_')[1]} {args['name']}"
         out = sh(f"docker {name.split('_')[1]} -t 5 {args['name']}" if name == "docker_restart" else f"docker start {args['name']}")
-        time.sleep(2)
+        settle()
         return with_health(out + "\n" + docker_ps())
     if name == "read_config":
         cur = (CONF_DIR / "default.conf").read_text()
@@ -776,7 +787,7 @@ def _run_tool(name, args, dry_run):
         if args.get("replace"):
             sh(f"docker rm -f {args['name']}")       # stateless by definition (SPECS); the site config is a host file
         out = [faults.ensure(t) for t in targets]
-        time.sleep(2)
+        settle()
         return with_health("\n".join(out) + "\n" + docker_ps())
     if name == "network_repair":
         import faults

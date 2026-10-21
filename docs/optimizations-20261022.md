@@ -145,6 +145,25 @@ thinking off 的一句話診斷不是它的強項），RAG 一樣沒有幫助、
 （runbook 與卡片跟著 docker_logs 走），不在一次性診斷；頂會式的 RAG 技巧（rerank、棄權）要在能量到的地方量：我們量的是
 社群層的 held-out 與探針，不是這個 benchmark。
 
+## 外部建議（GPT 的 04:06 路線圖）可行性審查（06:50）
+
+逐條對照我們量到的數字，不照單全收：
+
+| 建議 | 判定 | 依據／做法 |
+|---|---|---|
+| 158k + rerank 重量（Recall@20、MRR、nDCG@5、P50/P95） | **做**（進行中） | 7 站 FTS5 BM25 與 +rerank 評測跑中；MRR／nDCG 只有「類別」標籤可用，不是逐篇相關性——指標名稱一律冠 `category_`，不假裝是真相關性 |
+| Python 倒排表 → SQLite FTS5 | **做完** | `COMMUNITY_BACKEND=fts5`；Mac 上 v1：建 0.2 s、開 25 ms、2–7 ms/查詢；159k 建 279 MB。閘門＝recall@20 不降、rerank 後準確率不降、RSS 降 |
+| Adaptive Specialist Delegation（三個唯讀 specialist＋單一 mutation owner） | **有條件做**（旗標 `AGENT_MODE`，預設 single） | 瓶頸是模型 decode（14 s/事故）；specialist = 更多 LLM 呼叫，max-num-seqs 2 只能雙路並行。只在 deep path 觸發（第一次修復後健康仍紅、無 runbook、同工具重複、兩次 policy 拒絕）；用 compound／datacenter drill 量 MTTR 與 RC 正確率，沒變好就不開 |
+| 不用 LLM 自報 confidence，用確定性觸發 | **同意** | 我們本來就有：health 附在每個動作後、reviewer 兩把鑰匙、runbook gate |
+| 平行證據蒐集 `evidence_bundle` | **做**（Codex 進行中） | 舞台的 watchdog 告警已帶 triage，第一輪收益比 GPT 想的小；價值在動作之後一呼叫重收證據 |
+| Fast／Deep path router | **同意，即 specialist 的觸發邏輯** | 不另造一層 |
+| Memory Governor | **做最小版**（Codex 進行中） | 記憶體不是瓶頸（MemAvailable 74 GB）；governor 只決定 specialist 並行數、reranker 開關、語料 v1/v2 |
+| Verified Incident Memory（Tier 1） | **有條件做** | repo 已有 `stack_experience`（17 筆 drill 驗證過的修法，`kb-cards.py experience`）——擴充成事故結案自動寫入＋檢索第一層，而不是另建一套 |
+| Prefix cache 不當主戰場；MTP vs DSpark 決定 | **同意** | MTP A/B 跑中 |
+| 兩個 datacenter 故障各跑 ≥3 | **做** | 依賴逾時 2/2 PASS（220 s、295 s：每次 /api/ 探測都卡 20 s）、hosts 2/2 PASS（73 s、9 min）；regression 腳本（Codex）會湊滿 3 |
+| 多 agent 共用一份模型 | **同意** | 同一個 vLLM，只多 session |
+| 10–11 點設 gate、12 點後不加功能、14 點內部 freeze | **同意** | 以 Gate 1 RAG、Gate 2 multi-agent、Gate 3 MTP 三道為準 |
+
 ## Repo 狀態（06:05）
 
 GitHub 只剩 `main`（刪掉已併入的 `docs/rag-rerank-20261021`）。Spark 刪掉已併入的 `fix/thor-power-rail`、`fix/ops-tool-safety-20261021`、

@@ -381,11 +381,30 @@ def hosts_oddities(text):
     return odd
 
 
+def expected_body(url):
+    """The marker a healthy answer at this URL contains (scripts/faults.py EXPECT_BODY), or "" when the stack definition
+    is unavailable, in which case the probe stays status-only."""
+    try:
+        import faults
+        path = urllib.parse.urlsplit(url).path or "/"
+        return faults.EXPECT_BODY.get(path, "")
+    except Exception:
+        return ""
+
+
 def http_status(url):
     """The status the URL answers with. A redirect is reported, not followed: following a 301 to a name the host
     cannot resolve read "unreachable", and the agent went repairing the network (upstream-redirect, 2026-10-19)."""
     try:
         with urllib.request.build_opener(_NoRedirect).open(url, timeout=HEALTH_TIMEOUT) as r:
+            if r.status == 200 and os.environ.get("HEALTH_CONTENT") != "0":
+                # a 200 with the wrong page is a failure the status alone hides (upstream-wrong-content, 2026-10-22)
+                expect = expected_body(url)
+                if expect:
+                    body = r.read(4096).decode("utf-8", "replace")
+                    if expect not in body:
+                        head = " ".join(body.split())[:60]
+                        return f"200 but not the deployed page (body starts {head!r}; expected it to contain {expect!r})"
             return r.status
     except urllib.error.HTTPError as e:
         if 300 <= e.code < 400:

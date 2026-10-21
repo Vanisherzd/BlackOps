@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -47,9 +48,18 @@ ALERT = ("Alert: the web stack is degraded. Diagnose it and repair it with your 
 
 
 def status(url):
-    """HTTP status, or 0 when nothing answers (same convention as faults.http)."""
+    """HTTP status, or 0 when nothing answers (same convention as faults.http); a 200 whose body is not the deployed
+    page counts as 0 too (HEALTH_CONTENT=0 restores the status-only probe)."""
     try:
-        with urllib.request.urlopen(url, timeout=3) as r:
+        with urllib.request.urlopen(url, timeout=5) as r:
+            if r.status == 200 and os.environ.get("HEALTH_CONTENT") != "0":
+                try:
+                    import faults
+                    expect = faults.EXPECT_BODY.get(urllib.parse.urlsplit(url).path or "/", "")
+                    if expect and expect not in r.read(4096).decode("utf-8", "replace"):
+                        return 0
+                except Exception:
+                    pass
             return r.status
     except urllib.error.HTTPError as e:
         return e.code

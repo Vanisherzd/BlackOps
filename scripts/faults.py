@@ -19,6 +19,7 @@
 import hashlib
 import io
 import json
+import os
 import pathlib
 import shlex
 import subprocess
@@ -153,6 +154,11 @@ CASES = {
     # the front end off the stack network: nginx runs, nothing can reach it; both logs clean
     "front-detached":        dict(min_actions=1, fix_tools={"network_repair", "docker_restart"},
                                   cause=r"network|detach|disconnect|edge-net|unreachable", tier="datacenter"),
+    # the quiet failure: the backend answers 200 with a maintenance page instead of the deployed one. Status probes say
+    # healthy; only the content check (faults.probe, agent.http_status) and the body in http_check show it.
+    "upstream-wrong-content": dict(min_actions=1, fix_tools={"recreate_stack"},
+                                   cause=r"content|maintenance|wrong (page|body|response)|return 200|config|layer|rebuil|recreat", tier="datacenter",
+                                   diag_tools={"http_check", "docker_exec"}),
     # the front end's resolver pointed at a dead nameserver: nginx cannot resolve the backend name at start and exits;
     # the log reads like a wrong upstream name, but the name is right and the resolver is wrong
     "front-resolver-broken": dict(min_actions=1, fix_tools={"docker_restart", "recreate_stack", "docker_start"},
@@ -179,14 +185,25 @@ def sh(cmd, check=False):
     return r
 
 
-def http(path):
+# What a healthy answer contains: "/" is GOOD_CONF's literal "ok", "/api/" proxies to the backend image's welcome page.
+# A 200 with another body is a silent failure (upstream-wrong-content), which a status-only probe cannot see.
+EXPECT_BODY = {"/": "ok", "/api/": "Welcome to nginx"}
+
+
+def probe(path, timeout=5):
+    """(status, body_ok): status 0 when nothing answers; body_ok False when a 200 carries the wrong page."""
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:8880{path}", timeout=5) as r:
-            return r.status
+        with urllib.request.urlopen(f"http://127.0.0.1:8880{path}", timeout=timeout) as r:
+            body = r.read(4096).decode("utf-8", "replace")
+            return r.status, (EXPECT_BODY.get(path, "") in body)
     except urllib.error.HTTPError as e:
-        return e.code
+        return e.code, False
     except Exception:
-        return 0
+        return 0, False
+
+
+def http(path):
+    return probe(path)[0]
 
 
 # One definition of each container, shared with the agent's host-layer repair tools (scripts/agent.py).
@@ -341,7 +358,7 @@ def reset():
         sh(f"docker network connect {NET} {FRONT} >/dev/null 2>&1")
         sh(f"docker start {FRONT} >/dev/null 2>&1")
         time.sleep(2)
-    if http("/api/") != 200:        # the upstream's own layer may be poisoned (upstream-500): only a rebuild clears it
+    if probe("/api/") != (200, True):   # the upstream's own layer may be poisoned (upstream-500, wrong content): only a rebuild clears it
         sh(f"docker rm -f {APP} >/dev/null 2>&1")
         ensure(APP)
         sh(f"docker restart -t 1 {FRONT} >/dev/null 2>&1")
@@ -484,6 +501,9 @@ def inject(case):
     elif case == "front-hosts-poisoned":
         sh(f"docker exec {FRONT} sh -c \"echo '10.255.255.1 {APP}' >> /etc/hosts\"", check=True)
         sh(f"docker exec {FRONT} nginx -s reload")               # nginx re-resolves the upstream name at reload
+    elif case == "upstream-wrong-content":
+        sh(f"docker exec {APP} sh -c \"printf 'server {{ listen 80; location / {{ return 200 \\\"service under maintenance\\\\n\\\"; "
+           f"add_header Content-Type text/plain; }} }}\\n' > /etc/nginx/conf.d/default.conf && nginx -s reload\"", check=True)
     elif case == "config-injection":
         (CONF_DIR / "default.conf").write_text(INJECTED_CONF)
         sh(f"docker restart -t 1 {FRONT}")
@@ -517,8 +537,11 @@ def inject(case):
 
 
 def verify():
-    ok = http("/") == 200 and http("/api/") == 200
-    print("verify:", "/", http("/"), "/api/", http("/api/"), "->", "PASS" if ok else "FAIL")
+    f, fb = probe("/")
+    a, ab = probe("/api/")
+    ok = f == 200 and a == 200 and (fb and ab or os.environ.get("HEALTH_CONTENT") == "0")
+    note = "" if (fb and ab) else " (content: " + ", ".join(p for p, good in (("/", fb), ("/api/", ab)) if not good) + " not the deployed page)"
+    print("verify:", "/", f, "/api/", a, "->", ("PASS" if ok else "FAIL") + note)
     return ok
 
 

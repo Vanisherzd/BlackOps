@@ -31,6 +31,13 @@ RUNBOOKS = ROOT / "runbooks"
 NAMES = {"edge-victim", "edge-victim-app"}
 HEALTH = {"front": "http://127.0.0.1:8880/", "api": "http://127.0.0.1:8880/api/"}
 EVIDENCE_BUNDLE_TIMEOUT = 8
+# Community references ride along with the runbook (COMMUNITY_PUSH=0 turns it off): pulling them was left to the model
+# and measured at one search_incident_knowledge call in a night of 70 drills, so the tool layer pushes them, the way it
+# pushes the runbook, for symptoms no runbook owns. Capped so a slow reranker or judge cannot stall an evidence read.
+COMMUNITY_PUSH = os.environ.get("COMMUNITY_PUSH", "1") != "0"
+COMMUNITY_PUSH_TIMEOUT = float(os.environ.get("COMMUNITY_PUSH_TIMEOUT", "4"))
+_KB_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+_SYMPTOM_PREFIX = re.compile(r"^the service itself answers HTTP .*? container is up\.\s*")
 EVIDENCE_BUNDLE_LIMIT = 6000
 UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / journal identifier
 
@@ -114,7 +121,7 @@ def with_health(result):
     health = {k: http_status(u) for k, u in HEALTH.items()}
     import tier                                            # TIER_MODE=off by default: both calls are no-ops
     if all(v == 200 for v in health.values()):
-        _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[])
+        _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[], community_seen=set())
         snapshot_known_good()
         tier.set_tier(1, "health green after an action")
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
@@ -161,7 +168,47 @@ def attach_runbook(result, query, *, container=None):
     _incident["runbook_seen"] = True
     # Keep the existing runbook ranking, but preserve log ownership for the repair-knowledge lookup.
     knowledge_query = f"{container} {query}" if container else query
-    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}" + knowledge_note(knowledge_query)
+    return (f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}" + knowledge_note(knowledge_query)
+            + community_push(query))
+
+
+def _oplog(tool, args, result, t0):
+    """A line in logs/ops-api.log in the server's own format, so drill logs show what the tool layer did on its own."""
+    try:
+        with (ROOT / "logs" / "ops-api.log").open("a") as f:
+            f.write(json.dumps({"ts": time.strftime("%H:%M:%S"), "from": "tool-layer", "tool": tool, "args": args,
+                                "ms": int((time.time() - t0) * 1000), "result": result}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def community_push(query):
+    """Community references (docs/kb-community-20261022.md) pushed next to the runbook. Only for a symptom no runbook owns
+    (community_knowledge.owned_symptom: the access-log status prefix is dropped first, a 502 is the runbook's), once per
+    symptom per incident, within COMMUNITY_PUSH_TIMEOUT seconds, never raising. The judge gate inside references() keeps
+    only what the local model accepts as on-topic, so a covered-by-nothing symptom usually comes back empty."""
+    if not COMMUNITY_PUSH or not query:
+        return ""
+    core = _SYMPTOM_PREFIX.sub("", query).strip()
+    if not core:
+        return ""
+    key = re.sub(r"[\d\W]+", " ", core.lower()).strip()[:160]
+    seen = _incident.setdefault("community_seen", set())
+    if key in seen:
+        return ""
+    seen.add(key)
+    t0 = time.time()
+    try:
+        import community_knowledge
+        if community_knowledge.owned_symptom(core):
+            return ""
+        refs = _KB_POOL.submit(community_knowledge.references, core, 2, community_knowledge.owned_symptom).result(timeout=COMMUNITY_PUSH_TIMEOUT)
+    except Exception as e:                                 # the push is an extra on an evidence read; it must never break it
+        refs, note = "", f"skipped ({type(e).__name__})"
+    else:
+        note = f"{refs.count(chr(10) + '- ')} references"
+    _oplog("community_push", {"query": core[:120]}, note, t0)
+    return refs
 
 
 # --- host layer -------------------------------------------------------------------------------------------------
@@ -427,7 +474,7 @@ def http_status(url):
 def search_runbooks(query):
     """Retrieval lives in scripts/rag.py: hybrid keyword + dense, with its own fallback when the index is absent."""
     import rag
-    return rag.search(query) + knowledge_note(query)
+    return rag.search(query) + knowledge_note(query) + community_push(query)
 
 
 KB_DB = ROOT / "kb" / "artifacts" / "blackout_ops_kb.sqlite"
@@ -583,7 +630,7 @@ def trace_summary(name, result):
     startup notices and dropped the one [emerg] line at the end of a log, and the reviewer then judged an inode
     exhaustion "a connectivity issue": logs keep their end (without the attached runbook), other results their head
     and, when long, their tail, where the appended health check is."""
-    text = str(result)
+    text = str(result).split("\ncommunity references")[0]    # other hosts' text is not evidence from this incident
     if name == "docker_logs":
         # the read-only note appended to front-end logs pushed the [emerg] line out of the kept tail, and the rebuild
         # rule, which reads the trace, never saw the missing image file it was waiting for (front-mime-missing, 0/6)
@@ -739,7 +786,7 @@ def _run_tool(name, args, dry_run):
     if name == "check_health":
         health = {k: http_status(u) for k, u in HEALTH.items()}
         if all(v == 200 for v in health.values()):
-            _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[])   # incident over; the next one starts clean
+            _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[], community_seen=set())   # incident over; the next one starts clean
             snapshot_known_good()
             import tier
             tier.set_tier(1, "health green")

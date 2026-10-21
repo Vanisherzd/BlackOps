@@ -29,6 +29,8 @@ STACK_PHRASES = ("edge-victim", "8880", "/api/", "/board/", "default.conf", "ups
                  "forbidden", "too many requests", "redirect loop", "mime.types", "worker_connections", "empty mounted",
                  "name resolution", "could not be resolved", "host not found in upstream")
 STACK_CODES = re.compile(r"\b(50[0-4]|40[34]|429|301)\b")
+# this stack's entity names: naming them does not make an error line a runbook's ("upstream sent too big header")
+ENTITY_PHRASES = ("edge-victim", "8880", "/api/", "/board/", "default.conf", "upstream")
 SITE_HOST = {"serverfault": "serverfault.com", "unix": "unix.stackexchange.com"}
 
 
@@ -281,6 +283,14 @@ def stack_covers(query):
     return any(p in q for p in STACK_PHRASES) or bool(STACK_CODES.search(q))
 
 
+def owned_symptom(query):
+    """True when a runbook owns the symptom itself: one of the runbooks' symptom phrases, or an HTTP status they handle.
+    Narrower than stack_covers(): the tool layer pushes references for an error line that merely names this stack's
+    entities, because that line ("upstream sent too big header", "24: Too many open files") is in no runbook."""
+    q = query.lower()
+    return any(p in q for p in STACK_PHRASES if p not in ENTITY_PHRASES) or bool(STACK_CODES.search(q))
+
+
 def line_for(d, excerpt_width=None):
     excerpt = d["answer_excerpt"] if excerpt_width is None else d["answer_excerpt"][:excerpt_width].rstrip() + "…"
     return (f"- {d['title']} [{d['site']}, score {d['score']}] :: {excerpt} — answer by {d.get('answer_owner') or 'unknown'}, "
@@ -341,11 +351,11 @@ def judge_keep(query, refs, k=2, max_candidates=3):
         return refs[:k]
 
 
-def references(query, k=2):
-    """Nothing for a query about this stack's own entities (the runbooks own those); otherwise the reranked candidates
-    the local model accepts as on-topic, at most k."""
+def references(query, k=2, owned=None):
+    """Nothing for a query about this stack's own entities (the runbooks own those; `owned` picks the gate, default
+    stack_covers); otherwise the reranked candidates the local model accepts as on-topic, at most k."""
     try:
-        if stack_covers(query):
+        if (owned or stack_covers)(query):
             return ""
         return render(judge_keep(query, rank(query, k=max(k, 3)), k=k))
     except Exception:            # an extra on an extra: never break the tool

@@ -352,3 +352,28 @@ sqlite 就自己建（159k 約一分鐘，一次）。`COMMUNITY_BACKEND=python`
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。
 - 不用 LLM 改寫答案成卡片：來不及審，且自動生成的 FIX 可能危險。原文摘錄＋連結＋「未在本機驗證」標示。
 - SE 完整資料傾印（archive.org，數百 MB）是之後擴量的路徑；今天用 API 的每標籤前 100 題。
+
+## Phase 4b（07:40）— RAG 上關鍵路徑：工具層推送社群參考，先寫預測再跑
+
+**問題。** 今晚 70 場 drill 裡 `search_incident_knowledge` 只被叫 1 次（第 4 節的數字全部來自離線評測）。runbook 當年也是這樣：
+留給模型自己拉就不會拉，改成工具層推才每場都有。所以社群層照辦：`agent.community_push()` 在 `docker_logs`（經 `attach_runbook`）
+與 `search_runbooks` 的結果後面附上 `community_knowledge.references()`（FTS5 → rerank → 判官），條件是
+`owned_symptom()` 為假——症狀句不含任何 runbook 的症狀片語、也沒有 runbook 處理的 HTTP 狀態碼（access-log 的「HTTP 502」前綴先剝掉）；
+光是提到這台的實體名（`upstream`、`/api/`、`8880`）不算被涵蓋。每事故每症狀一次、4 s 上限、失敗靜默；reviewer 的 trace 看不到社群文字。
+`COMMUNITY_PUSH=0` 關閉。
+
+**測試床（跑之前選定）。** 新 tier `ops`，五個容器生命週期以外的日常工單：
+`front-proxy-buffer-too-small`（502，error log「upstream sent too big header」）、`front-rlimit-nofile`（fd 上限 12，「24: Too many open files」）
+是兩個**沒有 runbook 擁有其錯誤行**的案例，推送應該發生；`upstream-listen-localhost`（connection refused，runbook 擁有）、
+`front-listen-ipv6-only`（沒有錯誤行）、`upstream-webroot-wiped`（403，runbook 擁有）是三個對照：`docker_logs` 路徑不該推，
+只有 agent 自己 `search_runbooks` 問到未涵蓋的話才會推。
+
+**預測與判準（資料未看前）。** A 臂 `COMMUNITY_PUSH=1`、B 臂 `=0`，各 ×2；五張舞台牌 A 臂 ×1 當回歸守門。
+- P1 發火：A 臂 proxy-buffer＋rlimit 四場中 ≥ 3 場出現 `community_push` 且 references > 0；三個對照案例從 `docker_logs` 來的推送 = 0。
+- P2 無害：A 臂自主修復 ≥ B 臂；兩臂 made-worse 0、謊報 0；五張牌 5/5 且推送 0。
+- P3 成本：ops tier 中位牆鐘 A − B ≤ 15 s。
+- P4（描述性）：有推送的事故，第一個修復動作是否碰到參考所指的設定／限制。只報告，不當判準。
+- 決策：P1∧P2∧P3 → 預設維持開，results-summary 改寫成「未涵蓋症狀的 RAG 在 drill 裡真的跑」；P2 不過 → 預設關；
+  P1 不過 → 閘門選錯，回 Phase 1。空值檢查：B 臂若全解，P2 只是平手，結論只能是「無害＋可見」，不能說「有幫助」。
+
+執行：`logs/rag-ab.sh`（等 final-chain 結束 → 先逐案驗證注入真的讓健康變紅、reset 回得來 → 兩臂 → 五張牌 → 還原舞台）。

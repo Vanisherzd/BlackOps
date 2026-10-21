@@ -268,7 +268,8 @@ def stream_with_salvage(resp, tools, messages=None):
                 delta = ch.get("delta") or {}
                 saw_calls = saw_calls or bool(delta.get("tool_calls"))
                 content.append(delta.get("content") or "")
-                reasoning.append(delta.get("reasoning_content") or "")
+                # vLLM 0.32 names the field "reasoning"; older vLLM and TensorRT-LLM "reasoning_content"
+                reasoning.append(delta.get("reasoning_content") or delta.get("reasoning") or "")
         if held or finishing or chunk == b"[DONE]":
             held.append(ln)            # from the first finish_reason onward: usage chunk, [DONE]
             continue
@@ -327,7 +328,7 @@ def salvage_json(payload, tools, messages=None):
         if m.get("tool_calls"):
             continue
         calls = (json_text_calls(m.get("content"), tools) if (m.get("content") or "").strip()
-                 else salvage_calls(m.get("reasoning_content") or "", tools))
+                 else salvage_calls(m.get("reasoning_content") or m.get("reasoning") or "", tools))
         if calls:
             m["tool_calls"], ch["finish_reason"] = calls, "tool_calls"
             log(salvaged=[c["function"]["name"] for c in calls], via="json")

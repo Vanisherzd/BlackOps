@@ -856,7 +856,9 @@ def main():
                                            temperature=0, max_tokens=1500,
                                            extra_body={"chat_template_kwargs": {"enable_thinking": THINK}})
         m = r.choices[0].message
-        reasoning = getattr(m, "reasoning_content", None) or (m.model_extra or {}).get("reasoning_content")
+        extra = m.model_extra or {}
+        reasoning = (getattr(m, "reasoning_content", None) or extra.get("reasoning_content")
+                     or getattr(m, "reasoning", None) or extra.get("reasoning"))
         calls = m.tool_calls or []
         messages.append({"role": "assistant", "content": m.content or "", "tool_calls": [c.model_dump() for c in calls]} if calls
                         else {"role": "assistant", "content": m.content or ""})

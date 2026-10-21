@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # (Re)start the demo services around the inference servers, in the docs/demo.md 6.1 order and with the settings checked
-# on the Thor on 2026-10-21, then run the preflight. Inference is started on its own first (slow and model-dependent):
-# scripts/serve-vllm.sh for Tier-2 on :8000, scripts/serve-tier1.sh for Tier-1 on :8010.
-#   scripts/stage-up.sh           restart shim, guard_api, ops_api, power, watchdog, dashboard; preflight --warm
+# on the Thor on 2026-10-21, then run the preflight. With nothing on :8000 it first starts the Tier-2 the Thor uses
+# (Nemotron-3.5-Lightning-30B-A3B-NVFP4, see scripts/serve-vllm.sh; T2_START=0 to refuse instead). A Tier-1 server is
+# started separately: scripts/serve-tier1.sh on :8010.
+#   scripts/stage-up.sh           (Tier-2 if missing,) restart shim, guard_api, ops_api, power, watchdog, dashboard;
+#                                 preflight --warm
 #   scripts/stage-up.sh status    one line per service
 #   scripts/stage-up.sh down      stop those services (inference, victim and NemoClaw are left alone)
 # Environment, with the stage defaults:
@@ -52,8 +54,14 @@ case "${1:-}" in
   *) sed -n '5,7p' "$0"; exit 2 ;;
 esac
 
-curl -sf -m 5 http://127.0.0.1:8000/health >/dev/null || {
-  echo "no Tier-2 server on :8000; start it first (scripts/serve-vllm.sh, see docs/thor-bringup.md section 3)" >&2; exit 1; }
+if ! curl -sf -m 5 http://127.0.0.1:8000/health >/dev/null; then
+  [ "${T2_START:-1}" = 1 ] || { echo "no Tier-2 server on :8000 (T2_START=0)" >&2; exit 1; }
+  echo "no Tier-2 server on :8000: starting Lightning (about 100 s with the kernel caches in place)"
+  [ $JETSON = 1 ] && { sync; sudo -n sh -c "echo 3 > /proc/sys/vm/drop_caches" 2>/dev/null || true; }
+  GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.30}" VLLM_PROFILE=generic READY_TIMEOUT="${READY_TIMEOUT:-1800}" \
+    MODEL_ID=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 REASONING_PARSER=nemotron_v3 \
+    EXTRA_ARGS="--moe-backend marlin --kv-cache-dtype fp8 --mamba-cache-mode align" scripts/serve-vllm.sh || exit 1
+fi
 
 T1_URL="${T1_URL:-http://127.0.0.1:8010}"
 case "${TIER:-auto}" in

@@ -16,10 +16,17 @@ CORPUS = ROOT / "kb" / "artifacts" / "community_v1.jsonl"
 
 MIN_SHARED = 2          # a reference needs at least this many distinct query tokens in the document, else "no reference"
 K1, B = 1.2, 0.75       # KnowledgeBaseV2's defaults
-# This stack's own entities: a query naming them is a runbook matter, never a community one.
-STACK_WORDS = ("edge-victim", "8880", "/api/", "/board/", "default.conf", "upstream")
-GENERIC = {"the", "and", "for", "with", "not", "this", "that", "from", "are", "was", "has", "have", "its", "but",
-           "when", "while", "after", "before", "into", "than", "then", "there", "error", "errors", "failed", "fails"}
+# This stack's own matters: its entities, and the symptoms its runbooks already describe (runbooks/*.md titles). A
+# query containing one of these gets no community reference. Word-overlap with runbook titles was tried first and
+# suppressed hardware/boot probes on words like "device" or "up" (docs/kb-community-20261022.md, Phase 4), so the list
+# is explicit.
+STACK_PHRASES = ("edge-victim", "8880", "/api/", "/board/", "default.conf", "upstream", "nginx stopped", "exited (0)",
+                 "exited 0", "web service down", "connection refused", "bad gateway", "gateway timeout", "gateway time-out",
+                 "internal server error", "service unavailable", "no such container", "unknown directive", "restart loop",
+                 "crashloop", "exit 137", "exited (137)", "out of memory", "oomkilled", "no space left on device",
+                 "forbidden", "too many requests", "redirect loop", "mime.types", "worker_connections", "empty mounted",
+                 "name resolution", "could not be resolved", "host not found in upstream")
+STACK_CODES = re.compile(r"\b(50[0-4]|40[34]|429|301)\b")
 SITE_HOST = {"serverfault": "serverfault.com", "unix": "unix.stackexchange.com"}
 
 
@@ -78,21 +85,10 @@ def index():
 
 
 def stack_covers(query):
-    """True when the symptom is this stack's own: the query names one of its entities, or two or more of its
-    non-generic words appear in one runbook's file name or title. Measured 2026-10-22: every Q_stage sentence and the
-    agent's own 5xx phrasings are covered this way, while the hardware/network/platform probes are not."""
-    if any(w in query for w in STACK_WORDS):
-        return True
-    terms = set(re.findall(r"[a-z0-9]+", query.lower())) - GENERIC
-    try:
-        import rag
-        for name, title, _ in rag.documents():
-            words = set(re.findall(r"[a-z0-9]+", (pathlib.Path(name).stem + " " + title).lower()))
-            if len(terms & words) >= 2:
-                return True
-    except Exception:
-        return True              # no runbooks readable: say nothing rather than something unchecked
-    return False
+    """True when the symptom is this stack's own: the query names one of its entities, one of its runbooks' symptoms,
+    or an HTTP status its runbooks handle."""
+    q = query.lower()
+    return any(p in q for p in STACK_PHRASES) or bool(STACK_CODES.search(q))
 
 
 def line_for(d, excerpt_width=None):

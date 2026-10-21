@@ -1,6 +1,7 @@
-# Blackout Ops 專案進度（2026-10-21 10:40 更新）
+# Blackout Ops 專案進度（2026-10-21 11:00 更新）
 
-時程：**今天 10/21 工作坊** → 10/22–23 黑客松 → 10/23 12:30 code freeze。
+時程（**2026-10-21 大會更動**）：**今天 10/21 工作坊** → **10/22 16:00 截止**（原本是 10/23 12:30，少了將近一天）。
+揭露規則（同日更動）：**預賽到決賽之間的實作不算賽前成果**。只有預賽企劃書（10/02）之前就有的東西要列進揭露頁。
 比賽機器：**NVIDIA Jetson AGX Thor**（JetPack 7，sm_110）。開發與驗證都在 DGX Spark（GB10）上做。
 
 ## 1. 一句話現況
@@ -49,35 +50,37 @@
 ## 5. 主要風險（依嚴重度）
 
 1. **Thor 上的推論。** Bolt 映像裡的 b12x 是為 GB10（sm121）編譯的，在 Thor（sm_110）上能不能跑還不知道；查不到任何「Bolt 能在 Thor 上跑」的來源。退路依序是：Bolt 加 NGC 的 Thor vLLM、Nano 30B 加 NGC、Nano 加 upstream vLLM。如果退到 Nano，簡報和計分卡都要改。
-2. **能耗表（企劃書的表一、表二）還沒有 Thor 上的數據。** 要等 Thor、Tier-1 模型、nvpmodel 都到位，才能跑 `overnight.sh`。
+2. **能耗表（企劃書的表一、表二）還沒有 Thor 上的數據。** 要等 Thor、Tier-1 模型、nvpmodel 都到位，才能跑 `overnight.sh`。截止提前之後，只剩今晚可以跑，還要看能不能使用 Thor。
 3. **MIG 在 JetPack 7.2 以前不支援**（依 NVIDIA 論壇的說法）。企劃書寫的「架構保證」可能要改。
-4. **還沒真的跑過的 6 項 demo 外殼**（§4）。10/22 每一項都至少要實跑一次。
+4. **還沒真的跑過的 6 項 demo 外殼**（§4）。10/22 11:00 之前，每一項都至少要實跑一次。
 5. **NemoClaw 在 Thor 上的安裝需要網路**，離線包沒有涵蓋這部分。
-6. **既有成果揭露。** Bolt 分支、demo 外殼、NeMo 整合都是賽前做的；大會規定沒揭露的既有成果可能被取消資格。請確認簡報的揭露頁有寫到。
+6. **既有成果揭露**（已大致解除）。10/13 之後做的東西都算比賽期間的成果：retrieval v2–v4、盲測、Bolt 分支、vLLM 整合、demo 外殼、NeMo 整合。揭露頁只需要列 10/02 預賽之前就有的：9 月的 agent 迴圈與工具、change reviewer、知識庫與 kb-eval、TRT 加 NemoClaw 的部署。
 7. **共用的 Spark。** 推論服務一次只能開一個，因為沒有 swap；跑 drill 前要先協調。
 
 ## 6. 要做的事
 
-**今天（10/21，工作坊）**
+**今天（10/21，工作坊）到今晚**
 1. push `thor-bringup` 並開 PR 到 `main`，**負責人：penny11124**。
 2. 離線包（`/media/hsnl/TRANSCEND/thor-bundle-20261021/`），10:22 開始在背景做。
 3. **讓推論在 Thor 上跑起來**：照 `docs/thor-bringup.md` 走。
    - §1 開機檢查。
    - §3 推論依 A 到 D 嘗試，`smoke.py` 要過。
-   - §5 裝 NemoClaw（`NEMOCLAW_SANDBOX_GPU=0`），跑一場 drill。
-4. 選定 Tier-1 模型（Nano 4B 或 Lightning），用 `serve-tier1.sh` 開起來，確認 shim 解析正常。
-5. 填好紀錄表（`thor-bringup.md` §8）：機型、JetPack 版本、nvpmodel 模式表、tegrastats 電源軌、sudo、sandbox 網段。
-6. 向主辦確認：電源供應器、sudo、能不能自帶 switch、台上能不能有線連到會場網路。
+   - §5 裝 NemoClaw（`NEMOCLAW_SANDBOX_GPU=0`）。
+   - §6 跑 9 案回歸。
+4. 選定 Tier-1 模型，用 `serve-tier1.sh` 開起來，確認 shim 解析正常。
+5. 填好紀錄表（§8）；向主辦確認電源、sudo、switch、有線網路，以及**今晚能不能使用 Thor**。
+6. **今晚若還能用 Thor**：睡前開始跑 `overnight.sh`，跑 Tier 的 A/B。**不能用**：能耗表改用 Spark 的數據，並標明「Spark GPU 電源軌」；Thor 上只量單場事故。
 
-**10/22（黑客松第一天）**
-7. Thor 上跑 9 案回歸，加上 §4 那 6 項，每一項至少實跑一次。
-8. **傍晚檢查點**：第二幕（upstream-500 加審批加 Tier）連續成功 3 次，才保留 Tier 和 nvpmodel。
-9. 決定要不要做遠端 victim。
-10. 晚上排練一次「冷開機後直接斷網」。睡前開始跑 `overnight.sh`，Tier 的 A/B 測試。
+**10/22（截止 16:00）**
+7. **到 11:00 為止**：§4 那 6 項還沒真的跑過的 demo 外殼，每一項至少實跑一次。
+8. **11:00 檢查點**：第二幕（upstream-500 加審批加 Tier）連續成功 3 次，才保留 Tier 和 nvpmodel；否則砍掉，只保留人工審批。
+9. **11:00–15:00**：
+   - 用 `score-runs.py` 和 `nat_profile.py` 把數據填進簡報的表一、表二。
+   - 排練 2–3 次。
+   - 挑一場最乾淨的 Thor 實跑當回放素材，同步到簡報筆電和備援筆電。
+10. **15:00–16:00**：最後一次 preflight；凍結程式碼；確認上台前檢查清單。
 
-**10/23（第二天，12:30 code freeze）**
-11. 用 `score-runs.py` 和 `nat_profile.py` 把數據填進簡報的表一、表二。
-12. 排練 3 次。挑一場最乾淨的 Thor 實跑當回放素材，同步到簡報筆電和備援筆電。
+**因為時程縮短而砍掉的**：遠端 victim、補知識庫卡片、讓 agent 回報注入事件、在 Thor 上做 NemoClaw 的離線映像。
 
 **簡報要更新的地方**
 - 推論寫成「vLLM + Bolt；TensorRT-LLM 是早期的基準」，表四改成兩邊的對照。
@@ -85,17 +88,12 @@
 - 邊緣優化頁加上「每場約 1 Wh，57% 在 LLM，prompt 與 completion 約 40:1，所以優化槓桿在 prefill 和 context」。
 - MIG 的措辭，看 JetPack 版本決定。
 - 廠務包裝；「監控者和被監控者在同一台」的 Q&A 答案；「規則巡檢不推論」這個措辭。
-- 既有成果揭露頁。
+- 既有成果揭露頁：只列 10/02 之前就有的東西（見風險 6）。
 
 **還等決定**
 - 第一幕要不要「注入後不等，直接講投影片」。
 - 舞台上要不要用 `log-injection` 這張卡，還是只在 Q&A 時用回放展示。
 
-**選配**
-- 遠端 victim。
-- 讓 agent 在報告裡回報注入事件。
-- 補知識庫的硬體、網路類卡片（`docs/kb-coverage-survey.md` §4）。
-- 在 Thor 上把 NemoClaw 和 OpenShell 的映像也存一份離線版。
 
 ## 7. 文件索引
 

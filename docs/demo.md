@@ -201,41 +201,36 @@ DASHBOARD_URL=http://127.0.0.1:8097 T1_URL=http://127.0.0.1:8010 scripts/preflig
 
 ---
 
-## 7. 時程對照
+## 7. 時程對照（2026-10-21 更新：截止改為 **10/22 16:00**）
 
-**10/22 傍晚是唯一的硬性檢查點**：第二幕在 Thor 上**連續成功三次**，才保留 Tier 與 nvpmodel；否則砍掉，只保留人工審批，能耗改用口頭和夜跑數據交代。
+**唯一的硬性檢查點改成 10/22 11:00**：第二幕在 Thor 上**連續成功三次**，才保留 Tier 與 nvpmodel；否則砍掉，只保留人工審批，能耗改用口頭和夜跑數據交代。
 
-**到 10/20 為止（在 Spark 上做，全部列入既有成果揭露）**
+揭露：預賽（10/02）到決賽之間的實作不算賽前成果，所以揭露頁只列 10/02 之前就有的東西（見 `docs/project-status-2026-10-20.md` 風險 6）。
+
+**到 10/21 上午為止（在 Spark 上）**
 - [x] #2、#3 看板頁與 prompt 修正，回歸無退步
 - [x] #4 watchdog、#5 歸檔、#6 wan.sh、#8 preflight（骨架）
 - [x] #7 dashboard：四區顯示、注入／reset／斷網按鈕、回放
-- [x] #10–#14：審批、Tier、功耗、夜跑、能耗計分（提前完成，見下方提醒）
-- [ ] #1 遠端 victim（延後）
-- [ ] 離線包兩份：Thor 推論映像、4B 模型、HF cache、wheels
-- [ ] 向主辦確認：電源供應器、sudo、自帶 switch、台上能否有線連到會場網路
+- [x] #10–#14：審批、Tier、功耗、夜跑、能耗計分
+- [x] vLLM + Bolt 整合（NemoClaw 15/15）、NeMo Guardrails 與 Agent Toolkit
+- [x] 離線包（TRANSCEND：`thor-bundle-20261021/`）
+- [ ] 向主辦確認：電源供應器、sudo、自帶 switch、台上能否有線連到會場網路、**今晚能不能使用 Thor**
+- ✂ #1 遠端 victim：時程縮短，**不做**
 
-**10/21 工作坊（3 人）**：照 `docs/thor-bringup.md` 的步驟做
-- [ ] 確認配到的機型：T5000 128 GB 還是 T4000 64 GB。64 GB 時，Bolt（0.45 × 64 ≈ 29 GB，權重就 24 GB）可能放不下 KV cache，改用 `MODEL_ID=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4`，或調高 `GPU_MEMORY_UTILIZATION`
-- [ ] Thor 上 vLLM 能跑起來：`scripts/serve-vllm.sh`（runtime nvidia）；不行就改用 jetson-containers vLLM（`IMAGE`／`BOLT_IMAGE` 可換）；記錄峰值記憶體
-- [ ] 確認 Tier-1 的 4B 模型 ID，並驗證 shim 解析它的 tool call 和 reasoning 都正常
-- [ ] `nvpmodel -q --verbose` 抄下模式表，實測切換延遲、哪些模式需要重開機
-- [ ] 確認 MIG 能否切給兩個推論實例；不行就把簡報裡「架構保證」的措辭改掉
-- [ ] NemoClaw onboard（Thor 上帶 `NEMOCLAW_SANDBOX_GPU=0`）
-- [ ] 記下 tegrastats 的電源軌名稱，必要時設 `POWER_TOTAL_RAIL`
+**10/21 工作坊到今晚（3 人）**：照 `docs/thor-bringup.md` 的步驟做
+- [ ] 機型與 JetPack 版本（7.2 以上才有 MIG；7.2 以前就改掉簡報裡「架構保證」的說法）
+- [ ] 推論依 §3 的 A 到 D 嘗試，`smoke.py` 要過；記錄峰值記憶體
+- [ ] NemoClaw onboard（`NEMOCLAW_SANDBOX_GPU=0`），然後跑 9 案回歸
+- [ ] Tier-1 模型開起來（`serve-tier1.sh`），確認 shim 能解析它的 tool call 和 reasoning
+- [ ] `nvpmodel -q --verbose` 的模式表、切換延遲；tegrastats 的電源軌名稱
 - [ ] 和駐點網路組實測：從台上位置連到座位上 Thor 的 :8097
+- [ ] **今晚若還能用 Thor**：睡前 `UPSTREAM_T1=http://127.0.0.1:8010 scripts/overnight.sh 3`
 
-**10/22 黑客松第一天**
-- [ ] 上午：完整部署到 Thor，`faults.py setup`，跑 9 案回歸（NemoClaw 路徑，每題至少 3 次）
-- [ ] 下午：在 Thor 上驗證審批、Tier、功耗曲線、watchdog 叫醒 agent、run-archive
-- [ ] 傍晚：第二幕連續三次成功的檢查點；再決定遠端 victim 要不要做
-- [ ] 晚上：完整排練一次「冷開機即斷網」，抓出偷偷連外的服務
-- [ ] 睡前：`UPSTREAM_T1=http://127.0.0.1:8010 scripts/overnight.sh 3` 啟動夜跑
-
-**10/23 黑客松第二天**
-- [ ] 早上：`scripts/score-runs.py` 收夜跑數據，更新投影片數據頁
-- [ ] 排練三次，其中一次從台上位置實際操作
-- [ ] 挑一場最乾淨的 Thor 真實演練（`logs/runs/`），同步到簡報筆電與備援筆電當回放素材
-- [ ] 12:30 code freeze
+**10/22（截止 16:00）**
+- [ ] 到 11:00：在 Thor 上實跑 watchdog 叫醒 agent、dashboard 按鈕與核准、`wan.sh` 斷網、Tier 切換、`run-archive`
+- [ ] **11:00 檢查點**：第二幕連續 3 次成功
+- [ ] 11:00–15:00：收數據（`score-runs.py`、`nat_profile.py`）、更新投影片數據頁；排練 2–3 次，其中一次從台上位置操作；錄一場最乾淨的 Thor 實跑當回放素材，同步到兩台筆電
+- [ ] 15:00–16:00：最後一次 preflight，凍結程式碼
 - [ ] 換場前 15 分鐘：跑完 §3.1 的上台前檢查
 
 ---
@@ -243,7 +238,7 @@ DASHBOARD_URL=http://127.0.0.1:8097 T1_URL=http://127.0.0.1:8010 scripts/preflig
 ## 8. 待決定
 
 - [ ] 第一幕「注入後不等，切回投影片講架構」的做法，主講人是否接受
-- [ ] 遠端 victim：10/22 傍晚再決定
+- ✂ 遠端 victim：時程縮短，不做
 - [ ] 簡報上，「平時規則巡檢不推論，異常才由 Tier-1 接手」的措辭，取代原本的「Tier-1 巡檢」
 
 相關文件：`docs/project-status-2026-10-20.md`（整體進度）、`docs/demo-pending-edits.md`（修改紀錄與回歸結果）、`docs/kb-coverage-survey.md`（知識庫與故障 survey）、`docs/HANDOFF-kb-retrieval-v2.md`（vanli 的交接文件）。

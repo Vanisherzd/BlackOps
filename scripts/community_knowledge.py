@@ -83,7 +83,10 @@ class CommunityIndex:
 # BM25 order as before: the sidecar can never take the tool down.
 RERANK_URL = os.environ.get("RERANK_URL", "")
 RERANK_TOP_N = int(os.environ.get("RERANK_TOP_N", "20"))
-RERANK_MIN_SCORE = float(os.environ.get("RERANK_MIN_SCORE", "0.5"))
+# 0 = order only, no abstention: on the held-out halves every floor from 0.05 up turned more right answers into "none"
+# than wrong ones (0.05: right 0.78 -> 0.38, wrong 0.22 -> 0.07); the reranker's value here is the order (wrong@1
+# 0.29 -> 0.22), not the absolute score (docs/kb-community-20261022.md, Gate B).
+RERANK_MIN_SCORE = float(os.environ.get("RERANK_MIN_SCORE", "0"))
 RERANK_TIMEOUT = float(os.environ.get("RERANK_TIMEOUT", "5"))
 
 _index = None

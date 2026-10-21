@@ -233,6 +233,45 @@ drill 一致）。之後 `scripts/stage-up.sh` 還原舞台，dashboard 注入 n
 而 top-1 只有 0.71／0.87——正是「候選在、排錯」。計畫的 Gate A（≥ 0.90）通過，Gate B（reranker 是否把它排對、分數能不能判「無」）
 的腳本已寫好、模型路徑照 model card 寫、未跑（磁碟）。
 
+## Phase 4 補充 — Gate B：cross-encoder reranker（04:15–04:40，磁碟清出 242 GB 之後）
+
+模型 `nvidia/llama-nemotron-rerank-1b-v2`（不需 token；transformers 5.17 載不起它的遠端程式碼，改走 model card 的 vLLM 路徑：
+`scripts/serve-rerank.sh` 用同一個 nightly 映像開一個 sidecar 容器在 :8020，GPU 4%，46 s 就 healthy，容器記憶體 3.4 GiB）。
+BM25 top-20 → sidecar `/rerank` → 取最高分；量在 reranker 沒看過的資料上：
+
+| 集合 | n | BM25 top-1 類別對 | **rerank top-1 類別對** | recall@20 | 每查詢 |
+|---|---|---|---|---|---|
+| held-out 半 A（調門檻） | 569 | 0.692 | **0.777** | 0.979 | 145 ms |
+| held-out 半 B（讀結果） | 570 | 0.712 | **0.775** | 0.977 | 144 ms |
+| Q_gap 38 句 | 38 | 0.868 | 0.868 | 1.0 | 94 ms |
+
+錯誤率 0.29 → 0.22（相對少 22%），Q_gap 本來就對的沒變差。runbook 那邊（15 份 runbook 當文件）：39 句域內症狀 top-1 對 33、
+分數大多 1.0 但有 8 句落在 0.0–0.2；38 句域外探針幾乎全部 0.0（只有 1 句 1.0）。意思是「沒有 runbook 符合」用 reranker 分數
+是可分的，但域內有兩成會被誤判成無，所以**不碰舞台的 runbook attach**，只當資料留著。
+
+門檻：第一輪的門檻表用了 logit 尺度（-10…10），對 sidecar 的 sigmoid 分數沒有資訊量；第二輪改 0.1–0.9 重跑（結果見下一段）。
+上線路徑：`community_knowledge.rank()` 在 `RERANK_URL` 設定時走 BM25 top-20 → rerank → `RERANK_MIN_SCORE` 以下不給；sidecar
+沒回應就退回 BM25 排序，工具永遠不會因為它掛掉。
+
+第二輪門檻表（sigmoid 尺度；半 A 調、半 B 讀；`logs/kb-rerank-rows.json` 可重算）：
+
+| 門檻 | 半 A 對／錯／無 | 半 B 對／錯／無 | Q_gap 對／錯／無 |
+|---|---|---|---|
+| 無（只重排） | **.777 / .223 / 0** | **.775 / .225 / 0** | .868 / .132 / 0 |
+| 0.05 | .376 / .072 / .552 | .351 / .077 / .572 | .447 / .053 / .500 |
+| 0.1 | .337 / .054 / .608 | .309 / .068 / .623 | .447 / .053 / .500 |
+| 0.3 | .274 / .049 / .677 | .240 / .058 / .702 | .368 / .053 / .579 |
+| 0.5 | .228 / .044 / .728 | .209 / .054 / .737 | .316 / .053 / .632 |
+
+reranker 的分數幾乎是二值的（runbook 那邊也是：1.0 一堆、0.0 一堆），對「同類別但不是直接解答」的 SE 段落常給 0：它判的是
+「這段有沒有直接回答」，不是「這段有沒有用」。用它棄權，最低的 0.05 門檻就把一半以上的對答案變成「無」，換到的只是錯的從
+.22 降到 .07。事前規則是「錯最少、對 ≥ 0.6」，沒有任何門檻滿足，所以**選定：`RERANK_MIN_SCORE=0`（只重排、不棄權）**，
+顯示文字維持「未驗證的假設」標示。知識工具裡的實際效果：top-1 類別錯從 29% 降到 22%，每次多 145 ms。
+
+**Gate B 結論。** 重排有效、棄權無效；上線為選配：`scripts/serve-rerank.sh` 起 sidecar，ops_api 環境加
+`RERANK_URL=http://127.0.0.1:8020/rerank`；沒設或 sidecar 沒回就是 BM25 排序。stage-up 不啟動它（計畫規定：旗標預設關，
+排練乾淨才開）。
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

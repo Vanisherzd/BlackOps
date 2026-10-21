@@ -8,6 +8,7 @@ written before any data was fetched: docs/kb-community-20261022.md.
   .venv/bin/python scripts/kb-community.py fetch-dump <site> <Posts.xml> <Users.xml>
                                                             the archive.org data dump of one site -> dump-<site>.jsonl (same rows; no API quota)
   .venv/bin/python scripts/kb-community.py build --dump     index = API rows + dump rows, v1 hold-out excluded by id -> kb/artifacts/community_v2/<site>.jsonl.gz
+  .venv/bin/python scripts/kb-community.py build-fts [--v1] shards (or v1) -> kb/artifacts/community.sqlite (FTS5; runtime: COMMUNITY_BACKEND=fts5)
 
 Stdlib only. The API needs no key: 300 requests per IP per day, 100 items per request; `backoff` is honoured.
 Content is CC BY-SA (2.5 before 2011-04-08, 3.0 before 2018-05-02, 4.0 after); every row keeps link, author and licence.
@@ -448,13 +449,48 @@ def build(argv):
     print(json.dumps(m["build"], ensure_ascii=False, indent=1))
 
 
+# ---------------------------------------------------------------- SQLite FTS5 build
+def build_fts(argv):
+    """kb/artifacts/community.sqlite from the v2 shards (or v1 with --v1): docs table + FTS5 over index_text. Rebuildable,
+    gitignored (~300 MB at 159k documents); the runtime uses it with COMMUNITY_BACKEND=fts5."""
+    import gzip, sqlite3
+    import community_knowledge as ck
+    src = [INDEX] if "--v1" in argv else sorted(ck.CORPUS_V2.glob("*.jsonl.gz"))
+    out = ck.FTS_PATH
+    if out.exists():
+        out.unlink()
+    con = sqlite3.connect(out)
+    con.execute("CREATE TABLE docs (id TEXT, site TEXT, title TEXT, tags TEXT, category TEXT, score INTEGER, link TEXT, owner TEXT, "
+                "license TEXT, answer_owner TEXT, answer_license TEXT, answer_id INTEGER, answer_excerpt TEXT, index_text TEXT)")
+    con.execute("CREATE VIRTUAL TABLE fts USING fts5(index_text, content='docs', content_rowid='rowid', tokenize='unicode61')")
+    n = 0
+    t0 = time.time()
+    for f in src:
+        text = gzip.open(f, "rt", encoding="utf-8").read() if str(f).endswith(".gz") else f.read_text(encoding="utf-8")
+        rows = []
+        for l in text.splitlines():
+            if not l.strip():
+                continue
+            d = json.loads(l)
+            rows.append((d["id"], d["site"], d["title"], json.dumps(d.get("tags", [])), d["category"], d.get("score", 0), d["link"],
+                         d.get("owner", ""), d.get("license", ""), d.get("answer_owner", ""), d.get("answer_license", ""),
+                         d.get("answer_id"), d["answer_excerpt"], d["index_text"]))
+        con.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        n += len(rows)
+    con.execute("INSERT INTO fts(fts) VALUES('rebuild')")
+    con.execute("INSERT INTO fts(fts) VALUES('optimize')")
+    con.commit(); con.close()
+    print(json.dumps({"docs": n, "sources": [str(f.relative_to(ROOT)) for f in src], "bytes": out.stat().st_size,
+                      "seconds": round(time.time() - t0, 1), "out": str(out.relative_to(ROOT))}))
+
+
 # ---------------------------------------------------------------- eval
 def evaluate(_):
     import os
     os.environ.setdefault("HEALTHY_GUARD", "0")
     import community_knowledge as ck
-    idx = ck.CommunityIndex.load()
-    report = {"indexed": len(idx.docs)}
+    idx = ck.index()                     # the live backend: in-memory BM25, or FTS5 with COMMUNITY_BACKEND=fts5
+    report = {"indexed": len(idx), "backend": type(idx).__name__}
 
     # C1: the wrapper changes nothing the stage path sees (forced by construction; run to prove the import did not break it)
     import agent
@@ -475,7 +511,7 @@ def evaluate(_):
                     "community_never_with_matched_card": not any(v["card_matched"] and v["community_shown"] for v in stage.values()),
                     "community_never_on_stage_queries": not any(v["community_shown"] for v in stage.values()),
                     "community_never_on_agent_shaped_queries": not any(agent_shaped.values()),
-                    "shown_for_gap_sentences": f"{gap_shown}/{len(Q_GAP)}", "not_vacuous": gap_shown > 0 or not idx.docs,
+                    "shown_for_gap_sentences": f"{gap_shown}/{len(Q_GAP)}", "not_vacuous": gap_shown > 0 or not len(idx),
                     "stage": stage, "agent_shaped": agent_shaped}
     report["C1"]["pass"] = all(report["C1"][k] for k in ("knowledge_note_identical", "community_never_with_matched_card",
                                                           "community_never_on_stage_queries", "community_never_on_agent_shaped_queries",
@@ -501,8 +537,8 @@ def evaluate(_):
         s_n += 1
         refs = ck.rank(" ".join(r["symptom_lines"]), k=1)
         s_hits += bool(refs) and refs[0][2]["category"] == r["category"]
-    share = Counter(d["category"] for d in idx.docs)
-    majority = max(share.values()) / max(1, len(idx.docs)) if share else 0
+    share = idx.category_counts()
+    majority = max(share.values()) / max(1, len(idx)) if share else 0
     report["P2"] = {"holdout": len(held), "category_at_1": round(hits / max(1, len(held)), 3),
                     "wrong_at_1": round((shown - hits) / max(1, len(held)), 3),
                     "returned_a_reference": round(shown / max(1, len(held)), 3), "majority_baseline": round(majority, 3),
@@ -541,4 +577,4 @@ def probe(argv):
 
 
 if __name__ == "__main__":
-    {"fetch": fetch, "fetch-dump": fetch_dump, "build": build, "eval": evaluate, "probe": probe}[sys.argv[1]](sys.argv)
+    {"fetch": fetch, "fetch-dump": fetch_dump, "build": build, "build-fts": build_fts, "eval": evaluate, "probe": probe}[sys.argv[1]](sys.argv)

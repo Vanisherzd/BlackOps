@@ -49,3 +49,5 @@ victim/known-good/
 # community v2: the per-site dump rows (160 MB) and the uncompressed index stay on the Spark; git carries community_v2.jsonl.gz
 /datasets/derived/stackexchange_ops_qa_20261022/dump-*.jsonl
 /kb/artifacts/community_v2.jsonl
+# community FTS5 index: rebuilt from the shards with kb-community.py build-fts
+/kb/artifacts/community.sqlite

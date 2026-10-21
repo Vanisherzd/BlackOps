@@ -64,6 +64,12 @@ class CommunityIndex:
         n = len(docs)
         self.idf = {t: math.log((n + 1) / (len(p) + 0.5)) for t, p in self.postings.items()}
 
+    def __len__(self):
+        return len(self.docs)
+
+    def category_counts(self):
+        return Counter(d["category"] for d in self.docs)
+
     @classmethod
     def load(cls, path=None):
         if os.environ.get("KB_COMMUNITY", "1") == "0":
@@ -115,6 +121,50 @@ RERANK_TOP_N = int(os.environ.get("RERANK_TOP_N", "20"))
 RERANK_MIN_SCORE = float(os.environ.get("RERANK_MIN_SCORE", "0"))
 RERANK_TIMEOUT = float(os.environ.get("RERANK_TIMEOUT", "5"))
 
+class FtsIndex:
+    """The same contract as CommunityIndex on an SQLite FTS5 file (kb/artifacts/community.sqlite, built by
+    `kb-community.py build-fts`): no tokenising at start, a few MB of RAM, millisecond queries at 159k documents. FTS5's
+    own bm25() ranks (unicode61 tokens: the pack tokenizer's compound names split into parts, so scores differ from
+    CommunityIndex, which is why P2/P3 are re-measured per backend). Rows come back as the same doc dicts."""
+
+    COLS = ("id", "site", "title", "tags", "category", "score", "link", "owner", "license", "answer_owner", "answer_license",
+            "answer_id", "answer_excerpt", "index_text")
+
+    def __init__(self, path):
+        import sqlite3
+        self.path = path
+        self.con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
+        self.tokens = _tokens()
+        self.n = self.con.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
+
+    def __len__(self):
+        return self.n
+
+    def category_counts(self):
+        return Counter(dict(self.con.execute("SELECT category, COUNT(*) FROM docs GROUP BY category").fetchall()))
+
+    def search(self, query, k=2, min_shared=MIN_SHARED):
+        words = list(dict.fromkeys(w for w in re.findall(r"[A-Za-z][A-Za-z0-9]+", query) if len(w) >= 3))
+        if not words or not self.n:
+            return []
+        match = " OR ".join(f'"{w}"' for w in words[:40])
+        rows = self.con.execute("SELECT rowid, bm25(fts) FROM fts WHERE fts MATCH ? ORDER BY bm25(fts) LIMIT ?",
+                                (match, max(k * 4, 40))).fetchall()
+        q = set(self.tokens(query))
+        out = []
+        for rowid, neg in rows:
+            r = self.con.execute(f"SELECT {', '.join(self.COLS)} FROM docs WHERE rowid = ?", (rowid,)).fetchone()
+            d = dict(zip(self.COLS, r))
+            d["tags"] = json.loads(d["tags"]) if d["tags"] else []
+            shared = [t for t in q if t in set(self.tokens(d["index_text"]))]
+            if len(shared) >= min_shared:
+                out.append((-neg, shared, d))
+            if len(out) >= k:
+                break
+        return out
+
+
+FTS_PATH = CORPUS.with_name("community.sqlite")
 _index = None
 
 
@@ -144,7 +194,7 @@ def rerank(query, cands):
 def rank(query, k=2):
     """The references the tool would show, best first: reranked and floored when a sidecar answers, BM25 otherwise."""
     idx = index()
-    if RERANK_URL and idx.docs:
+    if RERANK_URL and len(idx):
         cands = idx.search(query, k=RERANK_TOP_N, min_shared=1)
         scored = rerank(query, cands) if cands else []
         if scored is not None:
@@ -153,9 +203,13 @@ def rank(query, k=2):
 
 
 def index():
+    """COMMUNITY_BACKEND=fts5 (and the sqlite file present) selects FtsIndex; otherwise the in-memory CommunityIndex."""
     global _index
     if _index is None:
-        _index = CommunityIndex.load()
+        if os.environ.get("COMMUNITY_BACKEND") == "fts5" and FTS_PATH.exists() and os.environ.get("KB_COMMUNITY", "1") != "0":
+            _index = FtsIndex(FTS_PATH)
+        else:
+            _index = CommunityIndex.load()
     return _index
 
 

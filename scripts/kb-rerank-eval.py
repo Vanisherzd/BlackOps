@@ -185,9 +185,9 @@ def main():
     args = ap.parse_args()
     probes, stage = q_gap()
     half_a, half_b = halves()
-    idx = ck.CommunityIndex.load()
+    idx = ck.index()
     import os
-    print(json.dumps({"indexed": len(idx.docs), "half_a": len(half_a), "half_b": len(half_b), "probes": len(probes), "model": None if args.dry_run else MODEL,
+    print(json.dumps({"indexed": len(idx), "backend": type(idx).__name__, "half_a": len(half_a), "half_b": len(half_b), "probes": len(probes), "model": None if args.dry_run else MODEL,
                       "tokens": os.environ.get("COMMUNITY_TOKENS", "pack"), "passage": ck.RERANK_PASSAGE, "candidates": args.candidates}), flush=True)
     if ROWS_OUT.exists() and not args.dry_run:
         ROWS_OUT.unlink()

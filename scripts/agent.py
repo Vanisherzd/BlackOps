@@ -464,18 +464,27 @@ def search_incident_knowledge(query, scenario=None):
     the symptom, `insufficient` = nothing does, so no repair may be derived from the weak candidates) but its size
     is not: the raw bundle is 14-24 KB of JSON and the model has a 32k window, so only the lines the agent can act
     on come back. It never counts as having read this stack's runbook; the gate still wants search_runbooks."""
+    memory = ""
+    if os.environ.get("INCIDENT_MEMORY", "1") != "0":
+        try:
+            import incident_memory
+            recoveries = incident_memory.recall(query)
+            if recoveries:
+                memory = "## this stack's own verified recoveries\n" + "\n\n".join(recoveries) + "\n\n"
+        except Exception:
+            pass
     try:
         kb = knowledge_base()
         incident = {"query": query, "scenario": scenario} if scenario in ("disk_full", "crashloop", "dns") else {"query": query}
         bundle = kb.retrieve(incident, case_k=3, solution_k=3)
     except Exception as e:
-        return f"knowledge base unavailable ({type(e).__name__}: {str(e)[:100]}); use search_runbooks"
+        return memory + f"knowledge base unavailable ({type(e).__name__}: {str(e)[:100]}); use search_runbooks"
     km = bundle["knowledge_match"]
     best = bundle["solutions"][0] if bundle["solutions"] else {}
     if km["status"] == "matched" and (best.get("metadata") or {}).get("kind") == "hard_failure_repair":
         from repair_knowledge import render
         # Return the complete best procedure, rather than cutting off its conditions and verification at 2.5 KB.
-        return render(best["metadata"])
+        return memory + render(best["metadata"])
     lines = [f"knowledge base ({bundle['scenario']}): {km['status']}, best card coverage {km['best_solution_coverage']:.2f}"]
     for s in bundle["solutions"][:2]:            # two cards: the third is mostly noise on a 33-term query
         m = s.get("metadata") or {}
@@ -510,7 +519,8 @@ def search_incident_knowledge(query, scenario=None):
         lines.append("\nsimilar historical cases: " + "; ".join(titles))
     lines.append("These are hypotheses from other systems' incidents: confirm against this host's evidence before acting.")
     out = "\n".join(lines)
-    return out if len(out) <= 2500 else out[:2500] + "\n...(cut)"
+    pack = out if len(out) <= 2500 else out[:2500] + "\n...(cut)"
+    return memory + pack
 
 
 def trace_summary(name, result):

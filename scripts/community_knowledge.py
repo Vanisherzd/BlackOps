@@ -80,6 +80,9 @@ class CommunityIndex:
             # So v2 is used when a sidecar is configured (or KB_COMMUNITY_V2=1 forces it); KB_COMMUNITY_V1=1 forces v1.
             shards = sorted(CORPUS_V2.glob("*.jsonl.gz")) if CORPUS_V2.is_dir() else []
             want_v2 = os.environ.get("KB_COMMUNITY_V2") == "1" or (RERANK_URL and os.environ.get("KB_COMMUNITY_V1") != "1")
+            plan = governor_plan()
+            if plan and plan.get("community_corpus") == "v1":
+                want_v2 = False
             path = CORPUS_V2 if shards and want_v2 else CORPUS
         if not path.exists():
             return cls([])
@@ -191,9 +194,24 @@ def rerank(query, cands):
         return None
 
 
+def governor_plan():
+    """RESOURCE_GOVERNOR=1 lets scripts/resource_governor.py decide whether the reranker and the big corpus run on this
+    host right now (memory envelope); unset, nothing is restricted. Failures mean "not restricting"."""
+    if os.environ.get("RESOURCE_GOVERNOR") != "1":
+        return None
+    try:
+        import resource_governor
+        return resource_governor.plan(resource_governor.read_mem_available_gib())
+    except Exception:
+        return None
+
+
 def rank(query, k=2):
     """The references the tool would show, best first: reranked and floored when a sidecar answers, BM25 otherwise."""
     idx = index()
+    plan = governor_plan()
+    if plan and not plan.get("reranker_allowed", True):
+        return idx.search(query, k=k)
     if RERANK_URL and len(idx):
         cands = idx.search(query, k=RERANK_TOP_N, min_shared=1)
         scored = rerank(query, cands) if cands else []

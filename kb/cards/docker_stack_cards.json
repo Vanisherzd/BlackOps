@@ -17,7 +17,10 @@
     "symptoms": [
       "killed by signal",
       "sigkill exit",
-      "container killed sigkill"
+      "container killed sigkill",
+      "back-off restarting",
+      "crashloopbackoff restarts",
+      "reason crashloopbackoff"
     ],
     "root_causes": [
       "an operator, script or chaos tool sent SIGKILL",
@@ -97,7 +100,9 @@
       "oom killed",
       "out of memory killed",
       "memory limit exceeded",
-      "memory leak"
+      "memory leak",
+      "exit 137 oomkilled",
+      "reason oomkilled"
     ],
     "root_causes": [
       "the container's memory limit is below its working set",
@@ -872,6 +877,10 @@
       "no space left on device",
       "input output error",
       "read-only file system",
+      "inode exhaustion",
+      "inodes exhausted",
+      "no free inodes",
+      "out of inodes",
       "node disk fill"
     ],
     "root_causes": [

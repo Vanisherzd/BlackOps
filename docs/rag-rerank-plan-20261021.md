@@ -12,7 +12,7 @@ This is an evaluation branch only. **Do not change the stage/demo mainline until
 
 ## Current repository state
 
-Snapshot: `main` at `80e4f79` after PR #10.
+Snapshot: `main` at `75cfdf3` (latest merge: Spark `feat/bolt-opt`).
 
 The competition path is already stable on Jetson AGX Thor:
 
@@ -22,6 +22,8 @@ The competition path is already stable on Jetson AGX Thor:
 - full stage rehearsal: 2/2 after the post-incident fixes;
 - NeMo Guardrails: 23/23 in repeated Thor checks;
 - Bolt remains a Spark comparison path; it is not the Thor mainline.
+
+The latest Spark comparison merged into `main` also strengthens the model-selection story on hard faults: Bolt fixed 18/24 difficult runs vs Nano 12/24 and reported the correct root cause in 18/24 vs 6/24. That result is useful evidence that fewer, better decisions can beat higher raw decode speed, but it does not change the Thor runtime choice.
 
 Do not destabilize this path for a retrieval experiment.
 

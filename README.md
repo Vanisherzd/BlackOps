@@ -15,7 +15,7 @@ flowchart TB
     user["操作者 / 聊天頻道"] --> cli["NemoClaw CLI"]
     cli --> sandbox["OpenShell sandbox<br/>OpenClaw agent（Incident Commander）"]
     sandbox -- "inference.local" --> shim["oai_shim.py :8001<br/>相容層・分情況思考・健康保護網"]
-    shim --> vllm["vLLM :8000 &quot;edge-agent&quot;<br/>Nemotron-3.5-Lightning-30B-A3B-NVFP4<br/>（SPEC=dspark 選配）"]
+    shim --> vllm["vLLM :8000 served name edge-agent<br/>Nemotron-3.5-Lightning-30B-A3B-NVFP4<br/>SPEC=dspark 選配"]
     sandbox -- "MCP / /sandbox/bin/ops" --> ops["ops_api.py :8790<br/>白名單工具（HTTP+MCP）"]
     ops --> agent["agent.py 工具層<br/>runbook gate・健康檢查附在每個動作後"]
     agent <--> guard["guard_api.py :8792<br/>NeMo Guardrails（輸出／動作 rail）"]

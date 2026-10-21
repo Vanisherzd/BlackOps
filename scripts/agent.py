@@ -654,7 +654,14 @@ def _run_tool(name, args, dry_run):
             return (f"denied: {error}. Next: use one read-only diagnostic, e.g. "
                     '{"name": "edge-victim-app", "cmd": "df -h /"}. '
                     "Use action tools for changes; curl only supports GET/HEAD without file output or redirects.")
-        return sh(["docker", "exec", args["name"], *command])
+        # 8 s, not the default 30: `cat /var/log/nginx/error.log` blocks forever in the nginx image (the file is a link
+        # to the container's stderr) and once cost a drill 30 s of silence that read like model thinking (2026-10-22).
+        try:
+            return sh(["docker", "exec", args["name"], *command], timeout=8)
+        except subprocess.TimeoutExpired:
+            return (f"(no output in 8 s: {' '.join(command)} is still waiting for data, stopped). In this image "
+                    "/var/log/nginx/access.log and error.log are links to the container's stdout/stderr, so reading them "
+                    "never ends; the log is what docker_logs returns. Next: call docker_logs on this container.")
     if name in ("docker_start", "docker_restart"):
         d = guard(args["name"])
         if d:

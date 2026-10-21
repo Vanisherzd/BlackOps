@@ -118,7 +118,12 @@ def log_usage(d):
     """One row per completed request with the server's token counts: what a turn cost, for the scorecard."""
     u = d.get("usage") if isinstance(d, dict) else None
     if u:
-        log(usage={k: u.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")})
+        row = {k: u.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
+        # vLLM reports the prefix-cache hit per request here; without it the hit ratio was unmeasurable (2026-10-22)
+        details = u.get("prompt_tokens_details") if isinstance(u.get("prompt_tokens_details"), dict) else {}
+        if details.get("cached_tokens") is not None:
+            row["cached_tokens"] = details["cached_tokens"]
+        log(usage=row)
 
 
 def salvage_calls(text, tools):

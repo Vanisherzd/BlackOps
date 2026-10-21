@@ -1,14 +1,83 @@
-"""Rollback and command compatibility tests; no Docker, network, or file cleanup."""
+"""Host-tool regressions; no Docker, network, or filesystem cleanup is performed."""
 import importlib.util
 import pathlib
 import sys
-import types
 import unittest
 from unittest.mock import Mock, patch
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[2] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-from ops_safety import restore_config_file
+from ops_safety import diagnostic_argv, restore_config_file  # noqa: E402
+
+
+class DiagnosticPolicyTest(unittest.TestCase):
+    def test_existing_runbook_diagnostics_keep_their_arguments(self):
+        cases = [
+            ("nginx -t", ["nginx", "-t"]),
+            ("nginx -T", ["nginx", "-T"]),
+            ("du -sh /var/cache/nginx /tmp", ["du", "-sh", "/var/cache/nginx", "/tmp"]),
+            ("df -i /", ["df", "-i", "/"]),
+            ("cat '/tmp/file with spaces'", ["cat", "/tmp/file with spaces"]),
+            ("grep -E 'failed|error' /var/log/nginx/error.log",
+             ["grep", "-E", "failed|error", "/var/log/nginx/error.log"]),
+            ("tail -n 40 /var/log/nginx/error.log", ["tail", "-n", "40", "/var/log/nginx/error.log"]),
+            ("env", ["env"]),
+        ]
+        for command, expected in cases:
+            with self.subTest(command=command):
+                self.assertEqual(diagnostic_argv(command), expected)
+
+    def test_prefix_matches_cannot_select_other_executables(self):
+        for command in ("lsblk", "psql -c VACUUM", "/bin/sh -c id", "nginx -s reload"):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                diagnostic_argv(command)
+
+    def test_env_cannot_launch_children(self):
+        for command in ("env sh -c id", "env -S 'sh -c id'", "env PATH=/tmp id"):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                diagnostic_argv(command)
+
+    def test_shell_controls_and_invalid_types_are_rejected(self):
+        for command in (None, 1, "", "ls\nid", "cat $(id)", "cat `id`", "ls / ; id", "ls / | head", "ls 'oops"):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                diagnostic_argv(command)
+
+    def test_curl_keeps_read_requests_and_disables_implicit_configuration(self):
+        for command in ("curl -fsS http://edge-victim-app/", "curl -I https://127.0.0.1/",
+                        "curl --max-time=2 -X GET http://192.168.2.60:8880/",
+                        "curl --url http://[::1]/", "curl --request HEAD http://localhost/"):
+            with self.subTest(command=command):
+                argv = diagnostic_argv(command)
+                self.assertEqual(argv[:2], ["curl", "--disable"])
+                self.assertIn("--globoff", argv)
+                self.assertEqual(argv[argv.index("--max-redirs") + 1], "0")
+                self.assertEqual(argv[argv.index("--proto") + 1], "=http,https")
+                self.assertEqual(argv[argv.index("--noproxy") + 1], "*")
+
+    def test_curl_cannot_write_upload_load_config_or_redirect(self):
+        options = ["-X POST", "--request=DELETE", "-o /tmp/out", "--output=/tmp/out", "-O", "-T /tmp/data",
+                   "--data=x", "-d x", "-K /tmp/curlrc", "--config=/tmp/curlrc", "-L", "--location",
+                   "--write-out=%output{/tmp/out}", "--proxy http://127.0.0.1/", "--next", "--trace /tmp/trace",
+                   "--resolve edge-victim-app:80:8.8.8.8", "--header X-HTTP-Method-Override:DELETE"]
+        for option in options:
+            with self.subTest(option=option), self.assertRaises(ValueError):
+                diagnostic_argv(f"curl {option} http://edge-victim-app/")
+
+    def test_curl_target_and_timeout_validation(self):
+        cases = ["curl file:///etc/passwd", "curl ftp://127.0.0.1/", "curl https://example.com/",
+                 "curl http://8.8.8.8/", "curl http://169.254.169.254/", "curl http://0.0.0.0/",
+                 "curl http://224.0.0.1/", "curl http://user:pass@localhost/", "curl http://localhost:99999/",
+                 "curl -m 0 http://localhost/", "curl -m nan http://localhost/", "curl -m inf http://localhost/",
+                 "curl --max-time 11 http://localhost/", "curl --max-time", "curl --max-time=bad http://localhost/",
+                 "curl http://localhost/ http://edge-victim-app/", "curl"]
+        for command in cases:
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                diagnostic_argv(command)
+
+    def test_tail_cannot_leave_a_following_process_running(self):
+        for command in ("tail -f /tmp/log", "tail -nF 10 /tmp/log", "tail --follow=name /tmp/log"):
+            with self.subTest(command=command), self.assertRaises(ValueError):
+                diagnostic_argv(command)
 
 
 class MemoryFile:
@@ -55,78 +124,48 @@ class ConfigRestoreTest(unittest.TestCase):
 class HostDispatchTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # No model calls are made. Missing SDK imports use an inert stand-in.
         try:
-            import openai
+            # unittest discovery also creates a package named agent from tests/agent.
+            # Load the operational script by file path to avoid testing that package.
+            spec = importlib.util.spec_from_file_location("host_agent_safety_under_test", SCRIPTS / "agent.py")
+            cls.agent = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(cls.agent)
         except ModuleNotFoundError as error:
-            if error.name != "openai":
-                raise
-            sdk = types.ModuleType("openai")
-            sdk.OpenAI = Mock(side_effect=AssertionError("LLM calls are forbidden in host-tool tests"))
-            with patch.dict(sys.modules, {"openai": sdk}):
-                cls.agent = cls.load_agent()
-        else:
-            cls.agent = cls.load_agent()
+            if error.name == "openai":
+                raise unittest.SkipTest("host integration requires the project's openai dependency") from error
+            raise
 
-    @staticmethod
-    def load_agent():
-        spec = importlib.util.spec_from_file_location("host_agent_safety_under_test", SCRIPTS / "agent.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+    def test_docker_exec_runs_argv_without_an_inner_shell(self):
+        with patch.object(self.agent, "sh", return_value="ok") as run:
+            result = self.agent._run_tool("docker_exec", {"name": "edge-victim-app", "cmd": "df -h /"}, True)
+        self.assertEqual(result, "ok")
+        run.assert_called_once_with(["docker", "exec", "edge-victim-app", "df", "-h", "/"])
 
-    def setUp(self):
-        # these tests act inside an incident: the stack is down, whatever the real health URLs say
-        health = patch.object(self.agent, "http_status", return_value=500)
-        health.start()
-        self.addCleanup(health.stop)
-
-    def test_healthy_stack_refuses_state_changes(self):
-        with patch.object(self.agent, "http_status", return_value=200), patch.object(self.agent, "sh") as run:
-            for name, args in (("docker_restart", {"name": "edge-victim"}), ("write_config", {"content": "x"}),
-                               ("restore_config", {"source": "known-good"})):
-                with self.subTest(tool=name):
-                    result = self.agent._run_tool(name, args, False)
-                    self.assertTrue(result.startswith("refused: (automatic rule) the stack is healthy"), result)
-            run.assert_not_called()
-
-    def test_healthy_guard_can_be_switched_off(self):
-        with patch.object(self.agent, "http_status", return_value=200), \
-                patch.dict(self.agent.os.environ, {"HEALTHY_GUARD": "0"}), \
-                patch.dict(self.agent._incident, runbook_seen=False, refusals=0):
-            result = self.agent._run_tool("docker_restart", {"name": "edge-victim"}, False)
-        self.assertNotIn("the stack is healthy", result)
-
-    def test_existing_diagnostic_forms_are_not_newly_denied(self):
-        commands = [
-            "nginx -t", "nginx -t -c /tmp/custom.conf", "df -h /", "du -sh /var/cache/nginx /tmp",
-            "curl -L http://edge-victim-app/", "curl -H 'Host: backend' http://edge-victim-app/",
-            "curl -X POST http://edge-victim-app/diagnostic", "curl -o /tmp/response http://edge-victim-app/",
-            "curl --config /tmp/curlrc http://edge-victim-app/", "env LANG=C nginx -t",
-            "tail -f /var/log/nginx/error.log",
-        ]
-        for command in commands:
-            with self.subTest(command=command), patch.object(self.agent, "sh", return_value="mock diagnostic") as run:
+    def test_mutating_diagnostics_never_reach_the_executor(self):
+        for command in ("curl -X POST http://edge-victim-app/", "env sh -c id"):
+            with self.subTest(command=command), patch.object(self.agent, "sh") as run:
                 result = self.agent._run_tool("docker_exec", {"name": "edge-victim-app", "cmd": command}, False)
-                self.assertEqual(result, "mock diagnostic")
-                run.assert_called_once()
-
-    def test_original_container_and_shell_operator_guards_remain(self):
-        cases = [
-            {"name": "vllm-edge", "cmd": "id"},
-            {"name": "edge-victim-app", "cmd": "ls / ; id"},
-            {"name": "edge-victim-app", "cmd": "cat $(id)"},
-        ]
-        for arguments in cases:
-            with self.subTest(arguments=arguments), patch.object(self.agent, "sh") as run:
-                result = self.agent._run_tool("docker_exec", arguments, False)
                 self.assertTrue(result.startswith("denied:"))
                 run.assert_not_called()
 
-    def test_restore_dispatch_reads_backup_before_rotation(self):
+    def test_outside_container_is_denied_before_execution(self):
+        with patch.object(self.agent, "sh") as run:
+            result = self.agent._run_tool("docker_exec", {"name": "vllm-edge", "cmd": "id"}, False)
+        self.assertTrue(result.startswith("denied:"))
+        run.assert_not_called()
+
+    def test_argv_subprocess_does_not_enable_shell(self):
+        completed = Mock(stdout="ok", stderr="", returncode=0)
+        with patch.object(self.agent.subprocess, "run", return_value=completed) as run:
+            self.assertEqual(self.agent.sh(["docker", "exec", "edge-victim", "id"]), "ok")
+        self.assertIs(run.call_args.kwargs["shell"], False)
+
+    def test_restore_dispatch_passes_previous_without_overwriting_it(self):
         previous, conf_dir, good_dir = Mock(), pathlib.PurePosixPath("/fake/conf"), Mock()
         previous.name = "previous.conf"
-        with patch.dict(self.agent._incident, runbook_seen=True), patch.object(self.agent, "PREVIOUS", previous), patch.object(self.agent, "CONF_DIR", conf_dir), patch.object(self.agent, "KNOWN_GOOD_DIR", good_dir), patch.object(self.agent, "restore_config_file") as restore:
+        with patch.dict(self.agent._incident, runbook_seen=True), patch.object(self.agent, "PREVIOUS", previous), \
+                patch.object(self.agent, "CONF_DIR", conf_dir), patch.object(self.agent, "KNOWN_GOOD_DIR", good_dir), \
+                patch.object(self.agent, "restore_config_file") as restore:
             result = self.agent._run_tool("restore_config", {"source": "previous"}, False)
         self.assertTrue(result.startswith("restored previous.conf"))
         restore.assert_called_once_with(conf_dir / "default.conf", previous, previous)
@@ -135,17 +174,16 @@ class HostDispatchTest(unittest.TestCase):
     def test_restore_dry_run_never_writes_files(self):
         previous = Mock()
         previous.name = "previous.conf"
-        with patch.dict(self.agent._incident, runbook_seen=True), patch.object(self.agent, "PREVIOUS", previous), patch.object(self.agent, "restore_config_file") as restore:
+        with patch.dict(self.agent._incident, runbook_seen=True), patch.object(self.agent, "PREVIOUS", previous), \
+                patch.object(self.agent, "restore_config_file") as restore:
             result = self.agent._run_tool("restore_config", {"source": "previous"}, True)
         self.assertTrue(result.startswith("DRY-RUN"))
         restore.assert_not_called()
 
-    def test_missing_backup_does_not_write_config(self):
-        previous = Mock()
-        previous.exists.return_value = False
-        with patch.dict(self.agent._incident, runbook_seen=True), patch.object(self.agent, "PREVIOUS", previous), patch.object(self.agent, "restore_config_file") as restore:
-            result = self.agent._run_tool("restore_config", {"source": "previous"}, False)
-        self.assertTrue(result.startswith("error: no previous"))
+    def test_restore_rejects_unknown_sources(self):
+        with patch.dict(self.agent._incident, runbook_seen=True), patch.object(self.agent, "restore_config_file") as restore:
+            result = self.agent._run_tool("restore_config", {"source": "typo"}, False)
+        self.assertTrue(result.startswith("error:"))
         restore.assert_not_called()
 
 

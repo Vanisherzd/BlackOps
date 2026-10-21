@@ -24,6 +24,18 @@
 附官方來源、條件式工具呼叫、回復限制與驗證。這是人工整理的 RAG 知識，並非第五個下載的公開 benchmark。
 8 筆合成測試變體與評分答案分開存放，不進 runtime 索引；普通啟停、DNS、OOM、磁碟滿不重複擴增。
 
+## DGX 實際失敗紀錄補充
+
+[failed_drills_20261021](derived/failed_drills_20261021/README.zh-TW.md) 保留 24 筆原始困難案例；
+[failure_coverage_supplement_20261021](derived/failure_coverage_supplement_20261021/README.zh-TW.md) 再補 87 筆，合計 111 筆，涵蓋 10 類故障。
+每筆包含來源雜湊、觀察結果、診斷與修復工具、回復限制及驗證方式；歷史 FAIL/TIMEOUT 維持原樣。
+
+這批來源已編入 `kb/artifacts/corpus_v3.jsonl` 與 `corpus_v4.jsonl`，修復卡位於 `kb/cards/`，操作手冊位於 `runbooks/`。
+執行時設定 `KB_RETRIEVAL=v4` 可使用完整 Docker 修復卡與既有經驗。`datasets/derived/` 本身不是自動掃描入口。
+部署時需在目標機重建操作手冊索引，並重新啟動 API 清除舊語料快取，詳見 [部署說明](../docs/dgx-failure-knowledge-20261021.md)。
+
+Git 僅保留精簡來源與既有文字語料；原始公開資料集、模型權重、完整日誌、實驗輸出及索引備份留在資料磁碟。
+
 ## 目錄
 
 ```text

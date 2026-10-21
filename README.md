@@ -1,30 +1,43 @@
-# BlackOps（Blackout Ops）— 離線自我修復的 IT 維運 Agent
+# Blackout Ops — 離線自我修復的 IT 維運 Agent
 
 **目標**：在一台與被監控系統分離的邊緣裝置上，完全本地跑大模型推論與小型 RAG，做一個「網路斷了也能自己診斷、自己修好」的 IT 維運 Agent。部署目標是 Jetson AGX Thor，開發與驗證機是 NVIDIA DGX Spark（GB10，128 GB unified memory）。NVIDIA 堆疊：**Nemotron**（模型）、**NemoClaw／OpenShell**（Agent 執行環境）、**NeMo Guardrails**（工具層的安全 rail）、**NeMo Agent Toolkit**（事故 profiling），見 `docs/nemo-integration.md`。推論引擎是 **vLLM**；2026-10-20 團隊決定由 vLLM 取代 TensorRT-LLM，TRT-LLM 保留為早期量測的基準，見 `docs/integration-vllm.md`。
 
-**現況（2026-10-21）**：
-- 推論：Nemotron-3.5-Bolt-74B-A9B 跑在 vLLM 上。
-- NemoClaw 路徑：5 張舞台卡各跑 3 次，**15/15 自主修復**，沒有越修越壞，也沒有謊報。
-- repo 內的 host 迴圈：9 個見過的案例各跑 3 次，**26/27**。
-- TRT-LLM 加 Nemotron-3-Nano 的歷史成績：見過的題目 29/30，四批盲測 6/15、11/15、4–5/12、3–6/12。
-- demo 外殼（dashboard、watchdog、人工審批、Tier、功耗、斷網、歸檔）已經接上，見 `docs/demo.md`。
-- 整體進度：`docs/project-status-2026-10-20.md`。
+**現況（2026-10-22 清晨）**：
+- 推論：**Nemotron-3.5-Lightning-30B-A3B-NVFP4** 跑在 vLLM（nightly 77154ca）上；Spark 舞台用 model card 的 DSpark speculative decoding（`SPEC=dspark`，decode +27–49%，8/8 drill 不掉品質）。Bolt-74B 留作 Spark 上的比較路徑。
+- NemoClaw 路徑：五張舞台卡 5/5（多輪）、三個複合故障 6/6、兩個機房形狀故障（依賴逾時、hosts 被毒）各 2/2；dashboard 注入到 resolved 14.9 s。
+- 知識：runbooks → 修復卡（v4，phrase gate 已修）→ 社群層（Server Fault／Unix & Linux 等 7 站、158,881 筆、CC BY-SA、SQLite FTS5）→ Nemotron rerank sidecar（選配）。量測與閘門：`docs/kb-community-20261022.md`。
+- 今晚的優化與量測總表：`docs/optimizations-20261022.md`；整體進度：`docs/project-status-2026-10-20.md`。
 
+```mermaid
+flowchart TB
+  subgraph box["邊緣裝置（DGX Spark 開發／Jetson AGX Thor 部署）— 全部本地，不需外網"]
+    direction TB
+    user["操作者 / 聊天頻道"] --> cli["NemoClaw CLI"]
+    cli --> sandbox["OpenShell sandbox<br/>OpenClaw agent（Incident Commander）"]
+    sandbox -- "inference.local" --> shim["oai_shim.py :8001<br/>相容層・分情況思考・健康保護網"]
+    shim --> vllm["vLLM :8000 &quot;edge-agent&quot;<br/>Nemotron-3.5-Lightning-30B-A3B-NVFP4<br/>（SPEC=dspark 選配）"]
+    sandbox -- "MCP / /sandbox/bin/ops" --> ops["ops_api.py :8790<br/>白名單工具（HTTP+MCP）"]
+    ops --> agent["agent.py 工具層<br/>runbook gate・健康檢查附在每個動作後"]
+    agent <--> guard["guard_api.py :8792<br/>NeMo Guardrails（輸出／動作 rail）"]
+    agent --> reviewer["reviewer.py<br/>兩把鑰匙：code key + model"]
+    reviewer -. "risky 動作" .-> approval["人工審批（dashboard）"]
+    agent --> docker["docker：victim 容器<br/>edge-victim（前端）／edge-victim-app（後端）"]
+    watchdog["watchdog.py<br/>2 s 巡檢・triage・派工"] --> sandbox
+    watchdog --> docker
+    dash["dashboard :8097<br/>看板・軌跡・功耗・審批"] --- watchdog
+    subgraph kb["知識層（由近到遠）"]
+      direction LR
+      rb["runbooks/<br/>本 stack 的 SOP（dense bge-small）"] --> cards["修復卡 v4 + 本機驗證過的修法<br/>（phrase gate）"]
+      cards --> comm["社群層 158,881 筆<br/>SQLite FTS5 / BM25"]
+      comm --> rr["Nemotron rerank 1B sidecar :8020<br/>（RERANK_URL 選配，只重排）"]
+    end
+    agent --> kb
+  end
+  classDef opt stroke-dasharray: 5 5;
+  class rr,approval opt;
 ```
-            ┌────────────── DGX Spark（全部本地，不需外網）──────────────┐
-  你 / 聊天  │  NemoClaw CLI ──► OpenShell sandbox（OpenClaw agent）          │
-  頻道       │        │ inference.local        │ /sandbox/bin/ops / MCP       │
-            │        ▼                        ▼                              │
-            │  oai_shim.py :8001 ──► vLLM :8000 "edge-agent" ops_api.py :8790  │
-            │  （相容層、健康保護網、   Nemotron-3.5-Bolt-74B-A9B（白名單工具、HTTP+MCP）│
-            │   分情況思考、Tier 路由）  （Tier-1 選配：vLLM :8010）│            │
-            │                                                    ▼            │
-            │  watchdog（規則巡檢）  agent.py 工具與三把鑰匙 ──► docker（victim 容器）│
-            │                        ⇅ guard_api.py :8792（NeMo Guardrails：工具輸出／動作 rail） │
-            │  dashboard :8097（看板、軌跡、功耗、審批）          產線看板 /board/    │
-            └───────────────────────────────────────────────────────────────┘
-  legacy：TensorRT-LLM + Nemotron-3-Nano-30B-A3B-NVFP4（scripts/serve-trt.sh, :8000）；vLLM 0.29 + Qwen3.6-35B（scripts/serve.sh, :8100）
-```
+
+舊路徑：TensorRT-LLM + Nemotron-3-Nano-30B-A3B-NVFP4（`scripts/serve-trt.sh`，:8000）、vLLM 0.29 + Qwen3.6-35B（`scripts/serve.sh`，:8100）；量測留在 docs 裡，程式保留但不是舞台路徑。
 
 ## 目錄
 

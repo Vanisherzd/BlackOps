@@ -893,27 +893,68 @@
   "index_bytes": 9504669
  },
  "build_v2": {
-  "indexed": 66340,
+  "indexed": 158881,
   "holdout_excluded": 1139,
   "by_category": {
-   "hardware": 3717,
-   "disk_fs": 4733,
-   "tls_time": 4797,
-   "network": 14419,
-   "app": 4388,
-   "permissions": 10901,
-   "memory_process": 3006,
-   "boot_packages": 6380,
-   "service": 10046,
-   "virtualization": 1326,
-   "docker": 1902,
-   "k8s": 725
+   "hardware": 13205,
+   "disk_fs": 10224,
+   "tls_time": 5834,
+   "network": 25924,
+   "app": 37202,
+   "permissions": 16207,
+   "memory_process": 8921,
+   "boot_packages": 19860,
+   "service": 14362,
+   "virtualization": 3421,
+   "docker": 2704,
+   "k8s": 1017
   },
   "by_site": {
    "serverfault": 41749,
-   "unix": 24591
+   "unix": 24591,
+   "askubuntu": 47927,
+   "dba": 35548,
+   "devops": 1183,
+   "networkengineering": 4268,
+   "raspberrypi": 3615
   },
-  "sha256_index": "594c302a33e17698b9f81b5dff4198862a4947f35ec4adb1adff2c621a82acc8",
-  "index_bytes": 92858369
+  "shards": {
+   "askubuntu": {
+    "docs": 47927,
+    "bytes": 16230315,
+    "sha256": "4859a23070c34def"
+   },
+   "dba": {
+    "docs": 35548,
+    "bytes": 12150204,
+    "sha256": "feea2daf7ec0a069"
+   },
+   "devops": {
+    "docs": 1183,
+    "bytes": 392191,
+    "sha256": "0fe8edd8a8add713"
+   },
+   "networkengineering": {
+    "docs": 4268,
+    "bytes": 1313767,
+    "sha256": "29b79b663887f249"
+   },
+   "raspberrypi": {
+    "docs": 3615,
+    "bytes": 1207256,
+    "sha256": "b7379001d80f0455"
+   },
+   "serverfault": {
+    "docs": 41749,
+    "bytes": 14588957,
+    "sha256": "d75f716f6a0b71f4"
+   },
+   "unix": {
+    "docs": 24591,
+    "bytes": 8745827,
+    "sha256": "ec162544fe6222c6"
+   }
+  },
+  "shard_dir": "kb/artifacts/community_v2"
  }
 }

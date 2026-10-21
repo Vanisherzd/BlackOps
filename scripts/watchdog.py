@@ -4,7 +4,8 @@ NemoClaw agent with a fixed alert, so nobody on stage types a prompt. No model r
   .venv/bin/python scripts/watchdog.py              # patrol every 5 s, dispatch the agent on an incident
   .venv/bin/python scripts/watchdog.py --dry-run    # patrol and log incidents, never wake the agent
   env: WATCH_URLS (comma list, default the two 127.0.0.1:8880 health URLs), WATCH_INTERVAL (5), WATCH_FAILS (2),
-       WATCH_LOGS (log directory, default logs/), WATCH_TRIAGE=1 (put scripts/triage.py's first look under the alert), INCIDENT_TIMEOUT (900 s)
+       WATCH_LOGS (log directory, default logs/), WATCH_TRIAGE=1 (put scripts/triage.py's first look under the alert),
+       WATCH_SIGNALS=1 (sample Docker/log/disk signals every SIGNALS_EVERY polls, default 3), INCIDENT_TIMEOUT (900 s)
 
 One incident at a time: the lock holds until both URLs are 200 twice in a row. If the agent finishes and the stack is
 still down, the incident stays open as `agent-done-unhealthy` (a human takes over) and no second agent is woken.
@@ -33,6 +34,10 @@ URLS = [u.strip() for u in os.environ.get(
 INTERVAL = float(os.environ.get("WATCH_INTERVAL", "5"))
 FAILS = int(os.environ.get("WATCH_FAILS", "2"))
 TIMEOUT = float(os.environ.get("INCIDENT_TIMEOUT", "900"))
+SIGNALS = os.environ.get("WATCH_SIGNALS") == "1"
+SIGNALS_EVERY = max(1, int(os.environ.get("SIGNALS_EVERY", "3"))) if SIGNALS else 3
+if SIGNALS:
+    import watch_signals
 # after its incident closes the agent may finish its report; past this it is stopped. Lightning kept acting for 5+ min
 # after a fix (memory notes, a clear_scratch_volume the rules refused), holding the host lock the next agent needs
 GRACE = float(os.environ.get("AGENT_GRACE", "60"))
@@ -74,8 +79,7 @@ def drill_running():
     return bool(r.stdout.strip())
 
 
-def dispatch(iid):
-    alert = ALERT
+def dispatch(iid, alert=ALERT):
     if os.environ.get("WATCH_TRIAGE") == "1":
         tri = subprocess.run([sys.executable, str(ROOT / "scripts" / "triage.py")], capture_output=True, text=True,
                              timeout=300, cwd=ROOT).stdout
@@ -147,6 +151,11 @@ def main():
     print(f"watchdog: {URLS} every {INTERVAL}s, open after {FAILS} failures{' (dry run)' if dry else ''}", flush=True)
     bad = good = 0
     inc = None
+    polls = 0
+    signal_last = None
+    signal_previous = ""
+    signal_findings = []
+    seen_signals = set()
     # agents still running after their incident closed, with the time it closed: reaped every loop (a zombie keeps the
     # NemoClaw host lock "owned" and every later agent fails to start) and stopped after GRACE
     lingering = []
@@ -159,9 +168,30 @@ def main():
             lingering = [(q, t) for q, t in lingering if q.poll() is None]
             s, ok = probe()
             bad, good = (0, good + 1) if ok else (bad + 1, 0)
+            polls += 1
+            if SIGNALS and polls % SIGNALS_EVERY == 0:
+                snapshot = watch_signals.collect(signal_last)
+                signal_last = snapshot["sampled_at"]
+                findings = watch_signals.container_state(snapshot["docker_ps"], signal_previous)
+                signal_previous = snapshot["docker_ps"]
+                for container, log_text in snapshot["logs"].items():
+                    findings.extend(watch_signals.log_errors(container, log_text))
+                findings.extend(watch_signals.disk(snapshot["disk"]))
+                findings.extend(watch_signals.docker_events(snapshot["events"]))
+                for finding in findings:
+                    key = (finding["signal"], finding["severity"], finding["detail"])
+                    if key not in seen_signals:
+                        seen_signals.add(key)
+                        signal_findings.append(finding)
+                        event(event="signal", signal=finding["signal"], severity=finding["severity"],
+                              detail=finding["detail"])
+                if inc is None and any(finding["severity"] == "open" for finding in findings):
+                    bad += 1
+                    good = 0
             if inc is None and bad >= FAILS:
                 iid = time.strftime("%Y%m%d-%H%M%S")
-                inc = dict(id=iid, t0=time.time(), status=s, proc=None, out=None, alert=ALERT,
+                alert = watch_signals.append_signals(ALERT, signal_findings) if SIGNALS else ALERT
+                inc = dict(id=iid, t0=time.time(), status=s, proc=None, out=None, alert=alert,
                            marks={n: lines(LOGS / n) for n in ("ops-api.log", "reviews.jsonl", "oai-shim.log")})
                 if dry or drill_running():
                     why = "dry-run" if dry else "drill in progress"
@@ -173,7 +203,10 @@ def main():
                     if lingering:
                         event(event="previous-agent-stopped", id=iid, count=len(lingering))
                         lingering = []
-                    inc["proc"], out, inc["alert"] = dispatch(iid)
+                    if SIGNALS:
+                        inc["proc"], out, inc["alert"] = dispatch(iid, alert)
+                    else:
+                        inc["proc"], out, inc["alert"] = dispatch(iid)
                     inc["out"] = str(out)
                     event(event="open", id=iid, status=s, dispatched=True)
                     print(f"{time.strftime('%T')} incident {iid} {s} -> agent woken", flush=True)
@@ -189,6 +222,8 @@ def main():
                     if p is not None and p.poll() is None:
                         lingering.append((p, time.time()))
                     inc = None
+                    signal_findings = []
+                    seen_signals.clear()
                 elif inc.get("agent_done") and not inc.get("flagged"):
                     inc["flagged"] = True       # the agent gave up or claimed a fix that did not hold: hand to a human
                     event(event="agent-done-unhealthy", id=inc["id"], status=s)

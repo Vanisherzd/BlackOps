@@ -19,10 +19,13 @@ Written 2026-10-22 03:30 while the DGX root disk had 1.3 GB free: --dry-run was 
 """
 import argparse
 import json
+import math
 import pathlib
 import random
 import sys
 import time
+from collections.abc import Sequence
+from typing import TypedDict
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -33,6 +36,47 @@ MODEL = "nvidia/llama-nemotron-rerank-1b-v2"
 # vLLM's /rerank returns sigmoid scores in [0, 1] (the transformers route returns raw logits); thresholds are on that scale.
 THRESHOLDS = (None, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9)
 ROWS_OUT = ROOT / "logs" / "kb-rerank-rows.json"      # per-query (set, category, bm25 top category, rerank top category, score)
+
+
+class RankMetrics(TypedDict):
+    category_mrr: float
+    category_ndcg_at_5: float
+    category_recall_at_5: float
+    category_recall_at_10: float
+
+
+def rank_metrics(cat: str, ordered_categories: Sequence[str]) -> RankMetrics:
+    matches = [candidate == cat for candidate in ordered_categories]
+    first_match = next((rank for rank, match in enumerate(matches, 1) if match), None)
+    dcg = sum(match / math.log2(rank + 1) for rank, match in enumerate(matches[:5], 1))
+    ideal_matches = min(sum(matches), 5)
+    ideal_dcg = sum(1 / math.log2(rank + 1) for rank in range(1, ideal_matches + 1))
+    return {
+        "category_mrr": 1 / first_match if first_match is not None else 0.0,
+        "category_ndcg_at_5": dcg / ideal_dcg if ideal_dcg else 0.0,
+        "category_recall_at_5": float(any(matches[:5])),
+        "category_recall_at_10": float(any(matches[:10])),
+    }
+
+
+def aggregate_rank_metrics(metrics: Sequence[RankMetrics]) -> RankMetrics:
+    n = max(1, len(metrics))
+    return {
+        "category_mrr": sum(row["category_mrr"] for row in metrics) / n,
+        "category_ndcg_at_5": sum(row["category_ndcg_at_5"] for row in metrics) / n,
+        "category_recall_at_5": sum(row["category_recall_at_5"] for row in metrics) / n,
+        "category_recall_at_10": sum(row["category_recall_at_10"] for row in metrics) / n,
+    }
+
+
+def percentile(values: Sequence[float], percent: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * percent / 100
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
 def q_gap():
@@ -120,23 +164,34 @@ def tally(rows_out, thresholds):
 
 def run_layer(idx, rows, reranker, n_cand, label):
     out, recall20, lat = [], 0, []
+    bm25_rank_metrics, rerank_rank_metrics = [], []
     for cat, q in rows:
         cands = idx.search(q, k=n_cand, min_shared=1)
         bm_cat = cands[0][2]["category"] if cands else None
+        bm25_rank_metrics.append(rank_metrics(cat, [d["category"] for _, _, d in cands]))
         if any(d["category"] == cat for _, _, d in cands):
             recall20 += 1
         rr_cat, rr_score = None, None
+        reranked_categories = []
         if reranker and cands:
             t0 = time.perf_counter()
             scores = reranker.score(q, [passage(d) for _, _, d in cands])
             lat.append(time.perf_counter() - t0)
             best = max(range(len(cands)), key=lambda i: scores[i])
             rr_cat, rr_score = cands[best][2]["category"], scores[best]
+            order = sorted(range(len(cands)), key=lambda i: scores[i], reverse=True)
+            reranked_categories = [cands[i][2]["category"] for i in order]
+        if reranker:
+            rerank_rank_metrics.append(rank_metrics(cat, reranked_categories))
         out.append((cat, bm_cat, rr_cat, rr_score))
     report = {"n": len(rows), f"category_recall@{n_cand} (Gate A)": round(recall20 / max(1, len(rows)), 3)}
+    report.update({f"bm25_{name}": round(value, 3) for name, value in aggregate_rank_metrics(bm25_rank_metrics).items()})
     if reranker:
+        report.update({f"rerank_{name}": round(value, 3) for name, value in aggregate_rank_metrics(rerank_rank_metrics).items()})
         report["table"] = tally(out, THRESHOLDS)
         report["rerank_ms_per_query"] = round(1000 * sum(lat) / max(1, len(lat)), 1)
+        report["rerank_latency_p50_ms"] = round(1000 * percentile(lat, 50), 1)
+        report["rerank_latency_p95_ms"] = round(1000 * percentile(lat, 95), 1)
     else:
         report["bm25 top-1"] = tally(out, ())["bm25 top-1"]
     print(f"== {label}", json.dumps(report, ensure_ascii=False, indent=1), flush=True)

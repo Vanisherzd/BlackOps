@@ -324,6 +324,11 @@ Python BM25 相同；7 站的 FTS5 建置與 P2/P3 在 Spark 上量測中（分�
 FTS5 的 P3 探針 25/38（Python 28/38），差在 unicode61 的斷詞與 OR 查詢把泛用字也算進去。FTS5 每查詢 43.6 ms（含逐筆算共享 token），
 Python 版 0.5–1 s。+rerank 的兩組評測跑中（Gate 1 看這個）。
 
+**Gate 1 判定（07:50）**：158,881 筆 + rerank（FTS5 第一階段）held-out category@1 **0.756**、wrong@1 0.244、P3 26/38；
+v1（6,456 筆）+ rerank 是 0.775／33 對。門檻 ≥ 0.77 沒過：**資料多 24 倍，在這個（類別）代理指標上沒有更準**，只有覆蓋更廣
+（罕見症狀有題目可配，36/36 在前 20）。依事前規則退回已驗證的 v1 為預設；v2 改成純選配 `KB_COMMUNITY_V2=1`（配 `COMMUNITY_BACKEND=fts5`
+省記憶體）。Python 第一階段的 159k + rerank 數字仍在跑，若明顯高於 0.756 就是 FTS5 斷詞的問題而非語料，到時再補。
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

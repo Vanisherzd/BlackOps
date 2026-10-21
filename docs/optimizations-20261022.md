@@ -159,6 +159,10 @@ thinking off 的一句話診斷不是它的強項），RAG 一樣沒有幫助、
 DSpark decode 快 2–7%；MTP 保住前綴快取、少一份 drafter。MTP 第一次啟動失敗是暫時的（第二次順利，架構 NemotronHMTPModel）。
 Gate 3 看 drill 牆鐘：MTP 的 8 場 drill 跑中。
 
+**Gate 3 判定（07:48）**：MTP 的 8 場 drill 8/8 PASS，但牆鐘 34／78／27／78／53／231／80／97 s 對 DSpark 的 17／46／16／38／24／38／57／95 s
+（兩組都在機器有其他負載時跑，不是乾淨對照，但方向一致：MTP 沒有比較快）。MTTR ≤ DSpark 不成立 → **留 DSpark**，MTP 實例停掉；
+`SPEC=mtp` 保留給 Thor 試（不用 drafter、保住 prefix cache）。
+
 ### 新增故障（續）
 
 `compound-triple`（前端設定壞＋後端停＋後端改埠，三層三因）、`upstream-log-flood-500`（upstream-500 埋在 3,000 行 heartbeat

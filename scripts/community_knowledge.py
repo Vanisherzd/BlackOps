@@ -75,11 +75,11 @@ class CommunityIndex:
         if os.environ.get("KB_COMMUNITY", "1") == "0":
             return cls([])
         if path is None:
-            # v2 (66k documents) only pays off behind the reranker: BM25 alone on v2 was 28/38 right on the probes against
-            # v1's 31/38, while v2 + rerank was 31/38 with held-out category@1 0.776 (docs/kb-community-20261022.md).
-            # So v2 is used when a sidecar is configured (or KB_COMMUNITY_V2=1 forces it); KB_COMMUNITY_V1=1 forces v1.
+            # v2 (158,881 documents, 7 sites) is opt-in only: with the reranker it scored category@1 0.756 (FTS5 first
+            # stage) against v1 + rerank 0.775, and 2.5 GB of RAM in the Python index (docs/kb-community-20261022.md,
+            # Gate 1). KB_COMMUNITY_V2=1 selects it (with COMMUNITY_BACKEND=fts5 for the small footprint); default v1.
             shards = sorted(CORPUS_V2.glob("*.jsonl.gz")) if CORPUS_V2.is_dir() else []
-            want_v2 = os.environ.get("KB_COMMUNITY_V2") == "1" or (RERANK_URL and os.environ.get("KB_COMMUNITY_V1") != "1")
+            want_v2 = os.environ.get("KB_COMMUNITY_V2") == "1"
             plan = governor_plan()
             if plan and plan.get("community_corpus") == "v1":
                 want_v2 = False

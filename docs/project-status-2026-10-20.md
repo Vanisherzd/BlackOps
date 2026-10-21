@@ -4,6 +4,14 @@
 > - Tier-2 改成 Bolt-74B-A9B，跑在 vLLM 上，以 `edge-agent` 的名稱開在 :8000（`scripts/serve-vllm.sh`）。agent、NemoClaw、工具、KB、demo 外殼都不用改。
 > - 單元測試 33/33 通過。**Bolt 加上整套 agent 的回歸還沒跑**，要先停掉 vanli 的 `trtllm-edge`，需要協調。
 > - 詳見 `docs/integration-vllm.md`。下文提到 TRT 的地方，指的是到目前為止的量測環境。
+>
+> **2026-10-21 凌晨補充：NeMo 整合**（決賽要件「必須深度整合 NeMo」），見 `docs/nemo-integration.md`。
+> - **NeMo Guardrails** 接在工具層：輸出 rail 移除被監控系統輸出裡對 agent 下的指令，動作 rail 拒絕照這些指令去做的動作。
+>   - 新增故障案例 `log-injection`；`test-guardrails.py` 23/23 PASS。
+>   - NemoClaw 路徑開著 rail 跑舞台卡 5/5，`log-injection` 1/1。
+>   - 照實說：Bolt 在沒有 rail 時也沒上當（3/3），所以這層是多一道防護。
+> - **NeMo Agent Toolkit profiler** 分析 6 場事故：每場約 1 Wh，57% 花在 LLM；prompt 與 completion 的 token 比約 40:1，所以優化槓桿在 prefill 和 context。
+> - 分支 `feat/nemo`。`~/edge-agent` 已經 fast-forward 到 `719fae0`；所有開關預設關閉。
 
 時程：10/21 工作坊（剩 1 天）→ 10/22–23 黑客松 → 10/23 12:30 code freeze。
 資料來源：三條分支的 git log、`docs/HANDOFF-kb-retrieval-v2.md`（vanli）、`logs/`、今晚的回歸測試。

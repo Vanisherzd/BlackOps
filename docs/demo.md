@@ -69,9 +69,9 @@
 | 0:55–1:50 | 架構 | **切回投影片**：三把鑰匙、Tier、工具分級 | （背景：watchdog 開事故 → agent 修） | 平時規則巡檢不推論，異常才由 Tier-1 接手 |
 | 1:50–2:10 | 第一幕收尾 | 切回 dashboard，捲一下軌跡 | 看板已綠、「上次停線 0:xx」 | 沒人叫它修，它只收到一句警報 |
 | 2:10–2:30 | 斷網 | 按「切斷外網」，在終端跑一次 `curl` 打外部 API | curl 失敗、WAN offline、對外連線計數 | 模擬 ISP 中斷，內網照常，這是 L1；在廠務網段這是常態 |
-| 2:30–4:30 | 第二幕 | 按「注入 upstream-500」，審批卡跳出時按「核准」 | 四個階段，見 §3.4 | 一個事故、四層調整；Self-Healing ≠ Root Shell |
-| 4:30–5:30 | 數據 | 投影片 | 夜跑結果：有調度 vs 全程 Tier-2 的 Wh、Tier-1 承接比例、計分卡 | 算力是 Agent 自己要管的資源 |
-| 5:30–6:00 | 收尾 | 投影片 | 既有成果揭露 | Observe / Reason / Recover locally |
+| 2:30–4:45 | 第二幕 | 按「注入 upstream-500」，審批卡跳出時按「核准」 | 四個階段，見 §3.4 | 一個事故、四層調整；Self-Healing ≠ Root Shell |
+| 4:45–5:35 | 數據 | 投影片 | 夜跑結果：有調度 vs 全程 Tier-2 的 Wh、Tier-1 承接比例、計分卡 | 算力是 Agent 自己要管的資源 |
+| 5:35–6:00 | 收尾 | 投影片 | 既有成果揭露 | Observe / Reason / Recover locally |
 
 ### 3.3 抽卡的 4 張
 
@@ -86,6 +86,8 @@
 
 第一幕要壓在 60 秒內的話，把 bad-config 換成 upstream-down（約 36 s）。
 
+**選配：`log-injection`（NeMo Guardrails）**：沿用 upstream-500 的故障，上游 log 裡藏了兩行對 agent 下的指令（要它執行 `cleanup_disk`、`kill_process`）。軌跡區會看到 `[guardrail: line removed …]`；agent 若照著做，會被動作 rail 擋下。時間跟 upstream-500 差不多。可以取代第二幕，或留作 Q&A 時用回放展示。被問到「被監控的系統被駭了怎麼辦」時，就展示這一場。
+
 ### 3.4 第二幕的四個階段（upstream-500）
 
 1. **計畫層**：/api/ 回 500。agent 讀 log、拿到 runbook，先做最小動作 `docker_restart edge-victim-app`，驗證後仍是 500，原假設被推翻。agent 若跳過重啟、直接要求重建，程式鑰匙會擋下：`denied: recreate_stack ... before it was started or restarted`。這一行不一定每場都出現；**出現時，主講停在那行紅字上念出來**。
@@ -96,7 +98,11 @@
    - 人：審批卡跳出，通道顯示「Jetson 本機（外網不可用）」。
 4. **收尾**：台上按核准，容器重建，/api/ 回 200，看板轉綠，Tier 降回 1，功耗回落。
 
-2026-10-20 在 Spark 上以 host 迴圈加上 `APPROVAL=auto TIER_MODE=adaptive` 跑過一次，結果 PASS，Tier 1→2→1 都有紀錄。**NemoClaw 路徑上的這一幕還沒驗證。**
+驗證紀錄：
+- 2026-10-20：Spark 上以 host 迴圈加上 `APPROVAL=auto TIER_MODE=adaptive` 跑過一次，結果 PASS，Tier 1→2→1 都有紀錄。
+- 2026-10-21：Bolt/vLLM 的 NemoClaw 路徑 3/3（中位 106 s），開 `SHIM_ADAPTIVE=1 TRIAGE=1` 時 5/5（中位 131 s，其中 4 場出現 `denied:`）。
+
+**第二幕要排 2–2.5 分鐘**，加上人工核准的時間。審批與 Tier 在 NemoClaw 路徑上一起打開的情況還沒驗證。
 
 ---
 
@@ -179,7 +185,8 @@ cd ~/edge-agent
 scripts/serve-vllm.sh                                        # Tier-2：Bolt on vLLM，:8000，等到 /health 才返回（最多 15 分鐘）
 T1_MODEL=<小模型的 HF ID> scripts/serve-tier1.sh              # Tier-1：vLLM，:8010（選配）
 bash scripts/shim-env.sh "SHIM_THINK=1 SHIM_ADAPTIVE=1 TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010"      # shim :8001
-env APPROVAL=manual TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010 \
+setsid nohup .nemo-venv/bin/python scripts/guard_api.py > logs/guard-api.out 2>&1 < /dev/null &        # NeMo Guardrails sidecar :8792
+env GUARDRAILS=1 APPROVAL=manual TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010 \
   setsid nohup .venv/bin/python scripts/ops_api.py > logs/ops-api.out 2>&1 < /dev/null & echo $! > logs/ops-api.pid
 setsid nohup .venv/bin/python scripts/power.py log > /dev/null 2>&1 < /dev/null &
 WATCH_TRIAGE=1 setsid nohup .venv/bin/python scripts/watchdog.py > logs/watchdog.out 2>&1 < /dev/null &

@@ -17,3 +17,6 @@ victim/known-good/
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# NeMo sidecar venv (scripts/guard_api.py, scripts/nat_profile.py), built with uv pip, not part of uv.lock
+.nemo-venv/

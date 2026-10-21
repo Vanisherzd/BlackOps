@@ -449,6 +449,7 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | `docs/demo-pending-edits.md` | demo 外殼的修改紀錄與回歸結果 |
 | `docs/kb-coverage-survey.md` | 知識庫覆蓋度與機房故障 survey |
 | `docs/kb-community-20261022.md` | 知識庫社群參考層（Server Fault／Unix & Linux 已接受答案）：設計、審查、量測 |
+| `docs/optimizations-20261022.md` | 賽前最後一夜的優化（審核開關、健康輪詢、watchdog 2 s、GPU 0.25）與 drill 量測 |
 | `docs/scorecard.md` | 演練計分卡（TRT 時期） |
 | `docs/superpowers/specs/2026-09-21-edge-agent-infra-design.md` | Phase 1 設計與地雷清單 |
 | `docs/spark-hw.md` | 主機事實、port、停掉/移除了什麼、安全備註 |

@@ -200,9 +200,13 @@ BM25 在 6k 筆上對罕見症狀只有弱匹配，參考值靠標示「未驗�
 
 **Gate 4。** 預先寫定的門檻全部達到；閘門在看到資料後改過一次（安全側，不是為了拉高指標），已在上面揭露。通過。
 
-## Phase 5–6 — 端到端（P4）
+## Phase 5–6 — 端到端（P4，2026-10-22 02:17–02:24，`logs/drills-20261022-011755.log`）
 
-（待補：五張牌 drill 結果與 `logs/ops-api.log` 檢查。）
+社群層載入、ops_api 重啟後，五張舞台牌經 sandbox agent：nginx-stopped 25 s、upstream-paused 35 s、container-removed 21 s、
+bad-config 33 s、upstream-500 28 s，**5/5 PASS**；整場 `logs/ops-api.log` 裡 `search_incident_knowledge` 呼叫 **0 次**（與過去所有
+drill 一致）。之後 `scripts/stage-up.sh` 還原舞台，dashboard 注入 nginx-stopped 經 watchdog 到 resolved 18.4 s（見
+`docs/optimizations-20261022.md`）。**Gate 6 通過。** 結論：這一層對舞台路徑的影響是量到的零，不是推論的零；它的價值只在 agent
+主動問到 runbook 以外的症狀時，而那在 drill 裡從未發生——所以它是給評審問答與未排練故障的保險，不是分數。
 
 ## 決策與未做的事
 

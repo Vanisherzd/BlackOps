@@ -12,8 +12,6 @@ import json
 import statistics as st
 import time
 
-from openai import OpenAI
-
 LOGS = "\n".join(
     [f"2026/10/19 08:{i // 60:02d}:{i % 60:02d} [notice] 1#1: signal 17 (SIGCHLD) received from {30 + i}" for i in range(40)]
     + ['2026/10/19 08:41:00 [emerg] 1#1: invalid parameter "listen" in /etc/nginx/conf.d/default.conf:3'])
@@ -31,7 +29,28 @@ PROMPTS = {
 }
 
 
+def classify_output(response):
+    choice = response.choices[0]
+    message = choice.message
+    content = (message.content or "").strip()
+    reasoning = (getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None) or "").strip()
+    text = content or reasoning
+    chars_per_token = len(text) / max(1, response.usage.completion_tokens)
+    words = text.split()
+    repeated = len(words) > 1 and len(set(words)) == 1 and len(words[0]) <= 16
+    answered = bool(content or getattr(message, "tool_calls", None))
+    if answered and chars_per_token >= 1.5 and not repeated:
+        output_class = "ok"
+    elif choice.finish_reason == "length" and reasoning and chars_per_token >= 2.0 and not repeated:
+        output_class = "thinking-only"
+    else:
+        output_class = "broken"
+    return dict(output_class=output_class, chars=len(text))
+
+
 def main():
+    from openai import OpenAI
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--out")
@@ -44,17 +63,17 @@ def main():
             t0 = time.time()
             r = c.chat.completions.create(model="edge-agent", messages=msgs, tools=TOOLS if name == "tool-turn" else None,
                                           max_tokens=700, temperature=0, extra_body={"chat_template_kwargs": {"enable_thinking": True}})
-            m = r.choices[0].message
-            text = (getattr(m, "reasoning_content", None) or getattr(m, "reasoning", None) or "") + (m.content or "")
-            runs.append(dict(gen=r.usage.completion_tokens, s=time.time() - t0, chars=len(text.strip()),
-                             answered=bool((m.content or "").strip() or m.tool_calls)))
+            check = classify_output(r)
+            runs.append(dict(gen=r.usage.completion_tokens, s=time.time() - t0, **check))
         gen, s = st.median(x["gen"] for x in runs), st.median(x["s"] for x in runs)
         cpt = st.median(x["chars"] / max(1, x["gen"]) for x in runs)
-        broken = cpt < 1.5 or not any(x["answered"] for x in runs)        # English text runs about 4 chars a token
+        output_classes = [x["output_class"] for x in runs]
+        broken = "broken" in output_classes
         out[name] = dict(prompt=r.usage.prompt_tokens, gen=gen, seconds=round(s, 2), tok_s=round(gen / s, 1),
-                         chars_per_token=round(cpt, 2), output_broken=broken)
+                         chars_per_token=round(cpt, 2), output_broken=broken, output_classes=output_classes)
         print(f"{name:13} prompt {r.usage.prompt_tokens:6}  gen {gen:5}  {s:6.2f}s  {gen / s:6.1f} tok/s  "
-              f"{cpt:4.2f} chars/token{'  OUTPUT BROKEN: this speed means nothing' if broken else ''}")
+              f"{cpt:4.2f} chars/token  runs {'/'.join(output_classes)}"
+              f"{'  OUTPUT BROKEN: this speed means nothing' if broken else ''}")
     if a.out:
         json.dump(out, open(a.out, "w"), indent=1)
 

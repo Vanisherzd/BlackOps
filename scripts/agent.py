@@ -488,6 +488,16 @@ def search_incident_knowledge(query, scenario=None):
         weak = ", ".join(f"{s['id']} ({s['match_coverage']:.2f})" for s in bundle["weak_solution_candidates"][:3]) or "none"
         lines.append(f"no remediation card covers this symptom; weak candidates ({weak}) are not a basis for repair. "
                      "Use search_runbooks for this stack's own procedures, gather more read-only evidence, or escalate.")
+        # Community reference layer (docs/kb-community-20261022.md): Server Fault / Unix & Linux accepted answers for
+        # symptoms outside this stack, a separate index that no card or runbook ranking shares. Excerpts with links,
+        # labelled as unverified here; the tool contracts and the reviewer are unchanged. KB_COMMUNITY=0 turns it off.
+        try:
+            import community_knowledge
+            refs = community_knowledge.references(query)
+            if refs:
+                lines.append(refs)
+        except Exception:
+            pass
     # v4 cases name the repair card of their fault type, and this stack's own past fixes say what fixed them
     titles = list(dict.fromkeys(str(c.get("title", ""))[:(110 if c["id"].startswith("stack-") else 60)]
                                 + (f" (card: {c['metadata']['repair_card']})" if (c.get("metadata") or {}).get("repair_card")

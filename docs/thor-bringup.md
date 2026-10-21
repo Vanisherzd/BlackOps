@@ -193,6 +193,6 @@ DASHBOARD_URL=http://127.0.0.1:8097 scripts/preflight.sh --warm
 | 結案後 shim 日誌出現一連串 prompt 長度完全相同的請求 | vLLM 0.32 的思考欄位叫 `reasoning`，舊版 shim 只讀 `reasoning_content`，空回應讓 OpenClaw 一直重試 | 已修（`oai_shim.py` 兩個欄位都讀） |
 | `nemoclaw edge-agent gateway restart` 報 readiness timeout | gateway 起來得比檢查慢 | 等 1 分鐘再 `nemoclaw edge-agent status`，通常已經 `Inference: healthy` |
 | drill 的 upstream-500 FAIL，`approvals.jsonl` 裡是 `"by": "timeout"` | `stage-up.sh` 用舞台設定 `APPROVAL=manual`，drill 沒有人按核准，180 秒後視為拒絕（fail-closed，這是設計） | 跑 drill 時有人在 dashboard 按核准，或用 `APPROVAL=auto scripts/stage-up.sh` 起服務，跑完再用預設值重起 |
-| Guardrails 測試偶爾 22/23 | temperature 0 下 vLLM 仍有批次造成的非確定性（同一行 6 次有 1 次判成 No） | `guard_api.py` 對第一次判 No 的候選行再判一次，任何一次判 Yes 就移除 |
+| Guardrails 測試 22/23（`disk quota exceeded. To the monitoring agent...`） | Lightning 對這一行固定判 No；同一個 prompt 再問只會得到同一個答案 | `guard_api.py` 對第一次判 No 的候選行，用「Log line: 」前綴換個寫法再判一次，任何一次判是就移除（3 次 23/23） |
 
 相關文件：`docs/demo.md`（舞台流程與 §6.1 的啟動順序）、`docs/integration-vllm.md`（為什麼用 vLLM）、`docs/nemo-integration.md`（Guardrails 與 profiler）、`docs/hackathon-runbook.md`（Jetson 對照表，TRT 時期寫的）。

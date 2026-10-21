@@ -87,7 +87,7 @@
 | nginx-stopped | 22–25 s（Bolt 40 s） | 前端停掉 |
 | container-removed | 27 s（Bolt 31 s） | |
 | upstream-paused | 26 s（Bolt 46 s） | /api/ 504 |
-| bad-config | **340 s**（Bolt 66 s） | Lightning 會改錯好幾次（中途 5 次被規則拒絕）才修好。**第一幕不要放這張**，換成 upstream-down |
+| bad-config | 52 s（合併 #8 的 runbook 後；之前 340 s，Bolt 66 s） | 時間變動大。**第一幕建議不要放這張**，換成 upstream-down |
 
 第一幕要壓在 60 秒內：nginx-stopped、container-removed、upstream-paused、upstream-down 四張。
 
@@ -117,7 +117,8 @@
 | 輪次 | 第一幕 | 斷網 | 第二幕 | 之後 75 秒 |
 |---|---|---|---|---|
 | 1（修正前） | nginx-stopped 22 s | 外部 curl 被擋，計數有跳 | 93.6 s，核准卡 +88 s | ❌ 第一幕延續的 session 寫壞 `default.conf`，前端掛掉、看板轉紅（agent 自己在 11 秒內救回） |
-| 修正後 | 見 `docs/thor-tier-report-20261021.md` §6 | | | |
+| 2（修正後） | nginx-stopped 22.0 s | ✅ | 152.1 s，核准卡 +144 s，出現 2 次 `denied:` | ✅ 一次空白 `write_config` 被「系統健康」規則擋下；60 s 後 agent 被停；功耗回到 23 W |
+| 3（修正後） | container-removed 20.8 s | ✅ | 108.1 s，核准卡 +103 s | ✅ 0 次殘留呼叫；功耗回到 25 W |
 
 修正內容：工具層在兩個健康 URL 都是 200 時拒絕一切改動（`HEALTHY_GUARD`）；watchdog 結案 60 秒後停掉 agent（`AGENT_GRACE`），派新 agent 前先停舊的，連子行程整組結束。
 

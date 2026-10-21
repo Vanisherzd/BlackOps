@@ -25,9 +25,10 @@
 | 項目 | 結果 | 文件 |
 |---|---|---|
 | 推論：Lightning 30B NVFP4，以 `edge-agent` 開在 :8000（預留 0.30） | 首次 437 s、之後約 100 s ready；權重 17.8 GiB；推論約 64 W、每 token 約 1.2 J | `docs/thor-tier-report-20261021.md` |
-| 舞台卡（NemoClaw 路徑） | **5/5**，made-worse 0：25 / 27 / 340 / 26 / 95 s（nginx-stopped、container-removed、bad-config、upstream-paused、upstream-500） | 同上 §5 |
-| 第二幕 × 3（dashboard 注入 → watchdog → agent → 核准卡 → dashboard 核准） | **3/3**：81.9、127.1、87.0 s | 同上 |
-| NeMo Guardrails（`test-guardrails.py`） | **23/23**（修正 URL 編碼注入後；Lightning 原本漏抓 1 項） | `docs/thor-bringup.md` §7 |
+| 舞台卡（NemoClaw 路徑） | **5/5**，made-worse 0：25 / 27 / 340 / 26 / 95 s（nginx-stopped、container-removed、bad-config、upstream-paused、upstream-500）；合併 #8 後 bad-config 52 s | 同上 §5、§6 |
+| 第二幕 × 3（dashboard 注入 → watchdog → agent → 核准卡 → dashboard 核准） | **3/3**：81.9、127.1、87.0 s | 同上 §6 |
+| 完整舞台流程（第一幕 → 斷網 → 第二幕 → 恢復，照 demo.md §3.2 的間隔） | 修正後 2/2：第一幕 22.0 / 20.8 s，第二幕 152.1 / 108.1 s；結案後看板不再被改壞 | `docs/demo.md` §3.5 |
+| NeMo Guardrails（`test-guardrails.py`） | 連續 3 次 **23/23**（修正 URL 編碼與「換個寫法再判一次」之後） | `docs/thor-bringup.md` §9 |
 | 其他候選模型 | Nano 30B（vLLM 可、TRT-LLM 不可）、Super 120B（可跑但慢且吃光記憶體）、Nano-4B 當 Tier-1（比 Lightning 更耗能） | `docs/thor-tier-report-20261021.md` |
 | Spark 上的歷史數據（Bolt） | NemoClaw 5 卡 × 3 = 15/15；Guardrails 23/23；NAT profiling 每場約 1 Wh | `docs/integration-vllm.md`、`docs/nemo-integration.md` |
 

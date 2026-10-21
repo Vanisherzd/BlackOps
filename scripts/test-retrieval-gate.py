@@ -11,7 +11,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 os.environ.setdefault("HEALTHY_GUARD", "0")   # this check is about the runbook gate; on a healthy stack the health guard would answer first
 import agent  # noqa: E402
 
-CONF = "server {\n  listen 80;\n  location /api/ { proxy_pass http://edge-victim-app:80/; }\n}\n"
+CONF = "server {\n  listen 80;\n  location /board/ { root /usr/share/nginx/html; }\n  location /api/ { proxy_pass http://edge-victim-app:80/; }\n}\n"   # write_config requires /api/ and /board/
 
 
 def main():

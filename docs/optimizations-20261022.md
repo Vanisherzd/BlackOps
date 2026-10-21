@@ -81,6 +81,9 @@ triage 讓第一輪 prompt 多 2.7k tokens，但少 2–3 輪（省 5–7 s）�
 
 - Thor 早上：`cd ~/BlackOps && git pull --ff-only && scripts/stage-up.sh`，再跑一次 `demo.md` 的流程。
 - 想把審核再快 12 s：在 stage-up 的 ops-api 那行環境加 `REVIEW_THINK=0`。今晚 3/3 判決相同，但只有 upstream-500 這張牌需要審核，樣本小，所以沒有改預設。
+- Reranker（選配，量過）：`scripts/serve-rerank.sh` 起一個 vLLM sidecar（:8020，GPU 4%，46 s healthy），ops_api 環境加
+  `RERANK_URL=http://127.0.0.1:8020/rerank`，知識工具的社群參考 top-1 類別錯從 29% 降到 22%，每次多 145 ms；沒設或 sidecar 掛了就自動回 BM25。
+  stage-up 不會啟動它（旗標預設關）。數字與門檻表在 `docs/kb-community-20261022.md` Gate B。
 - 評審問「runbook 以外的故障怎麼辦」：agent 問 `search_incident_knowledge` 會拿到有出處的社群修復假設（CC BY-SA，標明未在本機驗證）；可以現場用
   `.venv/bin/python scripts/kb-community.py probe "NVRM: Xid 79, GPU has fallen off the bus"` 示範。排名品質是 BM25 等級，罕見症狀可能只是同類別的弱匹配。
 - v4 修復卡的 phrase gate（survey §4 D 組，分支 `ragd` 已併入 main）：22 句固定探針 `scripts/kb-gate-probe.py`——漏推 0/8 → **6/8**

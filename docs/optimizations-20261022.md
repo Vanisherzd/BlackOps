@@ -124,8 +124,26 @@ KV cache 在 util 0.20 時 53k tokens / 3.9 GiB）。引用請在上簡報前核
 | 查詢改寫（HyDE, Gao et al., ACL 2023） | agent 用裸「504」查知識庫 | 斷詞後為空、什麼都配不到；可用事故 trace 的最後一行錯誤補查詢。drill 裡 agent 從沒呼叫這工具，量不到效果 | **候選**（無法離線量） |
 
 **結論**：本案的加速與品質槓桿在 speculative decoding、prefix caching、rerank；KV 壓縮是別的瓶頸的解。
-新增兩個機房形狀的故障（`upstream-cpu-throttled` fail-slow、`front-hosts-poisoned` 壞掉的 hosts 項）：都是「沒東西掛、但壞了」，
-log 乾淨、容器 Up，考 agent 的證據蒐集（`docker_exec cat /sys/fs/cgroup/cpu.max`、`cat /etc/hosts`）；drill 結果見下輪。
+新增兩個機房形狀的故障：`upstream-dependency-timeout`（後端自己的設定把 /api/ 轉給一個永遠不回的依賴，20 s connect timeout，
+兩個容器都 Up、前端 504、log 寫著死掉的依賴位址；只有重建能清）與 `front-hosts-poisoned`（前端 /etc/hosts 多了一行把後端解析到死位址，
+log 乾淨、容器 Up）。第一版 fail-slow 用 CPU 配額 2% 注入過：靜態 nginx 照樣在時限內回應，什麼都沒壞，所以換成「依賴逾時」。
+drill 結果見下輪。
+
+### kb-eval 端到端（Lightning，05:12–05:41，`docs/kb-eval-lightning.md`）
+
+63 個 held-out benchmark 事故、一次性診斷、thinking off、ratio 8 與 32，兩臂（只給遙測／再加 `search_incident_knowledge` 的回傳）：
+
+| arm | ratio | strict | lenient | scenario | service |
+|---|---|---|---|---|---|
+| none | 8x | 6% | 6% | 29% | 40% |
+| rag | 8x | 6% | 8% | 17% | 38% |
+| none | 32x | 3% | 5% | 22% | 35% |
+| rag | 32x | 5% | 5% | 14% | 33% |
+
+與 9/30 的 Nano（strict 22–24%、RAG 在雜訊內）比：Lightning 在這個封閉標籤的一次性診斷題上**更差**（它是為工具迴圈與思考訓練的，
+thinking off 的一句話診斷不是它的強項），RAG 一樣沒有幫助、scenario 準確率還掉。結論不變：這個 KB 的價值在工具迴圈裡
+（runbook 與卡片跟著 docker_logs 走），不在一次性診斷；頂會式的 RAG 技巧（rerank、棄權）要在能量到的地方量：我們量的是
+社群層的 held-out 與探針，不是這個 benchmark。
 
 ## 給隊友
 

@@ -126,11 +126,13 @@ CASES = {
     "compound-front-stopped-upstream-port": dict(min_actions=2, fix_tools={"docker_start", "docker_restart", "recreate_stack", "write_config"},
                                                cause=r"8080|port|listen|upstream.*(config|layer)|(stop|exit)[a-z]* .*edge-victim\b|edge-victim\b.*(stop|exit)", tier="compound"),
     # Datacenter-shaped faults (2026-10-22, survey §4): nothing is down, something is wrong.
-    # fail-slow: the backend is Up and answers, just at a few hundredths of a CPU (a noisy neighbour, a throttle someone
-    # applied); health times out, logs show nothing. A restart keeps the limit; a rebuild from the definition drops it.
-    "upstream-cpu-throttled": dict(min_actions=1, fix_tools={"recreate_stack"},
-                                   cause=r"cpu|throttl|slow|quota|cpu\.max|limit|timed? ?out|504", tier="datacenter",
-                                   diag_tools={"docker_exec"}),
+    # slow dependency: the backend's own config (writable layer) now forwards /api/ to a dependency that never answers
+    # (a blackhole address, 20 s connect timeout), so every request hangs and the front end reports 504 while both
+    # containers are Up. The log names the dead dependency; a restart keeps the config, only a rebuild clears it.
+    # (A CPU throttle at 2 % of a core was tried first: static nginx still answered in time, so it broke nothing.)
+    "upstream-dependency-timeout": dict(min_actions=1, fix_tools={"recreate_stack"},
+                                        cause=r"10\.255|dependenc|upstream timed out|connect.*timed? ?out|blackhole|504|proxy_pass|layer|config", tier="datacenter",
+                                        diag_tools={"docker_logs", "docker_exec"}),
     # a stale hosts entry: the front end resolves the backend's name to a dead address, so /api/ fails while both
     # containers are Up and every log is clean. The entry lives in the container's /etc/hosts; a restart re-renders it.
     "front-hosts-poisoned":   dict(min_actions=1, fix_tools={"docker_restart", "recreate_stack"},
@@ -452,8 +454,9 @@ def inject(case):
         # the restart; it comes back Up but unreachable (502), and only the network repair finishes the job.
         sh(f"docker network disconnect {NET} {APP}", check=True)
         sh(f"docker pause {APP}", check=True)
-    elif case == "upstream-cpu-throttled":
-        sh(f"docker update --cpus 0.02 {APP}", check=True)       # Up, answering, at 2 % of a core: every request crawls
+    elif case == "upstream-dependency-timeout":
+        sh(f"docker exec {APP} sh -c \"printf 'server {{ listen 80; location / {{ proxy_pass http://10.255.255.1:81; "
+           f"proxy_connect_timeout 20s; }} }}\\n' > /etc/nginx/conf.d/default.conf && nginx -s reload\"", check=True)
     elif case == "front-hosts-poisoned":
         sh(f"docker exec {FRONT} sh -c \"echo '10.255.255.1 {APP}' >> /etc/hosts\"", check=True)
         sh(f"docker exec {FRONT} nginx -s reload")               # nginx re-resolves the upstream name at reload

@@ -540,8 +540,8 @@ def report(args):
         arms[arm] = recs
 
     lines = [f"# Knowledge-pack RAG evaluation ({time.strftime('%Y-%m-%d')}{', thinking on' if args.think else ', thinking off'})", "",
-             f"Held-out benchmark incidents from `kb/artifacts/eval_ground_truth.jsonl`, diagnosed by Nemotron-3-Nano-30B-A3B-NVFP4 on "
-             f"TensorRT-LLM on the DGX Spark, offline. {len(cases)} cases: every disk_full / crashloop / dns case in the split plus a "
+             f"Held-out benchmark incidents from `kb/artifacts/eval_ground_truth.jsonl`, diagnosed by "
+             f"{os.environ.get('KB_EVAL_MODEL', 'Nemotron-3-Nano-30B-A3B-NVFP4 on TensorRT-LLM')} on the DGX Spark, offline. {len(cases)} cases: every disk_full / crashloop / dns case in the split plus a "
              f"per-source slice of the rest ({dict(collections.Counter(c['scenario'] for c in cases))}; sources "
              f"{dict(collections.Counter(c['source'] for c in cases))}). Two arms per input: `none` = telemetry only; `rag` = telemetry "
              f"plus what the agent's `search_incident_knowledge` returns for the symptoms in it. Same closed-set label vocabulary "

@@ -127,7 +127,7 @@ case "$PROFILE" in
             -v "$CC/flashinfer:/root/.cache/flashinfer" -v "$CC/vllm-compile:/root/.cache/vllm"
             -v "$CC/flashinfer-gen:$FI_GEN")
     ENVS=(-e HF_HUB_OFFLINE -e HF_HOME=/root/.cache/huggingface)
-    JOBS="${MAX_JOBS:-$([ -f /etc/nv_tegra_release ] && echo 4)}"
+    JOBS="${MAX_JOBS:-$([ -f /etc/nv_tegra_release ] && echo 4 || true)}"   # the failed test must not trip set -e: on a non-Jetson box the script exited here silently (2026-10-22)
     [ -n "$JOBS" ] && ENVS+=(-e "MAX_JOBS=$JOBS" -e FLASHINFER_NVCC_THREADS=1)
     for kv in ${VLLM_ENV:-}; do ENVS+=(-e "$kv"); done
     # Nemotron checkpoints ship their reasoning parser as a plugin file (Nano: nano_v3_reasoning_parser.py in the

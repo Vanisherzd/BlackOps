@@ -5,6 +5,8 @@ import socket
 import sys
 import threading
 import unittest
+import os
+os.environ.setdefault("COMMUNITY_JUDGE", "0")   # the judge gate calls the model; unit tests never do
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]

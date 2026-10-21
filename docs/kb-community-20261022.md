@@ -335,6 +335,13 @@ v1（6,456 筆）+ rerank 是 0.775／33 對。門檻 ≥ 0.77 沒過：**資料
 結論：語料大 24 倍對這個代理指標沒幫助，FTS5 的 unicode61 斷詞再扣約 1 點；v1 維持預設不變。要讓大語料值回票價，得換成真正的相關性標註
 （判官或人工），不是類別標籤。
 
+**38 句機房探針的判官（09:46，v1 語料 + rerank）**：rerank 第 1 名對題 **28.9%**（11/38）、BM25 21.1%、前 5 名至少一個對題 **44.7%**（17/38）。
+對題的多半是 Linux 主機層（deleted-but-open、NFS hang、EMFILE、pids、systemd start-limit、conntrack、default route、SSL chain、emergency mode、
+EDAC、cron），全部 no 的是硬體／UPS／GPU Xid／K8s／Proxmox／Ceph——v1 語料（每標籤前 100 題）根本沒有這些題。
+**決定：`COMMUNITY_JUDGE` 預設開**（`=0` 關）：agent 只看到判官同意的參考，沒有就不給；代價每筆 ~1 s、最多 3 筆。
+覆蓋率 45% 對比之前「100% 給、71% 不對題」。接著量 159k 語料 + 判官：如果硬體／K8s／Proxmox 那些句子在大語料裡有對題的候選，
+「大語料＋rerank＋判官」就是知識工具該用的組合（判官解掉了當初擋住 v2 的誤導問題）。
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

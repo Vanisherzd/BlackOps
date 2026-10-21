@@ -268,10 +268,44 @@ def render(refs, budget=700):
     return "\n".join(lines)
 
 
+JUDGE_SYSTEM = ("You judge whether a Q&A reference addresses an operator's symptom. Answer with exactly one word: yes or no. "
+                "yes = the reference is about the same problem and its fix or explanation would apply; no = different problem, "
+                "only superficially similar words, or no usable fix.")
+
+
+def judge_keep(query, refs, k=2, max_candidates=3):
+    """Default on (COMMUNITY_JUDGE=0 disables): ask the local model (no thinking, one word) whether each of the top
+    candidates addresses the symptom and keep only the ones it accepts. Measured 2026-10-22 (scripts/kb-judge.py): on 240
+    held-out questions the reranked top-1 was on-topic 13 %; on the 38 datacenter probes 29 %, some top-5 candidate 45 %.
+    Without the gate the agent read an off-topic reference two times out of three; with it nothing is shown unless the
+    model agrees it fits. One call per candidate, about a second each; any failure keeps the unjudged list (fail open)."""
+    if os.environ.get("COMMUNITY_JUDGE", "1") == "0" or not refs:
+        return refs[:k]
+    try:
+        from openai import OpenAI
+        client = OpenAI(base_url=os.environ.get("VLLM_URL", "http://127.0.0.1:8000") + "/v1", api_key="local")
+        kept = []
+        for s, shared, d in refs[:max_candidates]:
+            user = (f"Symptom:\n{query[:700]}\n\nReference title: {d['title']}\nReference answer excerpt: {d['answer_excerpt'][:500]}\n\n"
+                    "Does this reference address the same problem? Answer yes or no.")
+            r = client.chat.completions.create(model=os.environ.get("SERVED_NAME", "edge-agent"), temperature=0, max_tokens=3,
+                                               messages=[{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}],
+                                               extra_body={"chat_template_kwargs": {"enable_thinking": False}}, timeout=20)
+            if (r.choices[0].message.content or "").strip().lower().startswith("yes"):
+                kept.append((s, shared, d))
+            if len(kept) >= k:
+                break
+        return kept
+    except Exception:
+        return refs[:k]
+
+
 def references(query, k=2):
+    """Nothing for a query about this stack's own entities (the runbooks own those); otherwise the reranked candidates
+    the local model accepts as on-topic, at most k."""
     try:
         if stack_covers(query):
             return ""
-        return render(rank(query, k=k))
+        return render(judge_keep(query, rank(query, k=max(k, 3)), k=k))
     except Exception:            # an extra on an extra: never break the tool
         return ""

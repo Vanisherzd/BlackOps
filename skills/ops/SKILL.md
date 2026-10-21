@@ -21,7 +21,7 @@ Look first, and never guess a state you can read:
 | `ops__check_health` | – | the two health URLs; this is the definition of healthy |
 | `ops__docker_ps` | – | container state and exit code, any memory limit, and whether the kernel OOM-killed it |
 | `ops__docker_logs` | `name`, `tail` | why a container exited |
-| `ops__docker_exec` | `name`, `cmd` | a read-only command inside a container (`nginx -t`, `cat`, `ls`, `df`, `du`, `ps`, `curl`) |
+| `ops__docker_exec` | `name`, `cmd` | one diagnostic inside a container (`nginx -t/-T`, `cat`, `ls`, `df`, `du`, `ps`, `grep`, `head`, `tail` without follow). No shell. `curl` is GET/HEAD only to localhost, stack containers, or private IP literals; no uploads, file output, custom config, or redirects. `env` takes no arguments. |
 | `ops__read_config` | – | the current nginx config |
 | `ops__search_runbooks` | `query` | the written procedure for a symptom; an unmatched query returns the catalogue |
 | `ops__search_incident_knowledge` | `query`, `scenario` | historical incidents and Linux/Kubernetes remediation cards for a symptom no runbook covers (disk, inode, systemd, OOM, DNS, TLS, ports, CrashLoopBackOff); hypotheses to verify here, never a licence to act |

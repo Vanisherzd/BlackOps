@@ -46,3 +46,6 @@ victim/known-good/
 *.pth
 # community Q&A layer: the full question/answer text (19 MB) stays on the Spark; manifest, held-out split and index are tracked
 /datasets/derived/stackexchange_ops_qa_20261022/qa.jsonl
+# community v2: the per-site dump rows (160 MB) and the uncompressed index stay on the Spark; git carries community_v2.jsonl.gz
+/datasets/derived/stackexchange_ops_qa_20261022/dump-*.jsonl
+/kb/artifacts/community_v2.jsonl

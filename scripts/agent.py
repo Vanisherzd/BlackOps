@@ -124,7 +124,9 @@ def with_health(result):
         if "Exited" in line or "MISSING" in line or "Restarting" in line:
             hint = f" {line.split(chr(9))[0]} is {line.split(chr(9))[1][:40]}: that is the next thing to fix."
     tier.set_tier(2, "an action left the stack failing")
-    return f"{result}\nhealth now: {json.dumps(health)} -> still failing.{hint}\ncontainers now:\n{state}"
+    adaptive = ("\nstill failing after an action: parallel_diagnosis gathers the service, platform and knowledge "
+                "views at once." if result and os.environ.get("AGENT_MODE") == "adaptive" else "")
+    return f"{result}\nhealth now: {json.dumps(health)} -> still failing.{hint}\ncontainers now:\n{state}{adaptive}"
 
 
 # A container state is a fact with a known procedure; it does not need a similarity search that can land on the
@@ -313,6 +315,9 @@ TOOLS = [
     {"name": "kill_process", "description": "Terminate a runaway host process by pid; only processes owned by this user and not part of the platform itself", "parameters": {"type": "object", "properties": {"pid": {"type": "integer"}, "force": {"type": "boolean", "default": False}}, "required": ["pid"]}},
     {"name": "finish", "description": "End the run with a verdict", "parameters": {"type": "object", "properties": {"status": {"type": "string", "enum": ["resolved", "unresolved", "escalate"]}, "root_cause": {"type": "string"}, "actions": {"type": "string"}}, "required": ["status", "root_cause", "actions"]}},
 ]
+
+if os.environ.get("AGENT_MODE") == "adaptive":
+    TOOLS.append({"name": "parallel_diagnosis", "description": "Gather service, platform and offline knowledge diagnoses concurrently through read-only tools; it never changes anything.", "parameters": {"type": "object", "properties": {"focus": {"type": "string", "description": "optional symptom or exact error line to investigate"}}}})
 
 
 def sh(cmd, timeout=30, limit=4000):
@@ -601,6 +606,12 @@ def evidence_bundle(args, dry_run):
     return (body[:budget] + "\n" + suffix)[:EVIDENCE_BUNDLE_LIMIT]
 
 
+def parallel_diagnosis(args, dry_run):
+    import specialists
+    module = sys.modules.get(__name__) or argparse.Namespace(**globals())
+    return specialists.parallel_diagnosis(module, args, dry_run)
+
+
 def _run_tool(name, args, dry_run):
     if isinstance(args, str):            # some clients send arguments as a JSON string
         try:
@@ -675,6 +686,8 @@ def _run_tool(name, args, dry_run):
         return json.dumps(health)
     if name == "evidence_bundle":
         return evidence_bundle(args, dry_run)
+    if name == "parallel_diagnosis":
+        return parallel_diagnosis(args, dry_run)
     if name == "docker_ps":
         out = docker_ps()
         for marker, runbook in STATE_RUNBOOKS:

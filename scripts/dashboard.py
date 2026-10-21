@@ -47,6 +47,8 @@ BOARD = os.environ.get("DASH_BOARD_URL", "http://127.0.0.1:8880/board/")
 BOARD_FILE = ROOT / "victim" / "board" / "index.html"   # the same page the victim serves; DASH_BOARD_URL is the fallback
 ACTIONS = os.environ.get("DASH_ACTIONS") == "1"
 CARDS = ("nginx-stopped", "container-removed", "bad-config", "upstream-paused", "upstream-500")   # stage buttons
+# DASH_EXTRA_CARDS=compound-config-upstream-down,compound-detached-paused lets the API inject the compound cases too
+CARDS += tuple(c for c in os.environ.get("DASH_EXTRA_CARDS", "").split(",") if c)
 APPROVALS = LOGS / "approvals"
 
 

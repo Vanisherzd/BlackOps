@@ -36,6 +36,16 @@
 
 Git 僅保留精簡來源與既有文字語料；原始公開資料集、模型權重、完整日誌、實驗輸出及索引備份留在資料磁碟。
 
+## 社群 Q&A 參考層（2026-10-22）
+
+[stackexchange_ops_qa_20261022](derived/stackexchange_ops_qa_20261022/manifest.json)：Server Fault 與 Unix & Linux
+Stack Exchange 上有已接受答案的 7,595 題（API 2.3，每個標籤取票數前 100 題，197 次呼叫），涵蓋 survey 指出 KB 為零的硬體／BMC、
+UPS、L2/L3 網路、NTP／憑證、Proxmox／Ceph、K8s 控制面等 12 類。授權 CC BY-SA（每筆保留版本、題目與答案作者、連結）。
+依類別分層抽 15%（1,139 題，種子 20261022）作 held-out，只給評測用；其餘 6,456 題編成 `kb/artifacts/community_v1.jsonl`，
+是**獨立索引**，只在 `search_incident_knowledge` 沒有任何修復卡命中、且症狀不屬於本 stack 的 runbook 時附上，`knowledge_note`
+與既有排名完全不變。`KB_COMMUNITY=0` 關閉。設計、審查、量測與限制見 [docs/kb-community-20261022.md](../docs/kb-community-20261022.md)。
+`qa.jsonl`（完整題目與答案純文字）留在 DGX，Git 只收 manifest、held-out 與索引；`scripts/kb-community.py fetch` 可重抓。
+
 ## 目錄
 
 ```text

@@ -44,3 +44,5 @@ victim/known-good/
 *.ckpt
 *.pt
 *.pth
+# community Q&A layer: the full question/answer text (19 MB) stays on the Spark; manifest, held-out split and index are tracked
+/datasets/derived/stackexchange_ops_qa_20261022/qa.jsonl

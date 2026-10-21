@@ -132,17 +132,73 @@ KB」以及「抓進來後放哪一層」。
 
 **Gate 1。** 所有量都有單位、基線與門檻；C1 標明為建構檢查；P3 標明描述性。通過（2026-10-22 01:15）。
 
-## Phase 2 — 設計審查
+## Phase 2 — 設計審查（獨立 agent 對抗式審查，2026-10-22 01:20–01:30）
 
-（待補：獨立 agent 對上述設計的對抗式審查結果與採納項目。）
+抓取與審查同時進行（抓取只是收資料，不建索引）；索引與評測在審查結論之後才定稿。12 項發現與處置：
 
-## Phase 3 — 資料稽核
+| # | 嚴重度 | 發現 | 處置 |
+|---|---|---|---|
+| 1 | 高 | 「status != matched」對所有舞台句都成立（v3 下六句全是 insufficient），「舞台不變」只是因為 agent 從不呼叫這個工具，不是建構保證；`connect() failed (111…)` 正是 SE 上最高票的 nginx/php-fpm 題 | 加 `stack_covers()` 閘門：查詢含本 stack 實體、runbook 已描述的症狀或其處理的 HTTP 狀態碼時不附參考；C1 新增「六句舞台句與六句 agent 形狀查詢一律不顯示」為通過條件 |
+| 2 | 高 | 審查當下 `agent.py` 尚未接線，C1 的「matched 時不顯示」可能空泛通過 | C1 新增 not_vacuous：索引非空時至少一句 Q_gap 要顯示參考 |
+| 3 | 中 | 工具結果尾段 150 字進 incident trace，reviewer 會把 SE 片段當本次事故證據；guard 的注入文字 rail 也看不到 | `trace_summary` 對 `search_incident_knowledge` 先切掉 `community references` 區塊 |
+| 4 | 中 | 模組層級 `sys.path.insert` + import，`kb/src` 壞掉會拖垮 agent 啟動 | agent 端已是 try 內延遲 import；模組改為在建索引時才 import tokenizer |
+| 5 | 中 | CC BY-SA 署名不完整：缺答案作者、授權版本，連到題目而非答案；預算截斷可能切在 URL 中間 | 索引保留 `answer_owner`、`answer_license`、`answer_id`；每筆附「answer by …, CC BY-SA x.y, https://…/a/<id>」；放不下就整筆丟，不截斷 |
+| 6 | 中 | 抓取到最後才寫檔，中途被限流就全失 | 本次已成功；未改（重抓時再做分檔落地） |
+| 7 | 中 | 去重只看 question_id，關閉為重複的題目會跨 split；標題幾乎都含標籤字，P2 偏易 | 沒存 `closed_reason`，無法回溯過濾（列為限制）；P2 另報「只用症狀行」的數字 |
+| 8 | 中 | agent 實際查詢是裸狀態碼或 `symptom_query` 的句子（`the service itself answers HTTP 504…`） | eval 加 Q_agent 六句，預期一律不顯示 |
+| 9 | 低 | `incident_like` 篩選實際上是「有錯誤字或有程式碼區塊」 | manifest 欄位語意如實註明（見 Phase 3） |
+| 10 | 低 | 程式的標籤表比計畫表少了幾個泛用標籤（hardware、port、tcp、time、boot、unix limit） | 本節註明偏差：抓取前就刪掉太泛的標籤以省配額，計畫表未同步 |
+| 11 | 低 | 行內 `<code>` 會把整行散文標成程式碼行 | 症狀行抽取在抓取時固定，未重抓；列為限制 |
+| 12 | 低 | 400 一律重試不對；`accepted=True` 應小寫 | 重試改成只對 502/503 與限流（睡 body 指定秒數）；`True` 實測 API 接受 |
 
-（待補：抓取統計、去重、授權欄位、held-out 切分雜湊、是否混入任何評測答案。）
+**Gate 2。** 高、中項全部處置或列為已揭露限制；通過。
 
-## Phase 4 — 小規模驗證（C1、P2、P3、延遲）
+## Phase 3 — 資料稽核（抓取 2026-10-22 01:05–01:09，DGX 上執行）
 
-（待補。）
+| 項目 | 值 |
+|---|---|
+| API 呼叫 | 197（配額剩 99/300） |
+| 看到的題目（有已接受答案） | 9,349 |
+| 保留（標題含錯誤字、或內文有錯誤字／程式碼行） | 7,706 |
+| 答案 < 80 字丟棄 | 111 |
+| 最終列數 | 7,595（serverfault 4,709、unix 2,886） |
+| 類別 | network 1,102、disk_fs 956、hardware 918、boot_packages 896、memory_process 705、permissions 632、tls_time 619、service 587、virtualization 424、docker 354、app 227、k8s 175 |
+| 授權 | CC BY-SA 3.0 4,700、4.0 2,181、2.5 714（API 未給 `content_license` 時依日期推） |
+| `qa.jsonl` sha256 | `ef27ec9d…293f7` |
+| held-out（15%，種子 20261022，依類別分層） | 1,139 題，sha256 `123aa1b7…58347b` |
+| 索引 | 6,456 筆，9.15 MB，sha256 `7db569d0…b8389` |
+
+評測答案隔離：這一層沒有「答案」，P2 的標籤來自題目本身的 tag，held-out 題目不進索引；既有 `eval-hard-repairs` 的評分檔與
+kb-eval 的 ground truth 都不被這一層讀取。已知限制：未存 `closed_reason`，SE 上被關閉為重複的高票題可能跨 split（P2 偏樂觀）；
+症狀行抽取把含行內 `<code>` 的散文也當程式碼行。
+
+**Gate 3。** 無未處理的高影響發現；通過。
+
+## Phase 4 — 小規模驗證（2026-10-22 01:50–02:10，`scripts/kb-community.py eval`）
+
+第一版閘門用「runbook 標題字重疊 ≥ 2」：把 `device`、`up`、`file` 這種字也算進去，誤壓了 6 句探針（boot/fstab、iptables、
+default route…），而 `nginx stopped exited 0` 反而沒壓到。改成明確清單（實體＋runbook 症狀句＋狀態碼）後：
+
+| 檢查 | 結果 | 門檻 |
+|---|---|---|
+| C1 `knowledge_note` 逐位元相同 | 是 | 必須 |
+| C1 matched 時不顯示 | 是 | 必須 |
+| C1 六句舞台句不顯示 | 是（第一版閘門時 `nginx stopped` 會顯示） | 必須 |
+| C1 六句 agent 形狀查詢不顯示 | 是（裸 `504`/`502`/`429` 斷詞後為空；句型被清單壓住） | 必須 |
+| C1 not_vacuous | 31/38 探針句有顯示 | ≥ 1 |
+| P2 category@1（標題＋症狀行） | **0.702**（n = 1,139） | ≥ 0.60 且 ≥ 2 × 多數類別 0.145 → 通過 |
+| P2 category@1（只用症狀行） | 0.654（n = 1,136） | 描述性 |
+| P3 類別正確 / 誤導 / 無 | **31/38 / 5/38 / 2/38** | ≥ 0.70 / ≤ 0.15 → 達標 |
+| 延遲 | 5.5 ms／查詢（6,456 筆純 Python BM25） | ≤ 50 ms |
+| `eval-hard-repairs.py` | v3 7/8、v4 8/8、反例 0/10 誤選（與載入前相同；v3 的 7/8 在 033cee4 就是如此，對應 `test_repair_knowledge` 已知的 3 個失敗） | 不變 |
+
+P3 的 5 句「誤導」裡有 3 句內容其實相關、只是標籤類別不同（ext4 變唯讀 → 標成 boot_packages 的 ext4 唯讀題；
+kubeadm 憑證過期 → k8s 的憑證過期題；corosync quorum → pacemaker/drbd 題）。2 句「無」是閘門刻意壓的
+（`no space left on device`、`worker_connections` 本 stack 有 runbook／卡）。反過來，類別對也不保證有用：
+`NVRM: Xid 79, GPU has fallen off the bus` 回來的是「Force graphics to run on specific GPU」（共享 token 只有 gpu/nvidia），
+BM25 在 6k 筆上對罕見症狀只有弱匹配，參考值靠標示「未驗證的假設」兜底，不靠排名品質。
+
+**Gate 4。** 預先寫定的門檻全部達到；閘門在看到資料後改過一次（安全側，不是為了拉高指標），已在上面揭露。通過。
 
 ## Phase 5–6 — 端到端（P4）
 

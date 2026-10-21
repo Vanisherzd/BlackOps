@@ -33,9 +33,15 @@ SITE_HOST = {"serverfault": "serverfault.com", "unix": "unix.stackexchange.com"}
 
 
 def _tokens():
+    """The pack's tokenizer (drops digits and stop words). COMMUNITY_TOKENS=digits adds numeric tokens of 2-5 digits
+    (exit codes, ports, Xid numbers) to index and query alike: a retrieval experiment knob, measured before any default
+    changes (docs/kb-community-20261022.md)."""
     import sys
     sys.path.insert(0, str(ROOT / "kb" / "src"))
     from blackout_ops_kb.retrieval_v2 import tokens
+    if os.environ.get("COMMUNITY_TOKENS") == "digits":
+        num = re.compile(r"(?<![\w.])\d{2,5}(?![\w.])")
+        return lambda text: tokens(text) + num.findall(str(text))
     return tokens
 
 
@@ -112,12 +118,19 @@ RERANK_TIMEOUT = float(os.environ.get("RERANK_TIMEOUT", "5"))
 _index = None
 
 
+RERANK_PASSAGE = os.environ.get("RERANK_PASSAGE", "answer")   # what the reranker reads: answer | both (title+tags+symptom lines+answer head)
+
+
+def passage(d):
+    return d["index_text"] if RERANK_PASSAGE == "both" else f"{d['title']}\n{d['answer_excerpt']}"
+
+
 def rerank(query, cands):
     """[(rerank_score, shared, doc)] best first, or None when the sidecar did not answer."""
     import urllib.request
     try:
         body = json.dumps({"model": "rerank", "query": query, "top_n": len(cands),
-                           "documents": [f"{d['title']}\n{d['answer_excerpt']}" for _, _, d in cands]}).encode()
+                           "documents": [passage(d) for _, _, d in cands]}).encode()
         req = urllib.request.Request(RERANK_URL, data=body, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=RERANK_TIMEOUT) as r:
             results = json.loads(r.read())["results"]

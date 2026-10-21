@@ -43,6 +43,20 @@ sudo -n true && echo "passwordless sudo OK"     # wan.sh、nvpmodel 連動需要
 
 把結果填進第 8 節的紀錄表。**64 GB 機型**：跳過 Bolt，第 3 步直接走 C。
 
+**比賽機器的實測結果（2026-10-21 11:37）**：
+- R38.4（JetPack 7.1）→ **沒有 MIG**。
+- Thor，compute capability 11.0；有 `nvidia` runtime。
+- 記憶體 122 GB（T5000），所以 Bolt 放得下；磁碟 771 GB 可用。
+- 目前的 nvpmodel 模式是 MAXN（0）。
+- tegrastats 的電源軌有 `VDD_GPU`、`VDD_CPU_SOC_MSS`、`VIN_SYS_5V0`、**`VIN`**。**`VIN` 才是模組總輸入**，閒置約 22 W；`power.py` 已經改成優先抓 `VIN`。
+
+**免密碼 sudo**：`sudo -n true` 剛輸入過密碼後的 15 分鐘內也會通過，不能拿來判斷。`wan.sh` 和 nvpmodel 連動需要真正的 NOPASSWD，設定方式：
+```bash
+echo "$USER ALL=(root) NOPASSWD: $(which iptables), $(which ip6tables), $(which nvpmodel)" | sudo tee /etc/sudoers.d/blackout-ops
+sudo chmod 440 /etc/sudoers.d/blackout-ops && sudo visudo -c && sudo -k && sudo -n iptables -S >/dev/null && echo NOPASSWD-OK
+grep -E "POWER_MODEL|PM_CONFIG" /etc/nvpmodel.conf        # 模式表：NVP_T1（巡檢，低瓦數）、NVP_T2（推論，MAXN）
+```
+
 ## 2. Repo 與 Python 環境
 
 ```bash
@@ -136,7 +150,7 @@ DASHBOARD_URL=http://127.0.0.1:8097 scripts/preflight.sh --warm
 - **Tier**：只有在 Tier-1 server（`T1_MODEL=... scripts/serve-tier1.sh`）也開起來的情況下，才設 `TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010`；shim 也要帶同樣的環境變數。否則 `TIER_MODE` 不要設，Tier 那段在台上用口頭說明。
 - **斷網**：`wan.sh` 需要免密碼 sudo 執行 iptables。先用 `scripts/wan.sh down --yes`、`scripts/wan.sh up` 測一次。
 - **sandbox 的網段**：`docker network inspect openshell-docker` 確認是不是 `172.24.0.0/16`；不是的話，設 `SANDBOX_NET`。
-- **MIG**：`/etc/nv_tegra_release` 低於 7.2，就沒有 MIG。簡報的說法要改成「以 Tier 路由加 nvpmodel 達成資源治理」。
+- **MIG**：比賽機器是 R38.4（JetPack 7.1），**沒有 MIG**。簡報的說法要改成「以 Tier 路由加 nvpmodel 達成資源治理」。
 
 **通過條件**：preflight 除了 wan（若沒有 sudo）以外全部 PASS；台上筆電經會場網路打開 `http://<Thor IP>:8097/` 能看到畫面持續更新。
 

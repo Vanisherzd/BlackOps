@@ -249,7 +249,10 @@ def review(action, args, trace, runbook_seen):
         # model can leave everything in its reasoning and stop), a second pass runs without thinking, which gives a
         # short direct verdict. The reasoning itself is never mined for a verdict: it contains phrases like
         # "APPROVE or REJECT based on..." that once read as a decision.
-        for thinking in (True, False):
+        # REVIEW_THINK=0 skips the thinking pass: measured 2026-10-22 on Lightning, the thinking pass cost 15.3 s of a
+        # 34 s upstream-500 incident (1,044 completion tokens) for a verdict the code key had already made sufficient.
+        passes = (True, False) if os.environ.get("REVIEW_THINK", "1") == "1" else (False,)
+        for thinking in passes:
             r = client.chat.completions.create(
                 model=MODEL, temperature=0, max_tokens=4000 if thinking else 600,
                 messages=[{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
@@ -268,5 +271,5 @@ def review(action, args, trace, runbook_seen):
         verdict, reason = "REJECT", (f"reviewer unavailable ({type(e).__name__}: {str(e)[:120]}); destructive action withheld. "
                                      "Next: call the same tool once more; if refused again, escalate in your final report")
     _log(dict(action=action, args=args, verdict=verdict, reason=reason, ms=int(1000 * (time.time() - t0)),
-              evidence_items=len(trace), facts=facts, key="model"))
+              evidence_items=len(trace), facts=facts, key="model", think=os.environ.get("REVIEW_THINK", "1")))
     return verdict == "APPROVE", reason

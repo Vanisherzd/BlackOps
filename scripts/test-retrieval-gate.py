@@ -8,6 +8,7 @@ import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+os.environ.setdefault("HEALTHY_GUARD", "0")   # this check is about the runbook gate; on a healthy stack the health guard would answer first
 import agent  # noqa: E402
 
 CONF = "server {\n  listen 80;\n  location /api/ { proxy_pass http://edge-victim-app:80/; }\n}\n"

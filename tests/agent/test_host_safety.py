@@ -135,6 +135,13 @@ class HostDispatchTest(unittest.TestCase):
                 raise unittest.SkipTest("host integration requires the project's openai dependency") from error
             raise
 
+    def setUp(self):
+        # These tests exercise the dispatch of mutating tools; on a box whose stack is healthy, main's HEALTHY_GUARD
+        # would refuse them first. The guard has its own tests in test_host_safety_pr4.py.
+        self._guard = patch.dict(self.agent.os.environ, {"HEALTHY_GUARD": "0"})
+        self._guard.start()
+        self.addCleanup(self._guard.stop)
+
     def test_docker_exec_runs_argv_without_an_inner_shell(self):
         with patch.object(self.agent, "sh", return_value="ok") as run:
             result = self.agent._run_tool("docker_exec", {"name": "edge-victim-app", "cmd": "df -h /"}, True)

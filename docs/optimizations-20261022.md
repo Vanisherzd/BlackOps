@@ -145,6 +145,25 @@ thinking off 的一句話診斷不是它的強項），RAG 一樣沒有幫助、
 （runbook 與卡片跟著 docker_logs 走），不在一次性診斷；頂會式的 RAG 技巧（rerank、棄權）要在能量到的地方量：我們量的是
 社群層的 held-out 與探針，不是這個 benchmark。
 
+### MTP vs DSpark（配對量測，06:25–06:29，同一時刻同一負載：兩個 Lightning 實例＋rerank 評測在跑，絕對值偏低，只看相對）
+
+| | DSpark（:8000） | MTP（:8002，`SPEC=mtp`，2 個推測 token） |
+|---|---|---|
+| tool-turn tok/s | 31.8 | 31.3 |
+| report tok/s | 45.4 | 42.4 |
+| long-context tok/s | 42.9 | 40.2 |
+| prefix cache 命中（同一組重複 prompt） | **0%**（39k queries） | **21.6%**（8,448/39,132） |
+| 容器 RSS | 3.71 GiB | 3.60 GiB |
+| 額外權重 | DSpark drafter 1.35 GB | 無 |
+
+DSpark decode 快 2–7%；MTP 保住前綴快取、少一份 drafter。MTP 第一次啟動失敗是暫時的（第二次順利，架構 NemotronHMTPModel）。
+Gate 3 看 drill 牆鐘：MTP 的 8 場 drill 跑中。
+
+### 新增故障（續）
+
+`compound-triple`（前端設定壞＋後端停＋後端改埠，三層三因）、`upstream-log-flood-500`（upstream-500 埋在 3,000 行 heartbeat
+通知裡，考「在雜訊裡找那一行」）。目錄現在 36 個案例、10 個 tier；全目錄 regression（`scripts/regression.sh`）排在引擎決定之後。
+
 ## 外部建議（GPT 的 04:06 路線圖）可行性審查（06:50）
 
 逐條對照我們量到的數字，不照單全收：

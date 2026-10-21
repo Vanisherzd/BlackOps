@@ -320,6 +320,10 @@ serverfault + unix 完整傾印（CC BY-SA，`scripts/kb-community.py fetch-dump
 （`kb-community.py build-fts`，`COMMUNITY_BACKEND=fts5`）：Mac 上 v1 建索引 0.2 s、開 25 ms、每查詢 2–7 ms，三句探針 top-1 與
 Python BM25 相同；7 站的 FTS5 建置與 P2/P3 在 Spark 上量測中（分詞不同——unicode61 把 `pod_cpu_usage` 拆成三個——所以要重量）。
 
+**7 站 158,881 筆的第一階段（06:30）**：Python 倒排表 BM25 category@1 **0.703**、SQLite FTS5 **0.704**——兩個引擎在 held-out 上等價；
+FTS5 的 P3 探針 25/38（Python 28/38），差在 unicode61 的斷詞與 OR 查詢把泛用字也算進去。FTS5 每查詢 43.6 ms（含逐筆算共享 token），
+Python 版 0.5–1 s。+rerank 的兩組評測跑中（Gate 1 看這個）。
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

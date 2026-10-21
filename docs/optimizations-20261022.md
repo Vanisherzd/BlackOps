@@ -185,6 +185,10 @@ Gate 3 看 drill 牆鐘：MTP 的 8 場 drill 跑中。
 | compound（3） | 2/3（第 3 場被中斷，無效） | 56 |
 
 **headline：autonomous 30/32（94%）、made-worse 0、false health claims 0、evidence-first 74%、closure 100%。**
+
+唯一靠兜底的 `upstream-sigstop`（workers 被 SIGSTOP、容器 Up、/api/ 504）：agent 想看行程表，但 nginx 映像沒有 `ps`
+（`OCI runtime exec failed`），看不到 worker 處於 T 狀態，curl 了三分鐘後走 self_heal。修法在工具層（確定性）：`docker_exec ps`
+在映像沒有 ps 時改用工具自己的固定 /proc 掃描（pid、state、cmdline，附 T＝stopped 的圖例）。下一輪 regression 驗證。
 對照 Nano 時代的盲測（6/15、11/15、4–5/12、3–6/12）：同一批題目在 Lightning＋今晚的工具層上是 17/18。
 剩下的 5 個（含被中斷的那場）與 6 個新故障族接著跑；之後 Gate 2。
 

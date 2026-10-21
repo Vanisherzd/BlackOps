@@ -6,8 +6,9 @@ description, shell wrapper, and the ops skill are restored to their original
 14a8f3e behavior. Existing curl redirects, headers, POST, file output, config
 options, environment wrappers, custom nginx test options and tail commands are
 not newly blocked. The original container allowlist, shell-character checks,
-runbook discipline and action reviewer remain as before. No Thor/main updates
-are merged as part of this correction.
+runbook discipline and action reviewer remain as before. The rollback fix does
+not alter inference or Thor launch settings; existing main updates are preserved
+during integration.
 
 The functional fix retained is `restore_config(source="previous")`: read the
 rollback source before rotating `previous.conf`. Previously rotation overwrote

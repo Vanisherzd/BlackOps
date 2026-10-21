@@ -62,6 +62,11 @@ if [ "${SPEC:-}" = dspark ]; then
   EXTRA_ARGS="${EXTRA_ARGS:-} --speculative_config.model ${DSPARK_MODEL_ID:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark}"
   EXTRA_ARGS="$EXTRA_ARGS --speculative_config.num_speculative_tokens ${SPEC_TOKENS:-3} --mamba-backend ${MAMBA_BACKEND:-flashinfer}"
   export EXTRA_ARGS
+elif [ "${SPEC:-}" = mtp ]; then
+  # SPEC=mtp: Lightning's built-in multi-token-prediction heads (no draft weights). Measured on the Spark 2026-10-22: it
+  # keeps prefix caching (21.6 % hits where DSpark had 0); speed vs DSpark in docs/optimizations-20261022.md.
+  EXTRA_ARGS="${EXTRA_ARGS:-} --speculative_config.method mtp --speculative_config.num_speculative_tokens ${SPEC_TOKENS:-2} --mamba-backend ${MAMBA_BACKEND:-flashinfer}"
+  export EXTRA_ARGS
 fi
 NAME="${NAME:-${BOLT_CONTAINER:-vllm-edge}}"
 PORT="${PORT:-${BOLT_PORT:-8000}}"

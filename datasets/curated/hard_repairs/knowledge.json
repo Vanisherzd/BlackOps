@@ -1,0 +1,530 @@
+[
+  {
+    "id": "hard-repair-upstream-config-ownership",
+    "kind": "hard_failure_repair",
+    "title": "Upstream config syntax error mistaken for the front-end host config",
+    "platform": "docker",
+    "scenario": "other",
+    "tags": [
+      "upstream-config-ownership",
+      "writable layer",
+      "container provenance",
+      "restart persists fault"
+    ],
+    "symptoms": [
+      "edge-victim-app invalid number of arguments",
+      "edge-victim-app unexpected end of file",
+      "edge-victim-app directive is not terminated",
+      "edge-victim-app unexpected end of parameter",
+      "edge-victim-app unknown directive"
+    ],
+    "diagnosis": "The same /etc/nginx/conf.d/default.conf path exists in both containers. An error emitted by edge-victim-app names its own file, not the front-end host file returned by read_config. Restart retains that damaged layer. Restoring the healthy front-end config cannot repair the upstream.",
+    "required_evidence": [
+      "The syntax error comes from docker_logs(name=edge-victim-app), not edge-victim.",
+      "The failing file belongs to the upstream writable layer; it is not an external mount.",
+      "After one upstream restart, /api/ still fails; leave the serving front end running."
+    ],
+    "scope": "Only this project's stateless edge-victim and edge-victim-app definitions. Do not apply a rebuild to a stateful or unrelated production container. Existing tool and reviewer checks still apply.",
+    "historical_failure": {
+      "model": "Nemotron-3-Nano-30B-A3B-NVFP4",
+      "date": "2026-10-19",
+      "v3": "0/3; one made worse",
+      "v4": "0/3; one made worse",
+      "report": "docs/agent-design.md#blind-batch-4-2026-10-19-do-the-loosened-guards-generalise",
+      "limitation": "Old Nano runs and old guards; current Bolt failure rate has not been measured."
+    },
+    "sources": [
+      {
+        "title": "Docker container storage",
+        "url": "https://docs.docker.com/engine/storage/",
+        "accessed": "2026-10-21",
+        "supports": "Container writable layers and external mounts have different lifecycles."
+      },
+      {
+        "title": "nginx command-line parameters",
+        "url": "https://nginx.org/en/docs/switches.html",
+        "accessed": "2026-10-21",
+        "supports": "nginx -t validates syntax and tries opening referenced files; -T also prints the configuration."
+      }
+    ],
+    "tool_path": [
+      {
+        "stage": "observe",
+        "tool": "docker_ps",
+        "args": {},
+        "when": "Start with current container state, networks and OOM verdict."
+      },
+      {
+        "stage": "observe",
+        "tool": "docker_logs",
+        "args": {
+          "name": "edge-victim-app",
+          "tail": 60
+        },
+        "when": "Read the emitting container and any layer-change note; never infer ownership from a path alone."
+      },
+      {
+        "stage": "consult",
+        "tool": "search_runbooks",
+        "args": {
+          "query": "Upstream config syntax error mistaken for the front-end host config"
+        },
+        "when": "Consult the stack procedure before attempting a change; this retrieved card is a hypothesis."
+      },
+      {
+        "stage": "attempt",
+        "tool": "docker_restart",
+        "args": {
+          "name": "edge-victim-app"
+        },
+        "when": "Only after the required evidence identifies this container. Try once, not a restart loop."
+      },
+      {
+        "stage": "recheck",
+        "tool": "check_health",
+        "args": {},
+        "when": "After the attempted restart; stop if both URLs recover."
+      },
+      {
+        "stage": "repair",
+        "tool": "recreate_stack",
+        "args": {
+          "name": "edge-victim-app",
+          "replace": true
+        },
+        "when": "ONLY if this container was actually started/restarted in this incident, /api/ still fails, and the required evidence confirms container-local damage. For edge-victim the existing reviewer must also confirm a missing/changed image-layer file outside /etc/nginx/conf.d. If any condition is absent or the reviewer refuses, gather the requested evidence or escalate."
+      },
+      {
+        "stage": "verify",
+        "tool": "check_health",
+        "args": {},
+        "when": "Require front=200 AND api=200 after repair."
+      },
+      {
+        "stage": "verify",
+        "tool": "docker_logs",
+        "args": {
+          "name": "edge-victim-app",
+          "tail": 20
+        },
+        "when": "Confirm no new occurrences of the original fault after recovery; old log lines alone are not failure."
+      }
+    ],
+    "rollback": [
+      "Rebuild discards the damaged stateless writable layer; it cannot restore discarded container-local data.",
+      "The front-end host configuration is not changed by this procedure."
+    ],
+    "verify": [
+      "Both health URLs return 200 without following a redirect.",
+      "The target remains running and the original symptom does not recur on repeated checks."
+    ],
+    "escalate": [
+      "Container is stateful, ownership is unclear, or the file is an external mount.",
+      "Restart or rebuild is refused: retain the exact reason and do not bypass existing guards.",
+      "One evidence-backed rebuild fails: preserve logs and stop repeating destructive actions."
+    ],
+    "provenance": "Authored procedure based on cited documentation and repository failure reports; not a new measured success.",
+    "live_bolt_verified": false
+  },
+  {
+    "id": "hard-repair-front-main-config-capacity",
+    "kind": "hard_failure_repair",
+    "title": "Front-end main nginx.conf changed: worker_connections are not enough",
+    "platform": "docker",
+    "scenario": "other",
+    "tags": [
+      "front-main-config-capacity",
+      "writable layer",
+      "container provenance",
+      "restart persists fault"
+    ],
+    "symptoms": [
+      "worker_connections are not enough"
+    ],
+    "diagnosis": "A valid but damaged /etc/nginx/nginx.conf in the front-end writable layer can exhaust worker connections. This is outside the host-mounted site configuration. Restoring default.conf does not repair it; restarting keeps the changed main config. The front-end must have measured image-file changes before rebuilding.",
+    "required_evidence": [
+      "The complaint comes from the front end and /api/ fails.",
+      "docker_logs layer-change note identifies /etc/nginx/nginx.conf as changed from the known-good state.",
+      "A running-container inspection confirms the implausible worker_connections setting; ordinary production load or an intentional limit is not proof of corruption."
+    ],
+    "scope": "Only this project's stateless edge-victim and edge-victim-app definitions. Do not apply a rebuild to a stateful or unrelated production container. Existing tool and reviewer checks still apply.",
+    "historical_failure": {
+      "model": "Nemotron-3-Nano-30B-A3B-NVFP4",
+      "date": "2026-10-19",
+      "v3": "0/3",
+      "v4": "0/3",
+      "report": "docs/agent-design.md#blind-batch-4-2026-10-19-do-the-loosened-guards-generalise",
+      "limitation": "The old guard rejected changed image files. Current code permits measured changes; Bolt unmeasured."
+    },
+    "sources": [
+      {
+        "title": "nginx core configuration",
+        "url": "https://nginx.org/en/docs/ngx_core_module.html",
+        "accessed": "2026-10-21",
+        "supports": "worker_connections is an events-level limit and includes connections to proxied servers."
+      },
+      {
+        "title": "Docker container diff",
+        "url": "https://docs.docker.com/reference/cli/docker/container/diff/",
+        "accessed": "2026-10-21",
+        "supports": "A, C and D describe filesystem changes; the existing docker_logs tool also reports layer changes."
+      },
+      {
+        "title": "Docker container storage",
+        "url": "https://docs.docker.com/engine/storage/",
+        "accessed": "2026-10-21",
+        "supports": "Container writable layers and external mounts have different lifecycles."
+      }
+    ],
+    "tool_path": [
+      {
+        "stage": "observe",
+        "tool": "docker_ps",
+        "args": {},
+        "when": "Start with current container state, networks and OOM verdict."
+      },
+      {
+        "stage": "observe",
+        "tool": "docker_logs",
+        "args": {
+          "name": "edge-victim",
+          "tail": 60
+        },
+        "when": "Read the emitting container and any layer-change note; never infer ownership from a path alone."
+      },
+      {
+        "stage": "observe",
+        "tool": "docker_exec",
+        "args": {
+          "name": "edge-victim",
+          "cmd": "nginx -T"
+        },
+        "when": "Only if running; inspect the events block and preserve the current value as evidence."
+      },
+      {
+        "stage": "consult",
+        "tool": "search_runbooks",
+        "args": {
+          "query": "Front-end main nginx.conf changed: worker_connections are not enough"
+        },
+        "when": "Consult the stack procedure before attempting a change; this retrieved card is a hypothesis."
+      },
+      {
+        "stage": "attempt",
+        "tool": "docker_restart",
+        "args": {
+          "name": "edge-victim"
+        },
+        "when": "Only after the required evidence identifies this container. Try once, not a restart loop."
+      },
+      {
+        "stage": "recheck",
+        "tool": "check_health",
+        "args": {},
+        "when": "After the attempted restart; stop if both URLs recover."
+      },
+      {
+        "stage": "repair",
+        "tool": "recreate_stack",
+        "args": {
+          "name": "edge-victim",
+          "replace": true
+        },
+        "when": "ONLY if this container was actually started/restarted in this incident, /api/ still fails, and the required evidence confirms container-local damage. For edge-victim the existing reviewer must also confirm a missing/changed image-layer file outside /etc/nginx/conf.d. If any condition is absent or the reviewer refuses, gather the requested evidence or escalate."
+      },
+      {
+        "stage": "verify",
+        "tool": "check_health",
+        "args": {},
+        "when": "Require front=200 AND api=200 after repair."
+      },
+      {
+        "stage": "verify",
+        "tool": "docker_logs",
+        "args": {
+          "name": "edge-victim",
+          "tail": 20
+        },
+        "when": "Confirm no new occurrences of the original fault after recovery; old log lines alone are not failure."
+      }
+    ],
+    "rollback": [
+      "The rebuild restores main nginx.conf from the existing image and preserves the host-mounted site config.",
+      "No automatic inverse can restore discarded writable-layer data; use only the defined stateless victim."
+    ],
+    "verify": [
+      "Both health URLs return 200 without following a redirect.",
+      "The target remains running and the original symptom does not recur on repeated checks."
+    ],
+    "escalate": [
+      "Container is stateful, ownership is unclear, or the file is an external mount.",
+      "Restart or rebuild is refused: retain the exact reason and do not bypass existing guards.",
+      "One evidence-backed rebuild fails: preserve logs and stop repeating destructive actions."
+    ],
+    "provenance": "Authored procedure based on cited documentation and repository failure reports; not a new measured success.",
+    "live_bolt_verified": false
+  },
+  {
+    "id": "hard-repair-front-missing-image-include",
+    "kind": "hard_failure_repair",
+    "title": "Front-end cannot open an image-owned nginx include file",
+    "platform": "docker",
+    "scenario": "other",
+    "tags": [
+      "front-missing-image-include",
+      "writable layer",
+      "container provenance",
+      "restart persists fault"
+    ],
+    "symptoms": [
+      "edge-victim /etc/nginx/mime.types no such file",
+      "edge-victim /etc/nginx/fastcgi_params no such file"
+    ],
+    "diagnosis": "A main-config include such as mime.types is missing from the front-end writable layer. It is not the host-mounted default.conf. A site-config restore leaves this missing include unresolved.",
+    "required_evidence": [
+      "The front-end log names open() failure for an image-owned path outside /etc/nginx/conf.d.",
+      "The layer-change note confirms that path is deleted or changed, not a missing externally mounted file.",
+      "The failed restart is recorded for edge-victim and subsequent /api/ health still fails."
+    ],
+    "scope": "Only this project's stateless edge-victim and edge-victim-app definitions. Do not apply a rebuild to a stateful or unrelated production container. Existing tool and reviewer checks still apply.",
+    "historical_failure": {
+      "model": "Nemotron-3-Nano-30B-A3B-NVFP4",
+      "date": "2026-10-18/19",
+      "v3": "0/3 after trace fix",
+      "v4": "2/3 after trace fix; earlier 0/3 in each arm",
+      "report": "docs/kb-repair-cards.md",
+      "limitation": "Tool/trace fixes already improved this; the RAG addition itself is not yet measured on Bolt."
+    },
+    "sources": [
+      {
+        "title": "nginx command-line parameters",
+        "url": "https://nginx.org/en/docs/switches.html",
+        "accessed": "2026-10-21",
+        "supports": "nginx -t validates syntax and tries opening referenced files; -T also prints the configuration."
+      },
+      {
+        "title": "Docker container diff",
+        "url": "https://docs.docker.com/reference/cli/docker/container/diff/",
+        "accessed": "2026-10-21",
+        "supports": "A, C and D describe filesystem changes; the existing docker_logs tool also reports layer changes."
+      },
+      {
+        "title": "Docker container storage",
+        "url": "https://docs.docker.com/engine/storage/",
+        "accessed": "2026-10-21",
+        "supports": "Container writable layers and external mounts have different lifecycles."
+      }
+    ],
+    "tool_path": [
+      {
+        "stage": "observe",
+        "tool": "docker_ps",
+        "args": {},
+        "when": "Start with current container state, networks and OOM verdict."
+      },
+      {
+        "stage": "observe",
+        "tool": "docker_logs",
+        "args": {
+          "name": "edge-victim",
+          "tail": 60
+        },
+        "when": "Read the emitting container and any layer-change note; never infer ownership from a path alone."
+      },
+      {
+        "stage": "consult",
+        "tool": "search_runbooks",
+        "args": {
+          "query": "Front-end cannot open an image-owned nginx include file"
+        },
+        "when": "Consult the stack procedure before attempting a change; this retrieved card is a hypothesis."
+      },
+      {
+        "stage": "attempt",
+        "tool": "docker_restart",
+        "args": {
+          "name": "edge-victim"
+        },
+        "when": "Only after the required evidence identifies this container. Try once, not a restart loop."
+      },
+      {
+        "stage": "recheck",
+        "tool": "check_health",
+        "args": {},
+        "when": "After the attempted restart; stop if both URLs recover."
+      },
+      {
+        "stage": "repair",
+        "tool": "recreate_stack",
+        "args": {
+          "name": "edge-victim",
+          "replace": true
+        },
+        "when": "ONLY if this container was actually started/restarted in this incident, /api/ still fails, and the required evidence confirms container-local damage. For edge-victim the existing reviewer must also confirm a missing/changed image-layer file outside /etc/nginx/conf.d. If any condition is absent or the reviewer refuses, gather the requested evidence or escalate."
+      },
+      {
+        "stage": "verify",
+        "tool": "check_health",
+        "args": {},
+        "when": "Require front=200 AND api=200 after repair."
+      },
+      {
+        "stage": "verify",
+        "tool": "docker_logs",
+        "args": {
+          "name": "edge-victim",
+          "tail": 20
+        },
+        "when": "Confirm no new occurrences of the original fault after recovery; old log lines alone are not failure."
+      }
+    ],
+    "rollback": [
+      "Rebuild restores the image-owned include; external site configuration remains mounted.",
+      "Discarded writable-layer contents have no automatic inverse; escalate if recovery needs a different image."
+    ],
+    "verify": [
+      "Both health URLs return 200 without following a redirect.",
+      "The target remains running and the original symptom does not recur on repeated checks."
+    ],
+    "escalate": [
+      "Container is stateful, ownership is unclear, or the file is an external mount.",
+      "Restart or rebuild is refused: retain the exact reason and do not bypass existing guards.",
+      "One evidence-backed rebuild fails: preserve logs and stop repeating destructive actions."
+    ],
+    "provenance": "Authored procedure based on cited documentation and repository failure reports; not a new measured success.",
+    "live_bolt_verified": false
+  },
+  {
+    "id": "hard-repair-upstream-static-permissions",
+    "kind": "hard_failure_repair",
+    "title": "Upstream static-file permission failure survives restart",
+    "platform": "docker",
+    "scenario": "other",
+    "tags": [
+      "upstream-static-permissions",
+      "writable layer",
+      "container provenance",
+      "restart persists fault"
+    ],
+    "symptoms": [
+      "edge-victim-app open permission denied",
+      "edge-victim-app stat permission denied"
+    ],
+    "diagnosis": "An upstream static file has become unreadable to nginx workers in this stateless container's writable layer. A local open/stat permission error plus an HTTP 403 is different from an authentication failure, a missing index page or front-end access policy. Restart does not reset file permissions.",
+    "required_evidence": [
+      "/api/ returns 403 and the upstream's own log names a static-file open/stat permission error.",
+      "The file is in the project's upstream writable layer, not a mounted document root or secret.",
+      "The ownership/mode evidence agrees with the file-access failure and restart did not recover /api/."
+    ],
+    "scope": "Only this project's stateless edge-victim and edge-victim-app definitions. Do not apply a rebuild to a stateful or unrelated production container. Existing tool and reviewer checks still apply.",
+    "historical_failure": {
+      "model": "Nemotron-3-Nano-30B-A3B-NVFP4",
+      "date": "2026-10-18",
+      "v3": "0/3 after guard changes",
+      "v4": "1/3 after guard changes",
+      "report": "docs/kb-repair-cards.md",
+      "limitation": "Historical failures involved both planning and reviewer conditions; current Bolt is unmeasured."
+    },
+    "sources": [
+      {
+        "title": "nginx HTTP core module",
+        "url": "https://nginx.org/en/docs/http/ngx_http_core_module.html",
+        "accessed": "2026-10-21",
+        "supports": "Static file serving depends on the requested URI and configured root or alias."
+      },
+      {
+        "title": "Docker container storage",
+        "url": "https://docs.docker.com/engine/storage/",
+        "accessed": "2026-10-21",
+        "supports": "Container writable layers and external mounts have different lifecycles."
+      }
+    ],
+    "tool_path": [
+      {
+        "stage": "observe",
+        "tool": "docker_ps",
+        "args": {},
+        "when": "Start with current container state, networks and OOM verdict."
+      },
+      {
+        "stage": "observe",
+        "tool": "docker_logs",
+        "args": {
+          "name": "edge-victim-app",
+          "tail": 60
+        },
+        "when": "Read the emitting container and any layer-change note; never infer ownership from a path alone."
+      },
+      {
+        "stage": "observe",
+        "tool": "docker_exec",
+        "args": {
+          "name": "edge-victim-app",
+          "cmd": "ls -ld /usr/share/nginx/html /usr/share/nginx/html/index.html"
+        },
+        "when": "If the log names another file, replace the inspected path using that observed path; do not invent a target."
+      },
+      {
+        "stage": "consult",
+        "tool": "search_runbooks",
+        "args": {
+          "query": "Upstream static-file permission failure survives restart"
+        },
+        "when": "Consult the stack procedure before attempting a change; this retrieved card is a hypothesis."
+      },
+      {
+        "stage": "attempt",
+        "tool": "docker_restart",
+        "args": {
+          "name": "edge-victim-app"
+        },
+        "when": "Only after the required evidence identifies this container. Try once, not a restart loop."
+      },
+      {
+        "stage": "recheck",
+        "tool": "check_health",
+        "args": {},
+        "when": "After the attempted restart; stop if both URLs recover."
+      },
+      {
+        "stage": "repair",
+        "tool": "recreate_stack",
+        "args": {
+          "name": "edge-victim-app",
+          "replace": true
+        },
+        "when": "ONLY if this container was actually started/restarted in this incident, /api/ still fails, and the required evidence confirms container-local damage. For edge-victim the existing reviewer must also confirm a missing/changed image-layer file outside /etc/nginx/conf.d. If any condition is absent or the reviewer refuses, gather the requested evidence or escalate."
+      },
+      {
+        "stage": "verify",
+        "tool": "check_health",
+        "args": {},
+        "when": "Require front=200 AND api=200 after repair."
+      },
+      {
+        "stage": "verify",
+        "tool": "docker_logs",
+        "args": {
+          "name": "edge-victim-app",
+          "tail": 20
+        },
+        "when": "Confirm no new occurrences of the original fault after recovery; old log lines alone are not failure."
+      }
+    ],
+    "rollback": [
+      "Rebuild restores default file modes from the existing stateless image.",
+      "Do not use recursive permission changes; external content requires its own owner-approved recovery."
+    ],
+    "verify": [
+      "Both health URLs return 200 without following a redirect.",
+      "The target remains running and the original symptom does not recur on repeated checks."
+    ],
+    "escalate": [
+      "Container is stateful, ownership is unclear, or the file is an external mount.",
+      "Restart or rebuild is refused: retain the exact reason and do not bypass existing guards.",
+      "One evidence-backed rebuild fails: preserve logs and stop repeating destructive actions."
+    ],
+    "provenance": "Authored procedure based on cited documentation and repository failure reports; not a new measured success.",
+    "live_bolt_verified": false
+  }
+]

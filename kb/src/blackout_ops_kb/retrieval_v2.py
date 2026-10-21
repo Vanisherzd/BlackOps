@@ -164,7 +164,8 @@ class KnowledgeBaseV2:
     def __init__(self, corpus: str | Path, *, coverage: str = "card", hard_filter: bool = False,
                  no_evidence_weight: float = 1.0, minimum_solution_coverage: float = 0.34,
                  use_v2_scenarios: bool = True, k1: float = 1.2, b: float = 0.75, index: str = "original",
-                 vote: int = 0, vote_k: int = 5, fallback: bool = True, phrase_bar: float | None = None):
+                 vote: int = 0, vote_k: int = 5, fallback: bool = True, phrase_bar: float | None = None,
+                 extra_documents: list[dict[str, Any]] | None = None):
         """index: what a case is retrieved by -- "original" (its v1 text), "observed" (its own telemetry, step 2;
         falls back to the original text for a case without one), or "both". vote > 0 replaces the coverage rule for
         cards: `matched` when at least `vote` of the top `vote_k` cases share a target scenario, and the cards shown
@@ -179,6 +180,12 @@ class KnowledgeBaseV2:
         query (every non-generic word of it) and that phrase is specific enough: the sum of its words' IDF reaches
         the bar. "No space left on device" is specific; "connection refused" alone is not."""
         self.docs = [json.loads(l) for l in Path(corpus).read_text(encoding="utf-8").splitlines() if l.strip()]
+        # Add curated repair knowledge without rebuilding the benchmark corpus or indexing evaluation answers.
+        known_ids = {d["id"] for d in self.docs}
+        for document in extra_documents or []:
+            if document["id"] not in known_ids:
+                self.docs.append(document)
+                known_ids.add(document["id"])
         if not use_v2_scenarios:
             for d in self.docs:
                 d["scenario"] = d.get("scenario_v1", d["scenario"])

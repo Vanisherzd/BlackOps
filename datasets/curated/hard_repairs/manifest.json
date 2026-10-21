@@ -1,0 +1,20 @@
+{
+  "schema": "blackops-hard-repairs/v1",
+  "created": "2026-10-21",
+  "knowledge_cards": 4,
+  "eval_inputs": 8,
+  "negative_queries": 10,
+  "data_kind": "authored documentation-derived repair procedures and synthetic evaluation fixtures",
+  "inclusion": "Historical autonomous repair failure in project reports; no routine start/restart, OOM, DNS or disk-full examples.",
+  "runtime_knowledge_file": "knowledge.json",
+  "evaluator_only_files": [
+    "eval_inputs.jsonl",
+    "eval_ground_truth.jsonl",
+    "negative_queries.json"
+  ],
+  "model_weights_changed": false,
+  "current_bolt_baseline_measured": false,
+  "live_repair_success_measured": false,
+  "evaluation_limit": "Tests retrieval and tool contracts. Inputs are unseen variations of known fault families, not unseen families; no proof of LLM repair improvement.",
+  "source_policy": "Original summaries and tool mappings; no copied public dataset, official documentation text or production logs."
+}

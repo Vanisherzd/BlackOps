@@ -18,6 +18,12 @@
 
 原始資料位於 `raw/`；整理表位於 `manifests/`；使用規則位於 `docs/`。
 
+## 少見修復失敗案例補充
+
+另有 [hard_repairs](curated/hard_repairs/README.md)：4 種專案曾自主修復失敗的故障修復卡，
+附官方來源、條件式工具呼叫、回復限制與驗證。這是人工整理的 RAG 知識，並非第五個下載的公開 benchmark。
+8 筆合成測試變體與評分答案分開存放，不進 runtime 索引；普通啟停、DNS、OOM、磁碟滿不重複擴增。
+
 ## 目錄
 
 ```text

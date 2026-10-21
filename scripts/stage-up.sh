@@ -93,6 +93,8 @@ RAIL="${POWER_TOTAL_RAIL:-$([ $JETSON = 1 ] && echo VIN)}"
 
 for s in $SERVICES; do stop_one "$s"; done
 sleep 2
+# an incident agent left from an older watchdog holds the NemoClaw host lock; drill agents (session drill-*) are left
+pkill -f "[s]ession-id incident-" 2>/dev/null && { echo "stopped leftover incident agent(s)"; sleep 3; }
 
 # shellcheck disable=SC2086
 start_one oai-shim "$PY" ${SHIM_ENV:-SHIM_THINK=1 SHIM_ADAPTIVE=1} "${TIER_ENV[@]}"

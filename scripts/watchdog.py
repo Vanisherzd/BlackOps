@@ -33,6 +33,9 @@ URLS = [u.strip() for u in os.environ.get(
 INTERVAL = float(os.environ.get("WATCH_INTERVAL", "5"))
 FAILS = int(os.environ.get("WATCH_FAILS", "2"))
 TIMEOUT = float(os.environ.get("INCIDENT_TIMEOUT", "900"))
+# after its incident closes the agent may finish its report; past this it is stopped. Lightning kept acting for 5+ min
+# after a fix (memory notes, a clear_scratch_volume the rules refused), holding the host lock the next agent needs
+GRACE = float(os.environ.get("AGENT_GRACE", "60"))
 ALERT = ("Alert: the web stack is degraded. Diagnose it and repair it with your ops tools, then verify both health "
          "URLs return 200. Report root cause, actions taken, and final health.")   # same words as nemoclaw-drill.sh
 
@@ -81,7 +84,22 @@ def dispatch(iid):
     out.parent.mkdir(exist_ok=True)
     env = dict(os.environ, PATH=f"{pathlib.Path.home()}/.npm-global/bin:{pathlib.Path.home()}/.local/bin:{os.environ.get('PATH', '')}")
     cmd = ["nemoclaw", "edge-agent", "agent", "--agent", "main", "--session-id", f"incident-{iid}", "-m", alert]
-    return subprocess.Popen(cmd, stdout=out.open("w"), stderr=subprocess.STDOUT, env=env, cwd=ROOT), out
+    # own process group: stopping it must also end the openshell exec it spawns
+    return subprocess.Popen(cmd, stdout=out.open("w"), stderr=subprocess.STDOUT, env=env, cwd=ROOT,
+                            start_new_session=True), out
+
+
+def stop_agent(p):
+    for sig, wait in ((signal.SIGTERM, 15), (signal.SIGKILL, 5)):
+        try:
+            os.killpg(p.pid, sig)
+        except ProcessLookupError:
+            pass
+        try:
+            p.wait(wait)
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def archive(inc, s_end, outcome):
@@ -116,12 +134,16 @@ def main():
     print(f"watchdog: {URLS} every {INTERVAL}s, open after {FAILS} failures{' (dry run)' if dry else ''}", flush=True)
     bad = good = 0
     inc = None
-    # agents still running after their incident closed (Lightning kept retrying its last turn for 90 s): reaped every
-    # loop, since a zombie keeps the NemoClaw host lock "owned" and every later agent fails to start
+    # agents still running after their incident closed, with the time it closed: reaped every loop (a zombie keeps the
+    # NemoClaw host lock "owned" and every later agent fails to start) and stopped after GRACE
     lingering = []
     try:
         while True:
-            lingering = [q for q in lingering if q.poll() is None]
+            for q, t_close in lingering:
+                if q.poll() is None and time.time() - t_close > GRACE:
+                    stop_agent(q)
+                    event(event="agent-stopped-after-close", pid=q.pid, grace=GRACE)
+            lingering = [(q, t) for q, t in lingering if q.poll() is None]
             s, ok = probe()
             bad, good = (0, good + 1) if ok else (bad + 1, 0)
             if inc is None and bad >= FAILS:
@@ -133,13 +155,8 @@ def main():
                     event(event="open", id=iid, status=s, dispatched=False, why=why)
                     print(f"{time.strftime('%T')} incident {iid} {s} (not dispatched: {why})", flush=True)
                 else:
-                    for q in lingering:          # its incident is closed; it only holds the host lock now
-                        q.terminate()
-                        try:
-                            q.wait(15)
-                        except subprocess.TimeoutExpired:
-                            q.kill()
-                            q.wait(5)
+                    for q, _ in lingering:       # its incident is closed; it only holds the host lock now
+                        stop_agent(q)
                     if lingering:
                         event(event="previous-agent-stopped", id=iid, count=len(lingering))
                         lingering = []
@@ -157,7 +174,7 @@ def main():
                     d = archive(inc, s, "resolved")
                     print(f"{time.strftime('%T')} incident {inc['id']} resolved -> {d}", flush=True)
                     if p is not None and p.poll() is None:
-                        lingering.append(p)
+                        lingering.append((p, time.time()))
                     inc = None
                 elif inc.get("agent_done") and not inc.get("flagged"):
                     inc["flagged"] = True       # the agent gave up or claimed a fix that did not hold: hand to a human
@@ -166,12 +183,16 @@ def main():
                 elif time.time() - inc["t0"] > TIMEOUT and not inc.get("timed_out"):
                     inc["timed_out"] = True
                     if p is not None and p.poll() is None:
-                        p.terminate()
+                        stop_agent(p)
                     event(event="timeout", id=inc["id"], status=s)
             time.sleep(INTERVAL)
     except KeyboardInterrupt:
         pass
     finally:
+        # agents this watchdog started would outlive it as orphans and hold the host lock
+        for q in [q for q, _ in lingering] + ([inc["proc"]] if inc is not None and inc.get("proc") else []):
+            if q.poll() is None:
+                stop_agent(q)
         if inc is not None:
             event(event="close", id=inc["id"], outcome="watchdog-stopped")
         PIDFILE.unlink(missing_ok=True)

@@ -4,7 +4,9 @@
 # the model or the engine image does. Replaces scripts/serve-trt.sh as the default (2026-10-20 team decision).
 #
 # One switch, VLLM_PROFILE, picks the launch recipe:
-#   bolt     (default) Nemotron-3.5-Bolt-74B-A9B with the model card's recipe, through deploy/vllm/start-bolt.sh and its
+#   lightning (default) Nemotron-3.5-Lightning-30B-A3B-NVFP4 with the recipe validated on the Thor (generic profile,
+#            Marlin MoE, fp8 KV, GPU_MEMORY_UTILIZATION 0.30): what the stage runs since 2026-10-21.
+#   bolt     Nemotron-3.5-Bolt-74B-A9B with the model card's recipe, through deploy/vllm/start-bolt.sh and its
 #            image (blackbox-vllm-bolt: vLLM nightly + b12x kernels + the ultra_v3 reasoning-parser plugin). Validated
 #            on the DGX Spark 2026-10-21 (NemoClaw drills 15/15).
 #   generic  plain `vllm serve <MODEL_ID>` in any vLLM image: the NGC Jetson Thor container, upstream vllm-openai, ...
@@ -42,7 +44,16 @@
 # second vLLM server on the same port.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PROFILE="${VLLM_PROFILE:-bolt}"
+PROFILE="${VLLM_PROFILE:-lightning}"
+# lightning (default since 2026-10-22, the team's model decision): the generic profile with the Lightning recipe the
+# Thor runs. Every value stays overridable; `VLLM_PROFILE=bolt` still selects the Bolt recipe on a GB10.
+if [ "$PROFILE" = lightning ]; then
+  export MODEL_ID="${MODEL_ID:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4}" \
+         REASONING_PARSER="${REASONING_PARSER:-nemotron_v3}" \
+         EXTRA_ARGS="${EXTRA_ARGS:---moe-backend marlin --kv-cache-dtype fp8 --mamba-cache-mode align}" \
+         GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.30}"
+  PROFILE=generic
+fi
 NAME="${NAME:-${BOLT_CONTAINER:-vllm-edge}}"
 PORT="${PORT:-${BOLT_PORT:-8000}}"
 HOST="${HOST:-${BOLT_HOST:-0.0.0.0}}"
@@ -145,5 +156,5 @@ case "$PROFILE" in
       "$IMAGE" $ENTRY "$MODEL_ID" "${ARGS[@]}" >/dev/null
     echo "started $NAME: $IMAGE $MODEL_ID (args in logs/vllm-edge-args.txt)"
     wait_ready ;;
-  *) echo "VLLM_PROFILE must be bolt or generic, not '$PROFILE'" >&2; exit 2 ;;
+  *) echo "VLLM_PROFILE must be lightning, bolt or generic, not '$PROFILE'" >&2; exit 2 ;;
 esac

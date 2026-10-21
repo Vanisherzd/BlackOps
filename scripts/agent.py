@@ -363,6 +363,10 @@ def settle(max_s=2.0, step=0.25):
 HEALTH_TIMEOUT = float(os.environ.get("HEALTH_TIMEOUT", "3"))   # was 5: a hung dependency made every probe wait the full budget
 
 
+PROC_TABLE = ("for p in /proc/[0-9]*; do pid=${p#/proc/}; st=$(awk '{print $3}' $p/stat 2>/dev/null); "
+              "cmd=$(tr '\\0' ' ' < $p/cmdline 2>/dev/null | cut -c1-70); [ -n \"$cmd\" ] && echo \"$pid $st $cmd\"; done")
+
+
 def hosts_oddities(text):
     """Lines of a container's /etc/hosts that Docker did not write: loopback, IPv6 boilerplate and the container's own
     id line are defaults; anything else pins a name to an address by hand, which is how a stale entry breaks name
@@ -784,6 +788,13 @@ def _run_tool(name, args, dry_run):
         # to the container's stderr) and once cost a drill 30 s of silence that read like model thinking (2026-10-22).
         try:
             out = sh(["docker", "exec", args["name"], *command], timeout=8)
+            if command[0] == "ps" and "executable file not found" in out:
+                # the nginx image ships no ps; the agent that could not see its workers in state T (SIGSTOP) curled for
+                # three minutes and gave up (upstream-sigstop, 2026-10-22). The table comes from /proc instead: a fixed
+                # command of the tool's own, never model text.
+                out = sh(["docker", "exec", args["name"], "sh", "-c", PROC_TABLE], timeout=8)
+                out = ("[ps is not in this image; process table from /proc: PID STATE COMMAND, state T = stopped/traced "
+                       "(a SIGSTOP), D = uninterruptible wait, Z = zombie]\n" + out)
             if command[:2] == ["cat", "/etc/hosts"]:
                 odd = hosts_oddities(out)
                 out += ("\n[hosts entries beyond Docker's defaults: " + "; ".join(odd) + ". An entry that names a stack container pins "

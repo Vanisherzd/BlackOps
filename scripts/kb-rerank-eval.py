@@ -52,6 +52,26 @@ def passage(d):
     return f"{d['title']}\n{d['answer_excerpt']}"
 
 
+class HttpReranker:
+    """The model card's vLLM route: a `vllm serve nvidia/llama-nemotron-rerank-1b-v2 --trust-remote-code --chat-template
+    nemotron-rerank.jinja` sidecar (scripts/serve-rerank.sh) and its /rerank endpoint. Used when RERANK_URL is set; the
+    in-process transformers route below needs transformers 4.x (the remote code breaks on 5.x: no max_position_embeddings)."""
+
+    def __init__(self, url):
+        import urllib.request
+        self.url, self.request = url, urllib.request
+
+    def score(self, query, passages, max_length=512):
+        body = json.dumps({"model": "rerank", "query": query, "documents": passages, "top_n": len(passages)}).encode()
+        req = self.request.Request(self.url, data=body, headers={"Content-Type": "application/json"})
+        with self.request.urlopen(req, timeout=120) as r:
+            results = json.loads(r.read())["results"]
+        scores = [0.0] * len(passages)
+        for item in results:
+            scores[item["index"]] = float(item["relevance_score"])
+        return scores
+
+
 class Reranker:
     def __init__(self, device=None):
         import torch
@@ -159,7 +179,9 @@ def main():
     half_a, half_b = halves()
     idx = ck.CommunityIndex.load()
     print(json.dumps({"indexed": len(idx.docs), "half_a": len(half_a), "half_b": len(half_b), "probes": len(probes), "model": None if args.dry_run else MODEL}))
-    reranker = None if args.dry_run else Reranker(args.device)
+    import os
+    url = os.environ.get("RERANK_URL")
+    reranker = None if args.dry_run else (HttpReranker(url) if url else Reranker(args.device))
     run_layer(idx, half_a, reranker, args.candidates, "community held-out half A (tune thresholds here)")
     run_layer(idx, half_b, reranker, args.candidates, "community held-out half B (read the chosen threshold here)")
     run_layer(idx, probes, reranker, args.candidates, "community Q_gap (38 probes, descriptive)")

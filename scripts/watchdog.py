@@ -116,8 +116,12 @@ def main():
     print(f"watchdog: {URLS} every {INTERVAL}s, open after {FAILS} failures{' (dry run)' if dry else ''}", flush=True)
     bad = good = 0
     inc = None
+    # agents still running after their incident closed (Lightning kept retrying its last turn for 90 s): reaped every
+    # loop, since a zombie keeps the NemoClaw host lock "owned" and every later agent fails to start
+    lingering = []
     try:
         while True:
+            lingering = [q for q in lingering if q.poll() is None]
             s, ok = probe()
             bad, good = (0, good + 1) if ok else (bad + 1, 0)
             if inc is None and bad >= FAILS:
@@ -129,6 +133,16 @@ def main():
                     event(event="open", id=iid, status=s, dispatched=False, why=why)
                     print(f"{time.strftime('%T')} incident {iid} {s} (not dispatched: {why})", flush=True)
                 else:
+                    for q in lingering:          # its incident is closed; it only holds the host lock now
+                        q.terminate()
+                        try:
+                            q.wait(15)
+                        except subprocess.TimeoutExpired:
+                            q.kill()
+                            q.wait(5)
+                    if lingering:
+                        event(event="previous-agent-stopped", id=iid, count=len(lingering))
+                        lingering = []
                     inc["proc"], out = dispatch(iid)
                     inc["out"] = str(out)
                     event(event="open", id=iid, status=s, dispatched=True)
@@ -142,6 +156,8 @@ def main():
                     event(event="close", id=inc["id"], outcome="resolved", seconds=round(time.time() - inc["t0"], 1))
                     d = archive(inc, s, "resolved")
                     print(f"{time.strftime('%T')} incident {inc['id']} resolved -> {d}", flush=True)
+                    if p is not None and p.poll() is None:
+                        lingering.append(p)
                     inc = None
                 elif inc.get("agent_done") and not inc.get("flagged"):
                     inc["flagged"] = True       # the agent gave up or claimed a fix that did not hold: hand to a human

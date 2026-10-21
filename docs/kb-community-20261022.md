@@ -300,6 +300,26 @@ serverfault + unix 完整傾印（CC BY-SA，`scripts/kb-community.py fetch-dump
 所以**規則寫進程式**：有設 `RERANK_URL`（或 `KB_COMMUNITY_V2=1`）才載 v2 分片，否則 v1。分片（每站一個 gzip）在第二批站台
 （askubuntu、dba、networkengineering、devops、raspberrypi）解析完再一次建、一次 commit。
 
+## Phase 5–6 補充 — 檢索／rerank 網格與索引引擎（06:10–06:40）
+
+網格（v1 語料、半 A 調、半 B 讀、sidecar 分數只重排；機器同時跑四件事，ms 失真）：
+
+| token | rerank 看 | top-N | 半 A rerank 對 | 半 B rerank 對 | Q_gap |
+|---|---|---|---|---|---|
+| pack | 答案段 | 20 | 0.777 | 0.775 | .868 |
+| pack | 答案段 | 50 | 0.786 | 0.781 | .842 |
+| pack | 問題＋答案 | 20 | 0.773 | 0.775 | — |
+| pack | 問題＋答案 | 50 | **0.789** | **0.788** | — |
+| digits … | | | （跑中） | | |
+
+讀法：top-50 比 top-20 穩定多 0.6–1.3 個百分點（recall@50 0.998），代價是 rerank 每次多一倍時間；rerank 讀「問題＋答案」在 top-50 時最好。
+數字 token 的四組還在跑；選定前不改預設。
+
+**資料擴到 7 站（158,881 筆）後 BM25 第 1 名掉、前 20 名不掉**（36 句探針：正確類別在第 1 名 26/36，前 20 名 36/36；v1 是 31／36）。
+純 Python 倒排表在這個量級要 2.5 GB RAM、載入 6 s、每查詢 0.5–1 s，BM25 評測一跑 45 分鐘——所以加了 **SQLite FTS5 後端**
+（`kb-community.py build-fts`，`COMMUNITY_BACKEND=fts5`）：Mac 上 v1 建索引 0.2 s、開 25 ms、每查詢 2–7 ms，三句探針 top-1 與
+Python BM25 相同；7 站的 FTS5 建置與 P2/P3 在 Spark 上量測中（分詞不同——unicode61 把 `pod_cpu_usage` 拆成三個——所以要重量）。
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

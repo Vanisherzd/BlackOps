@@ -42,7 +42,7 @@ up() {
 }
 
 status() {
-  if ! sudo -n true 2>/dev/null; then echo "unknown (no passwordless sudo for iptables)"; return 1; fi
+  if ! $IPT -S >/dev/null 2>&1; then echo "unknown (no passwordless sudo for iptables)"; return 1; fi
   if ! installed; then echo "online"; return 0; fi
   # packet counters of the two REJECT rules, matched by their comments
   local rows sb ot

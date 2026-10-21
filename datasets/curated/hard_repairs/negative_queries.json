@@ -1,0 +1,12 @@
+[
+  "nginx container is stopped; please start it",
+  "edge-victim-app killed with exit 137, OOMKilled yes",
+  "SSH permission denied publickey on a new machine",
+  "DNS lookup failed for the upstream hostname",
+  "front nginx: missing semicolon in /etc/nginx/conf.d/default.conf",
+  "disk is full; filesystem usage 99 percent",
+  "edge-victim-app returned 401 because the API token expired",
+  "edge-victim-app: directory index of /usr/share/nginx/html/ is forbidden; no open permission error",
+  "nginx -T shows worker_connections 1024; both health endpoints are 200",
+  "edge-victim-app has pid limit 3; fork failed, resource temporarily unavailable"
+]

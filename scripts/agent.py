@@ -140,7 +140,7 @@ def attach_named(result, name):
     return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}"
 
 
-def attach_runbook(result, query):
+def attach_runbook(result, query, *, container=None):
     """Push the matching procedure into an evidence answer, so the agent cannot act without having seen it.
 
     Only on a query with a real symptom in it: cosine similarity is positive for anything, so attaching on every
@@ -155,7 +155,9 @@ def attach_runbook(result, query):
     name = ranked[0][0]
     body = {n: t for n, _, t in rag.documents()}[name]
     _incident["runbook_seen"] = True
-    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}" + knowledge_note(query)
+    # Keep the existing runbook ranking, but preserve log ownership for the repair-knowledge lookup.
+    knowledge_query = f"{container} {query}" if container else query
+    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}" + knowledge_note(knowledge_query)
 
 
 # --- host layer -------------------------------------------------------------------------------------------------
@@ -383,7 +385,13 @@ def knowledge_base():
         corpus = {"v3": KB_V3, "v4": KB_V4}.get(kb_version())
         if corpus and corpus.exists():
             from blackout_ops_kb.retrieval_v2 import AGENT_DEFAULTS, KnowledgeBaseV2
-            _kb = KnowledgeBaseV2(corpus, **AGENT_DEFAULTS)
+            try:
+                from repair_knowledge import documents
+                extra = documents() if os.environ.get("OPS_HARD_REPAIR_KNOWLEDGE", "1") != "0" else []
+            except (OSError, ValueError, KeyError) as error:
+                print(f"extra repair knowledge unavailable: {error}", file=sys.stderr)
+                extra = []
+            _kb = KnowledgeBaseV2(corpus, extra_documents=extra, **AGENT_DEFAULTS)
         else:
             from blackout_ops_kb import KnowledgeBase
             _kb = KnowledgeBase(KB_DB)
@@ -410,6 +418,9 @@ def knowledge_note(query):
         return ""
     s = b["solutions"][0]
     m = s.get("metadata") or {}
+    if m.get("kind") == "hard_failure_repair":
+        from repair_knowledge import render
+        return render(m, brief=True)
     if m.get("platform") == "docker":
         return stack_card_note(s, m)
     lines = [f"\n\n--- knowledge card (from other systems' incidents: a hypothesis to confirm here, not this stack's "
@@ -446,6 +457,11 @@ def search_incident_knowledge(query, scenario=None):
     except Exception as e:
         return f"knowledge base unavailable ({type(e).__name__}: {str(e)[:100]}); use search_runbooks"
     km = bundle["knowledge_match"]
+    best = bundle["solutions"][0] if bundle["solutions"] else {}
+    if km["status"] == "matched" and (best.get("metadata") or {}).get("kind") == "hard_failure_repair":
+        from repair_knowledge import render
+        # Return the complete best procedure, rather than cutting off its conditions and verification at 2.5 KB.
+        return render(best["metadata"])
     lines = [f"knowledge base ({bundle['scenario']}): {km['status']}, best card coverage {km['best_solution_coverage']:.2f}"]
     for s in bundle["solutions"][:2]:            # two cards: the third is mostly noise on a 33-term query
         m = s.get("metadata") or {}
@@ -592,7 +608,7 @@ def _run_tool(name, args, dry_run):
                     # error that does not exist while the gate keeps refusing the start it should have done.
                     out += f"\n\nno error in this log; the container is {state.split(chr(9))[1][:30]}."
                     return attach_named(out, runbook)
-        return attach_runbook(out, query)
+        return attach_runbook(out, query, container=args["name"])
     if name == "docker_exec":
         cmd = args["cmd"].strip()
         if not cmd.startswith(EXEC_ALLOW) or any(t in cmd for t in (";", "&&", "|", ">", "`", "$(")):

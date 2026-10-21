@@ -1,0 +1,8 @@
+{"id": "hr-eval-001", "expected_card": "hard-repair-upstream-config-ownership", "expected_target": "edge-victim-app", "expected_repair_tool": "recreate_stack", "expected_replace": true}
+{"id": "hr-eval-002", "expected_card": "hard-repair-upstream-config-ownership", "expected_target": "edge-victim-app", "expected_repair_tool": "recreate_stack", "expected_replace": true}
+{"id": "hr-eval-003", "expected_card": "hard-repair-front-main-config-capacity", "expected_target": "edge-victim", "expected_repair_tool": "recreate_stack", "expected_replace": true}
+{"id": "hr-eval-004", "expected_card": "hard-repair-front-main-config-capacity", "expected_target": "edge-victim", "expected_repair_tool": "recreate_stack", "expected_replace": true}
+{"id": "hr-eval-005", "expected_card": "hard-repair-front-missing-image-include", "expected_target": "edge-victim", "expected_repair_tool": "recreate_stack", "expected_replace": true}
+{"id": "hr-eval-006", "expected_card": "hard-repair-front-missing-image-include", "expected_target": "edge-victim", "expected_repair_tool": "recreate_stack", "expected_replace": true}
+{"id": "hr-eval-007", "expected_card": "hard-repair-upstream-static-permissions", "expected_target": "edge-victim-app", "expected_repair_tool": "recreate_stack", "expected_replace": true}
+{"id": "hr-eval-008", "expected_card": "hard-repair-upstream-static-permissions", "expected_target": "edge-victim-app", "expected_repair_tool": "recreate_stack", "expected_replace": true}

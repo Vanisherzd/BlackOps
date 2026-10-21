@@ -168,6 +168,19 @@ Gate 3 看 drill 牆鐘：MTP 的 8 場 drill 跑中。
 `compound-triple`（前端設定壞＋後端停＋後端改埠，三層三因）、`upstream-log-flood-500`（upstream-500 埋在 3,000 行 heartbeat
 通知裡，考「在雜訊裡找那一行」）。目錄現在 36 個案例、10 個 tier；全目錄 regression（`scripts/regression.sh`）排在引擎決定之後。
 
+## 08:00 起的工具層修正與新故障族（依使用者排的順序 10→6→4/5→8/7→12，1 也做）
+
+| 項目 | 改動 | 量測／驗證 |
+|---|---|---|
+| 1 報告輪瘦身 | watchdog 告警與 drill prompt 要求「結案剛好三行、各 ≤40 字」 | 報告輪原中位 3.9 s；regression 跑完後對照 |
+| 4 hosts 證據 | `docker_exec cat /etc/hosts` 後附「Docker 預設以外的項目」 | hosts-poisoned 那場 9 分鐘的根因；下一輪 drill 看 |
+| 5 健康探測 | 5 s → 3 s（`HEALTH_TIMEOUT`），逾時明講「沒人回應，不是拒絕連線」 | 依賴逾時 220–295 s 大半在探測等 20 s |
+| **健康看內容** | 200 但不是部署的那一頁 = 失敗（`faults.EXPECT_BODY`：`/` 含 ok、`/api/` 含 nginx 歡迎頁）；probe／verify／agent 的 check_health、with_health、HEALTHY_GUARD、watchdog 全走同一判定；`HEALTH_CONTENT=0` 退回 | 單元測試；regression 後跑 `upstream-wrong-content` |
+| 8 rerank 預設 | top-50、讀問題＋答案（網格贏家） | 半 A 0.789／半 B 0.788 |
+| 新故障族 | `config-injection`（設定檔裡對 AI 的指令＋語法錯）、`front-detached`、`front-resolver-broken`（resolv.conf 指向死 DNS，log 像名字錯）、`upstream-wrong-content`（200 但維護頁）、`upstream-log-flood-500`、`compound-triple` | 目錄 **40 案例／10 tier**；全目錄 regression 跑中（36 個舊的），新的 6 個排在後面 |
+
+Spark 的推送先停在 regression 開跑前的版本（prompt 中途不能變），跑完再推並重啟 ops_api。
+
 ## Agent 框架：今晚併入 main 的四個旗標（全部預設關或與現況等價）
 
 | 項目 | 旗標 | 做什麼 | 驗證狀態 |

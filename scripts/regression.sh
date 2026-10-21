@@ -54,6 +54,11 @@ if unknown:
 PY
 
 STAMP=$(date +%Y%m%d-%H%M%S)
+# Two drill runners on one victim stack corrupt each other's results (2026-10-22 05:51): refuse to start over a live one.
+if pgrep -f "scripts/nemoclaw-drill[.]sh|scripts/drill-all[.]sh" >/dev/null 2>&1 && [ "${REGRESSION_FORCE:-0}" != "1" ]; then
+  echo "another drill runner is active (nemoclaw-drill.sh / drill-all.sh); wait for its ALL_DONE or set REGRESSION_FORCE=1" >&2
+  exit 3
+fi
 RUN_DIR="logs/regression-$STAMP"
 mkdir -p "$RUN_DIR"
 RUN_DATE=$(date -Iseconds)
@@ -161,10 +166,10 @@ for case_name in "${CASES[@]}"; do
 done
 
 DRILL_LOG=$(scripts/drill-all.sh "${DRILL_CASES[@]}")
-DEADLINE=$((RUN_START + 3600))
+DEADLINE=$((RUN_START + 60 * ${REGRESSION_MAX_MINUTES:-240}))   # 36 cases took 60+ min; the old 60-minute cap declared a run finished early
 while ! { [ -f "$DRILL_LOG" ] && [ "$(tail -n 1 "$DRILL_LOG")" = ALL_DONE ]; }; do
   if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-    echo "timed out after 60 minutes waiting for ALL_DONE in $DRILL_LOG" >&2
+    echo "timed out after ${REGRESSION_MAX_MINUTES:-240} minutes waiting for ALL_DONE in $DRILL_LOG" >&2
     exit 1
   fi
   sleep 15

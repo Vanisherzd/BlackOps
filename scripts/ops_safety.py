@@ -1,5 +1,6 @@
 """Argument validation for container diagnostics and safe ordering for rollback."""
 import ipaddress
+import re
 import shlex
 import urllib.parse
 
@@ -9,6 +10,10 @@ CURL_FLAGS = {"--silent", "--show-error", "--fail", "--head", "--include", "--ve
 CURL_VALUES = {"--max-time", "--connect-timeout", "--request", "--url"}
 CURL_SHORT_VALUES = {"-m": "--max-time", "-X": "--request"}
 STACK_HOSTS = {"localhost", "edge-victim", "edge-victim-app"}
+IP_OBJECTS = {"addr", "address", "a", "route", "r", "link", "l", "neigh", "n"}
+SS_OPTION_LETTERS = set("ltunpasie46")
+GETENT_DATABASES = {"hosts", "ahosts", "ahostsv4", "ahostsv6", "services"}
+LOOKUP_PROGRAMS = {"nslookup", "dig", "host"}
 
 
 def diagnostic_argv(command):
@@ -30,13 +35,45 @@ def diagnostic_argv(command):
             raise ValueError("env may print the environment but may not launch another command")
     elif program == "curl":
         return _curl_argv(argv[1:])
+    elif program == "ip":
+        return _ip_argv(argv[1:])
+    elif program == "ss":
+        return _ss_argv(argv[1:])
+    elif program == "getent":
+        if len(argv) != 3 or argv[1] not in GETENT_DATABASES or argv[2].startswith("-"):
+            raise ValueError("getent only accepts hosts/ahosts/ahostsv4/ahostsv6/services and one name")
+    elif program in LOOKUP_PROGRAMS:
+        if len(argv) != 2 or argv[1].startswith(("-", "+", "@")):
+            raise ValueError(f"{program} only accepts one name without options or an alternate server")
     elif program not in READ_PROGRAMS:
-        raise ValueError("only nginx -t/-T, cat, ls, ps, curl, df, du, tail, head, grep, id, and env are allowed")
+        raise ValueError("only nginx -t/-T, cat, ls, ps, curl, df, du, tail, head, grep, id, env, ip, ss, getent, "
+                         "nslookup, dig, and host are allowed")
     if program == "tail" and any(a.startswith("--follow") or
                                   (a.startswith("-") and not a.startswith("--") and any(c in a[1:] for c in "fF"))
                                   for a in argv[1:]):
         raise ValueError("tail must finish; follow mode is not allowed")
     return argv
+
+
+def _ip_argv(arguments):
+    valid = (len(arguments) == 1 and arguments[0] in IP_OBJECTS) or (
+        len(arguments) == 2 and arguments[0] in IP_OBJECTS and arguments[1] in {"show", "list"}
+    ) or (
+        len(arguments) == 3 and arguments[0] in IP_OBJECTS and arguments[1] in {"show", "list"}
+        and re.fullmatch(r"[A-Za-z0-9@.:-]+", arguments[2]) is not None
+    )
+    if not valid:
+        raise ValueError("ip diagnostics only accept ip addr/address/a, route/r, link/l, or neigh/n, optionally "
+                         "followed by show/list and one device name")
+    return ["ip", *arguments]
+
+
+def _ss_argv(arguments):
+    if any(len(argument) < 2 or not argument.startswith("-") or argument.startswith("--") or
+           any(letter not in SS_OPTION_LETTERS for letter in argument[1:]) for argument in arguments):
+        raise ValueError("ss options are limited to -l -t -u -n -p -a -s -i -e -4 -6, optionally combined; "
+                         "filters and kill are not allowed")
+    return ["ss", *arguments]
 
 
 def _curl_argv(arguments):

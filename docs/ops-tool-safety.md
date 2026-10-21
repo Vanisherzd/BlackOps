@@ -14,6 +14,12 @@ an argument array, without `sh -c`. Existing `nginx -t/-T`, file inspection,
 `df`/`du`, process listing, and quoted grep patterns remain available. `env` may
 only print its environment, and `tail` follow mode is rejected.
 
+Read-only network diagnostics also allow `ip` address, route, link, and neighbor
+show/list forms with at most one device name; `ss` with only the documented
+status option letters; network-only `getent`; and one-name `nslookup`, `dig`, or
+`host` lookups. Mutating forms, filters, alternate DNS servers, and lookup
+options remain denied.
+
 Container `curl` diagnostics accept one GET/HEAD request to localhost, the two
 stack container names, or a private IP literal. Curl configuration files, URL
 globbing, environment proxies, and redirects are disabled. Options for writes,

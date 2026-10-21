@@ -56,7 +56,10 @@ nemoclaw_stage() { stage nemoclaw
     --add-allow host.openshell.internal:8790:POST:/mcp --add-allow host.openshell.internal:8790:GET:/mcp --add-allow host.openshell.internal:8790:DELETE:/mcp \
     --binary /usr/bin/curl --binary /usr/bin/python3 --binary /usr/local/bin/node --rule-name ops-api --wait || true
   nemoclaw edge-agent exec -- mkdir -p /sandbox/bin /sandbox/.openclaw/skills/ops >/dev/null 2>&1 || true
-  nemoclaw edge-agent upload scripts/ops-sandbox-helper.sh /sandbox/bin/ops >/dev/null 2>&1 && nemoclaw edge-agent exec -- chmod +x /sandbox/bin/ops >/dev/null 2>&1 || true
+  # upload treats the destination as a directory (a fresh sandbox on 2026-10-22 ended up with /sandbox/bin/ops/ops-sandbox-helper.sh):
+  # upload into /sandbox/bin/ and move the file into place
+  nemoclaw edge-agent upload scripts/ops-sandbox-helper.sh /sandbox/bin/ >/dev/null 2>&1 \
+    && nemoclaw edge-agent exec -- sh -c 'rm -rf /sandbox/bin/ops; mv /sandbox/bin/ops-sandbox-helper.sh /sandbox/bin/ops && chmod +x /sandbox/bin/ops' >/dev/null 2>&1 || true
   # upload treats the destination as a directory: give it the skill directory, not the file path
   nemoclaw edge-agent upload skills/ops/SKILL.md /sandbox/.openclaw/skills/ops/ >/dev/null 2>&1 || true
   # every ops tool as a first-class MCP tool (no --include filter: the model must not need a shell string to reach them)

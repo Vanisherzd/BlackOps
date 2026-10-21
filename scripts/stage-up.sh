@@ -58,7 +58,10 @@ if ! curl -sf -m 5 http://127.0.0.1:8000/health >/dev/null; then
   [ "${T2_START:-1}" = 1 ] || { echo "no Tier-2 server on :8000 (T2_START=0)" >&2; exit 1; }
   echo "no Tier-2 server on :8000: starting Lightning (about 100 s with the kernel caches in place)"
   [ $JETSON = 1 ] && { sync; sudo -n sh -c "echo 3 > /proc/sys/vm/drop_caches" 2>/dev/null || true; }
-  GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.30}" VLLM_PROFILE=generic READY_TIMEOUT="${READY_TIMEOUT:-1800}" \
+  # 0.25 (was 0.30): measured 2026-10-22 on the Spark, Lightning needs 17.8 GiB weights + <2.3 GiB activations; at 0.25 the
+  # KV cache still holds 41 full 32k-token sequences (0.20 = 16; 0.18 is the floor). Less reserved = more headroom on a
+  # box with no swap. GPU_MEMORY_UTILIZATION=0.30 restores the earlier value if a start ever fails on memory.
+  GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.25}" VLLM_PROFILE=generic READY_TIMEOUT="${READY_TIMEOUT:-1800}" \
     MODEL_ID=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 REASONING_PARSER=nemotron_v3 \
     EXTRA_ARGS="--moe-backend marlin --kv-cache-dtype fp8 --mamba-cache-mode align" scripts/serve-vllm.sh || exit 1
 fi
@@ -108,7 +111,9 @@ fi
 start_one ops-api "$PY" "GUARDRAILS=$GUARD" "APPROVAL=$APPROVAL" "${TIER_ENV[@]}"
 wait_url http://127.0.0.1:8790/tools 20 || echo "WARN ops_api not answering on :8790 (logs/ops-api.out)" >&2
 ARGS=log start_one power "$PY" ${RAIL:+"POWER_TOTAL_RAIL=$RAIL"}
-start_one watchdog "$PY" WATCH_TRIAGE=1
+# WATCH_INTERVAL 2 s (watchdog default 5): two consecutive failed polls still required, so 2-4 s to dispatch instead of
+# 5-10 s; measured 2026-10-22 as the largest fixed cost between a fault and the agent's first token.
+start_one watchdog "$PY" WATCH_TRIAGE=1 "WATCH_INTERVAL=${WATCH_INTERVAL:-2}"
 start_one dashboard "$PY" DASH_ACTIONS=1 "APPROVAL=$APPROVAL" ${DASH_HOST:+"DASH_HOST=$DASH_HOST"}
 wait_url http://127.0.0.1:8097/api/state 20 || echo "WARN dashboard not answering on :8097 (logs/dashboard.out)" >&2
 sleep 3

@@ -110,6 +110,10 @@ Q_GAP = [
     ("boot_packages", "boot drops to emergency mode: Timed out waiting for device dev-disk-by-uuid; fstab entry for an unplugged disk"),
     ("app", "java: GC overhead limit exceeded; long stop-the-world pauses, requests time out while the heap is near max"),
 ]
+# How the agent itself queries (scripts/agent.py symptom_query, docs/kb-repair-cards.md): bare codes and its own 5xx
+# phrasings. Expected: no community reference (bare codes tokenise to nothing; the phrasings are runbook matters).
+Q_AGENT = ["504", "502", "429", "the service itself answers HTTP 504 Gateway Timeout",
+           "HTTP 500 Internal Server Error from upstream edge-victim-app", "upstream prematurely closed connection while reading response header"]
 Q_STAGE = [
     "nginx stopped exited 0",
     "connect() failed (111: Connection refused) while connecting to upstream",
@@ -211,8 +215,12 @@ class Api:
                 break
             except urllib.error.HTTPError as e:
                 body = e.read()[:300]
-                if e.code in (400, 502, 503) and attempt < 2:
+                if e.code in (502, 503) and attempt < 2:
                     time.sleep(5 * (attempt + 1))
+                    continue
+                if e.code == 400 and b"throttle" in body and attempt < 2:
+                    m = re.search(rb"(\d+) seconds", body)
+                    time.sleep(int(m.group(1)) + 1 if m else 60)
                     continue
                 raise SystemExit(f"API {e.code} on {path}: {body!r}")
         self.calls += 1
@@ -305,8 +313,8 @@ def build(_):
             continue
         docs.append({"id": f"se-{r['site']}-{r['question_id']}", "site": r["site"], "title": r["title"], "tags": r["tags"],
                      "category": r["category"], "score": r["score"], "link": r["link"], "owner": r["owner"],
-                     "license": r["license"], "answer_owner": r["answer_owner"], "index_text": index_text(r),
-                     "answer_excerpt": excerpt(r["answer_text"])})
+                     "license": r["license"], "answer_owner": r["answer_owner"], "answer_license": r["answer_license"],
+                     "answer_id": r["accepted_answer_id"], "index_text": index_text(r), "answer_excerpt": excerpt(r["answer_text"])})
     INDEX.write_text("".join(json.dumps(d, ensure_ascii=False) + "\n" for d in docs), encoding="utf-8")
     HOLDOUT.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in held), encoding="utf-8")
     m = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -340,9 +348,17 @@ def evaluate(_):
         out = agent.search_incident_knowledge(q)
         matched = out.startswith("\n--- retrieved hard-failure procedure") or ": matched," in out.splitlines()[0]
         stage[q] = {"card_matched": matched, "community_shown": "community references" in out}
+    agent_shaped = {q: "community references" in agent.search_incident_knowledge(q) for q in Q_AGENT}
+    gap_shown = sum("community references" in agent.search_incident_knowledge(q) for _, q in Q_GAP)
     report["C1"] = {"knowledge_note_identical": notes_on == notes_off,
                     "community_never_with_matched_card": not any(v["card_matched"] and v["community_shown"] for v in stage.values()),
-                    "stage": stage}
+                    "community_never_on_stage_queries": not any(v["community_shown"] for v in stage.values()),
+                    "community_never_on_agent_shaped_queries": not any(agent_shaped.values()),
+                    "shown_for_gap_sentences": f"{gap_shown}/{len(Q_GAP)}", "not_vacuous": gap_shown > 0 or not idx.docs,
+                    "stage": stage, "agent_shaped": agent_shaped}
+    report["C1"]["pass"] = all(report["C1"][k] for k in ("knowledge_note_identical", "community_never_with_matched_card",
+                                                          "community_never_on_stage_queries", "community_never_on_agent_shaped_queries",
+                                                          "not_vacuous"))
 
     # P2: held-out category@1; query = title + symptom lines (no tags, no answer)
     held = [json.loads(l) for l in HOLDOUT.read_text(encoding="utf-8").splitlines() if l.strip()] if HOLDOUT.exists() else []
@@ -356,17 +372,26 @@ def evaluate(_):
             if refs[0][2]["category"] == r["category"]:
                 hits += 1
                 c["hit"] += 1
+    # stricter secondary number: symptom lines only (no title, which usually names the tag)
+    s_hits = s_n = 0
+    for r in held:
+        if not r["symptom_lines"]:
+            continue
+        s_n += 1
+        refs = idx.search(" ".join(r["symptom_lines"]), k=1)
+        s_hits += bool(refs) and refs[0][2]["category"] == r["category"]
     share = Counter(d["category"] for d in idx.docs)
     majority = max(share.values()) / max(1, len(idx.docs)) if share else 0
     report["P2"] = {"holdout": len(held), "category_at_1": round(hits / max(1, len(held)), 3),
                     "returned_a_reference": round(shown / max(1, len(held)), 3), "majority_baseline": round(majority, 3),
                     "pass": bool(held) and hits / len(held) >= 0.60 and hits / len(held) >= 2 * majority,
+                    "symptom_lines_only": {"n": s_n, "category_at_1": round(s_hits / max(1, s_n), 3)},
                     "by_category": {k: f"{v['hit']}/{v['n']}" for k, v in sorted(per_cat.items())}}
 
     # P3: the 38 probe sentences
     rows, right, wrong, none = [], 0, 0, 0
     for cat, q in Q_GAP:
-        refs = idx.search(q, k=2)
+        refs = [] if ck.stack_covers(q) else idx.search(q, k=2)
         top = refs[0][2] if refs else None
         verdict = "none" if not top else "right" if top["category"] == cat else "wrong"
         right, wrong, none = right + (verdict == "right"), wrong + (verdict == "wrong"), none + (verdict == "none")

@@ -556,6 +556,16 @@ def _run_tool(name, args, dry_run):
     if name == "kill_process" and "pid" not in args:
         return "error: kill_process needs args.pid (from top_processes)"
 
+    if name in MUTATING and os.environ.get("HEALTHY_GUARD", "1") == "1":
+        # Every fault case takes a health URL off 200, so both at 200 means there is nothing to repair. On Thor
+        # (2026-10-21) Lightning kept acting after a fix: OpenClaw resumed a finished session, wrote a broken
+        # default.conf and took the front end down 30 s after the board had turned green.
+        health = {k: http_status(u) for k, u in HEALTH.items()}
+        if all(v == 200 for v in health.values()):
+            return (f"refused: (automatic rule) the stack is healthy right now ({json.dumps(health)}); there is "
+                    f"nothing to repair and {name} could only make it worse. The incident is over: call no more "
+                    "tools and end with your final report (root cause, actions taken, final health).")
+
     if name in MUTATING and not _incident["runbook_seen"]:
         # The agent is about to act without having read any evidence, so we do not know the symptom either and
         # cannot pick the procedure for it. Send it back for the symptom. Bounded, so a stubborn model cannot
@@ -856,7 +866,9 @@ def main():
                                            temperature=0, max_tokens=1500,
                                            extra_body={"chat_template_kwargs": {"enable_thinking": THINK}})
         m = r.choices[0].message
-        reasoning = getattr(m, "reasoning_content", None) or (m.model_extra or {}).get("reasoning_content")
+        extra = m.model_extra or {}
+        reasoning = (getattr(m, "reasoning_content", None) or extra.get("reasoning_content")
+                     or getattr(m, "reasoning", None) or extra.get("reasoning"))
         calls = m.tool_calls or []
         messages.append({"role": "assistant", "content": m.content or "", "tool_calls": [c.model_dump() for c in calls]} if calls
                         else {"role": "assistant", "content": m.content or ""})

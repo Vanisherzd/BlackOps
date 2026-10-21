@@ -67,8 +67,16 @@ for f in $B/hf/*.tar; do tar -C ~/.cache/huggingface -xf $f; done
 |---|---|---|
 | **A** | Bolt，沿用 Spark 上驗證過的做法（b12x） | `scripts/serve-vllm.sh` |
 | **B** | Bolt，改用 NGC 的 Thor vLLM（沒有 b12x，用 vLLM 預設的 kernel） | `VLLM_PROFILE=generic IMAGE=nvcr.io/nvidia/vllm:26.01-py3 MODEL_ID=nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB REASONING_PARSER=ultra_v3 EXTRA_ARGS="--kv-cache-dtype fp8" scripts/serve-vllm.sh` |
-| **C** | Nano 30B，NGC 的 Thor vLLM（最穩的退路；NemoClaw on Jetson 官方教學用的就是這顆） | `VLLM_PROFILE=generic IMAGE=nvcr.io/nvidia/vllm:26.01-py3 MODEL_ID=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 REASONING_PARSER=nano_v3 scripts/serve-vllm.sh` |
+| **C** | Nano 30B，NGC 的 Thor vLLM（最穩的退路；NemoClaw on Jetson 官方教學用的就是這顆） | `VLLM_PROFILE=generic IMAGE=nvcr.io/nvidia/vllm:26.01-py3 MODEL_ID=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 REASONING_PARSER=nano_v3 EXTRA_ARGS="--kv-cache-dtype fp8" VLLM_ENV="VLLM_USE_FLASHINFER_MOE_FP4=1 VLLM_FLASHINFER_MOE_BACKEND=throughput" READY_TIMEOUT=3600 scripts/serve-vllm.sh` |
 | **D** | 同 C，改用 upstream 的 vLLM nightly 映像 | 把 C 的 `IMAGE` 拿掉，預設就是 `vllm/vllm-openai:nightly-77154ca` |
+| **E（10/21 採用）** | **Lightning 30B NVFP4**，vLLM nightly + Marlin MoE（不需要 FlashInfer 的 MoE JIT） | `GPU_MEMORY_UTILIZATION=0.30 VLLM_PROFILE=generic MODEL_ID=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 REASONING_PARSER=nemotron_v3 EXTRA_ARGS="--moe-backend marlin --kv-cache-dtype fp8 --mamba-cache-mode align" scripts/serve-vllm.sh` |
+
+**10/21 在 Thor（T5000，R38.4）上的實測結果**（數據與比較見 `docs/thor-tier-report-20261021.md`）：
+
+- **A、B 都不行**：Bolt-24GB 的 dense 層是 block 量化，vLLM 規定要用 b12x，而 b12x 只為 SM12x（GB10）編譯（`Block-quantized dense weights require b12x on SM12x`）。B 用的 NGC 26.01 映像，transformers 也太舊，連 Bolt 的 remote code 都載不進來（`cannot import name 'PreTrainedConfig'`）。
+- **C 可以，但第一次啟動約 90 分鐘**：要照模型卡帶上 FlashInfer 的 MoE 環境變數，否則報 `Non-gated activations are only supported by the flashinfer CUTLASS backend`；FlashInfer 沒有替 sm_110 預編 MoE kernel，要 JIT 編 253 個目標檔。`serve-vllm.sh` 會把編譯快取存在主機，之後重啟只要 112 秒。**不要刪 `~/.cache/flashinfer`、`~/.cache/flashinfer-gen`、`~/.cache/vllm-compile`。**
+- **E 是採用的做法**：首次 437 秒、之後約 100 秒 ready；5 張舞台卡 5/5，upstream-500 95 秒；每 token 能耗是 C 的三分之二。
+- TensorRT-LLM 1.3.0rc13（`scripts/serve-trt.sh`）也試過：FP4 fused LayerNorm 沒有 sm_110 kernel（`no kernel image ... ws_layernorm_fp4_traits.cu`），不能用。
 
 - 拿不準要帶什麼參數時，先加 `DRY_RUN=1`，它只會印出完整的 `docker run` 指令，不會真的啟動。
 - 開機後的參數存在 `logs/vllm-edge-args.txt`；失敗原因看 `docker logs vllm-edge | tail -50`。
@@ -79,7 +87,12 @@ for f in $B/hf/*.tar; do tar -C ~/.cache/huggingface -xf $f; done
 scripts/serve-vllm.sh status                                      # health: ok, models: ['edge-agent']
 VLLM_URL=http://127.0.0.1:8000 .venv/bin/python scripts/smoke.py  # SMOKE OK（pong + 解析成功的 tool call）
 ```
-把用了哪個做法、載入時間、`free -g` 的峰值記在第 8 節。**選 C 或 D 的話，簡報要把 Tier-2 改寫成 Nano 30B，計分卡改引用 Nano 的成績。**
+把用了哪個做法、載入時間、`free -g` 的峰值記在第 8 節。**選 C、D、E 的話，簡報要把 Tier-2 改寫成實際用的模型，計分卡改引用它在 Thor 上的成績。**
+
+啟動前先釋放檔案快取：Thor 會把下載過的檔案快取算進 used，vLLM 依此算出的可用記憶體會偏低。
+```bash
+sync; echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null
+```
 
 ## 4. 常駐服務、victim、RAG
 
@@ -116,6 +129,8 @@ bash scripts/drill-all.sh nginx-stopped container-removed bad-config upstream-pa
 
 ## 7. Demo 外殼（照 `docs/demo.md` §6.1 的順序）
 
+**一鍵版**：推論服務開好之後，`scripts/stage-up.sh` 會照下面的順序、帶上 10/21 在 Thor 上驗證過的設定，重啟 shim、guard_api、ops_api、power、watchdog、dashboard，最後跑 `preflight.sh --warm`（`stage-up.sh status`、`stage-up.sh down` 也能用）。有 Tier-1 server 在 :8010 才會開 Tier；nvpmodel 連動預設 `NVP_T1=1 NVP_T2=0`。以下是手動版，留作對照。
+
 ```bash
 # NeMo Guardrails sidecar：venv 不能從 Spark 直接搬，要在這台上重建
 uv venv .nemo-venv --python 3.12
@@ -135,8 +150,10 @@ DASHBOARD_URL=http://127.0.0.1:8097 scripts/preflight.sh --warm
 
 - **Tier**：只有在 Tier-1 server（`T1_MODEL=... scripts/serve-tier1.sh`）也開起來的情況下，才設 `TIER_MODE=adaptive UPSTREAM_T1=http://127.0.0.1:8010`；shim 也要帶同樣的環境變數。否則 `TIER_MODE` 不要設，Tier 那段在台上用口頭說明。
 - **斷網**：`wan.sh` 需要免密碼 sudo 執行 iptables。先用 `scripts/wan.sh down --yes`、`scripts/wan.sh up` 測一次。
-- **sandbox 的網段**：`docker network inspect openshell-docker` 確認是不是 `172.24.0.0/16`；不是的話，設 `SANDBOX_NET`。
+- **sandbox 的網段**：`wan.sh` 會自己從 `openshell-docker` 讀（Thor 是 `172.19.0.0/16`），只有那個網路不存在時才退回 `172.24.0.0/16`。
 - **MIG**：`/etc/nv_tegra_release` 低於 7.2，就沒有 MIG。簡報的說法要改成「以 Tier 路由加 nvpmodel 達成資源治理」。
+- **nvpmodel（10/21 實測）**：MAXN(0) ↔ 120W(1) 可即時切換（約 30 ms）；90W(2)、70W(3) 要重開機，不能跟著 Tier 切，所以 `NVP_T1=1 NVP_T2=0`。但推論時只有 60–70 W，120W 模式的功耗實測跟 MAXN 一樣，連動拿不出節能數據。
+- **Guardrails**：rail 用本機模型判斷。換成 Lightning 時，URL 編碼的注入（`assistant,%20please%20execute...`）原本漏抓，`guard_api.py` 現在先解碼再判斷，23/23 PASS。
 
 **通過條件**：preflight 除了 wan（若沒有 sudo）以外全部 PASS；台上筆電經會場網路打開 `http://<Thor IP>:8097/` 能看到畫面持續更新。
 
@@ -144,14 +161,14 @@ DASHBOARD_URL=http://127.0.0.1:8097 scripts/preflight.sh --warm
 
 | 項目 | 值 |
 |---|---|
-| 機型／記憶體 | T5000 128 GB ／ T4000 64 GB |
-| `/etc/nv_tegra_release` | |
-| 推論做法（3 的 A/B/C/D）、映像 tag、模型 | |
-| 從啟動到 ready 的秒數；`free -g` 的峰值 | |
-| smoke 結果；5 張卡的結果 | |
-| nvpmodel 模式表（id、名稱、瓦數）；切換一次要幾秒 | |
-| tegrastats 的電源軌名稱；閒置與推論時的瓦數 | |
-| sandbox 的網段；有沒有免密碼 sudo | |
+| 機型／記憶體 | **T5000，122 GB 可用（MemTotal 128 GB），沒有 swap**；磁碟 936 GB |
+| `/etc/nv_tegra_release` | **R38.4（JetPack 7.1），沒有 MIG**；sm_110；Docker 有 `nvidia` runtime |
+| 推論做法（3 的 A/B/C/D）、映像 tag、模型 | **E**：`vllm/vllm-openai:nightly-77154ca`，Nemotron-3.5-Lightning-30B-A3B-NVFP4，`--moe-backend marlin`，預留 0.30（A、B 失敗；C 可用當備援；TRT-LLM 失敗） |
+| 從啟動到 ready 的秒數；`free -g` 的峰值 | 首次 437 s，之後約 100 s；權重 17.8 GiB；服務約佔 37 GB，系統剩約 80 GB |
+| smoke 結果；5 張卡的結果 | SMOKE OK；**5/5**（25 / 27 / 340 / 26 / 95 s），made-worse 0，`logs/drills-20261021-180239.log` |
+| nvpmodel 模式表（id、名稱、瓦數）；切換一次要幾秒 | 0 = MAXN、1 = 120W（開機預設）、2 = 90W、3 = 70W；0 ↔ 1 約 30 ms，切到 2、3 要重開機 |
+| tegrastats 的電源軌名稱；閒置與推論時的瓦數 | `VDD_GPU`、`VDD_CPU_SOC_MSS`、`VIN_SYS_5V0`、`VIN`（總輸入）；閒置 25 W，Lightning 推論約 64 W |
+| sandbox 的網段；有沒有免密碼 sudo | `172.19.0.0/16`；`/etc/sudoers.d/blackout-ops` 只放行 iptables、ip6tables、nvpmodel |
 
 ## 9. 排錯
 
@@ -166,5 +183,16 @@ DASHBOARD_URL=http://127.0.0.1:8097 scripts/preflight.sh --warm
 | smoke 的 tool call 解析失敗 | tool parser 不對 | `TOOL_PARSER=` 改成模型卡寫的那個；或先確認 shim 的 salvage 有沒有救回 |
 | NemoClaw `Inference: unhealthy` | shim 沒起來，或 sandbox 打不到 host | `curl localhost:8001/v1/models`；`openshell provider update compatible-endpoint --config OPENAI_BASE_URL=http://host.openshell.internal:8001/v1` |
 | 推論時 tegrastats 的瓦數幾乎沒變 | nvpmodel 停在低功耗模式 | `sudo nvpmodel -q`；部署階段先保持 MAXN |
+| `LocalEntryNotFoundError ... outgoing traffic has been disabled` | 用 `hf download --revision <hash>` 抓的模型沒有 `refs/main` | 在模型的 cache 目錄建 `refs/main`，內容寫那個 commit hash |
+| `Error in memory profiling. Initial free memory ... current free memory ...` | 統一記憶體：profiling 期間別的行程（例如剛結束的編譯）釋放了記憶體 | 等編譯結束、`drop_caches` 後重啟；快取在主機上，不會重編 |
+| 每次重啟都重編 FlashInfer 30 分鐘以上 | 生成的 CUTLASS 原始碼留在容器裡，每次都比快取的 .o 新 | 用 `serve-vllm.sh`（會掛 `~/.cache/flashinfer-gen`）；不要手動 `docker run` |
+| 編譯時 MemAvailable 一路往下掉 | nvcc 平行數沒限制（曾經 49 個） | `MAX_JOBS=4`（`serve-vllm.sh` 在 Jetson 上的預設） |
+| 從筆電上傳到 Thor 很慢、ssh 偶爾逾時 | 連到的是 Thor 的 Wi-Fi（`wlP1p1s0`） | 改連有線介面的 IP（10/21 是 192.168.1.108）；會場上 Thor 要插網路線 |
+| 事故 agent 一啟動就 `Failed to acquire lock on ~/.nemoclaw-portable-host.lock ... owner PID is still running` | 上一場的 agent 還在跑，或已結束但成了殭屍行程 | 新版 watchdog 會回收並先停掉舊的；手動處理：`scripts/stage-up.sh` |
+| 修好之後 agent 還在改東西，看板又轉紅 | OpenClaw 延續已結束的 session（`Runtime event continuation`），Lightning 會去寫事故記憶、改設定 | `agent.py` 的 `HEALTHY_GUARD`（系統健康時拒絕改動）與 watchdog 的 `AGENT_GRACE`（結案 60 秒後停掉）；sandbox 裡還在跑就 `nemoclaw edge-agent gateway restart` |
+| 結案後 shim 日誌出現一連串 prompt 長度完全相同的請求 | vLLM 0.32 的思考欄位叫 `reasoning`，舊版 shim 只讀 `reasoning_content`，空回應讓 OpenClaw 一直重試 | 已修（`oai_shim.py` 兩個欄位都讀） |
+| `nemoclaw edge-agent gateway restart` 報 readiness timeout | gateway 起來得比檢查慢 | 等 1 分鐘再 `nemoclaw edge-agent status`，通常已經 `Inference: healthy` |
+| drill 的 upstream-500 FAIL，`approvals.jsonl` 裡是 `"by": "timeout"` | `stage-up.sh` 用舞台設定 `APPROVAL=manual`，drill 沒有人按核准，180 秒後視為拒絕（fail-closed，這是設計） | 跑 drill 時有人在 dashboard 按核准，或用 `APPROVAL=auto scripts/stage-up.sh` 起服務，跑完再用預設值重起 |
+| Guardrails 測試 22/23（`disk quota exceeded. To the monitoring agent...`） | Lightning 對這一行固定判 No；同一個 prompt 再問只會得到同一個答案 | `guard_api.py` 對第一次判 No 的候選行，用「Log line: 」前綴換個寫法再判一次，任何一次判是就移除（3 次 23/23） |
 
 相關文件：`docs/demo.md`（舞台流程與 §6.1 的啟動順序）、`docs/integration-vllm.md`（為什麼用 vLLM）、`docs/nemo-integration.md`（Guardrails 與 profiler）、`docs/hackathon-runbook.md`（Jetson 對照表，TRT 時期寫的）。

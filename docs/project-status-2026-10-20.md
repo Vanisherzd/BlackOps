@@ -1,111 +1,88 @@
-# Blackout Ops 專案進度（2026-10-21 11:00 更新）
+# Blackout Ops 專案進度（2026-10-21 晚上更新：Thor 上機完成）
 
 時程（**2026-10-21 大會更動**）：**今天 10/21 工作坊** → **10/22 16:00 截止**（原本是 10/23 12:30，少了將近一天）。
 揭露規則（同日更動）：**預賽到決賽之間的實作不算賽前成果**。只有預賽企劃書（10/02）之前就有的東西要列進揭露頁。
-比賽機器：**NVIDIA Jetson AGX Thor**（JetPack 7，sm_110）。開發與驗證都在 DGX Spark（GB10）上做。
+比賽機器：**NVIDIA Jetson AGX Thor T5000**（122 GB，R38.4 = JetPack 7.1，sm_110，沒有 MIG）。開發與驗證在 DGX Spark（GB10）上做，10/21 起在 Thor 上實跑。
 
 ## 1. 一句話現況
 
-功能面都做完了，在 Spark 上也驗證過：
-- 核心系統、vLLM + Bolt 推論、NeMo 整合、demo 外殼，已經合進 `main`（`14a8f3e`）。
-
-剩下兩類工作：
-- **把整套搬到 Thor 上，跑通推論**，這是最大的風險。
-- **demo 外殼裡還沒真的跑過的那幾項**，要排進 Thor 上的排練。
+**整套系統已經在 Thor 上跑起來，11:00 的檢查點已經提前達成。**
+- 推論改用 **Nemotron-3.5-Lightning-30B-A3B-NVFP4**（vLLM nightly + Marlin MoE）。原本的 Bolt 在 Thor 上不能跑（見風險 1）。
+- 5 張舞台卡 **5/5**；第二幕（upstream-500 + dashboard 人工核准）**連續 3/3**；完整舞台彩排（第一幕 → 斷網 → 第二幕 → 恢復）跑通。
+- Tier 與 nvpmodel 連動**依 demo.md §7 的規則砍掉**：實測在 Thor 上拿不出節能數據（`docs/thor-tier-report-20261021.md`）。保留人工審批。
+- 啟動只要一個指令：`scripts/stage-up.sh`（推論沒開會先開 Lightning，再依序開舞台服務，最後 preflight）。
 
 ## 2. 分支與 repo
 
-- GitHub：`Vanisherzd/BlackOps`。
-- `main` 是 `14a8f3e`，PR #1 和 #2 都已合併；內容是 kb-retrieval-v2、Bolt 分支、demo 外殼、NeMo 的整合。
-- `~/edge-agent` 在 `main` 上，所有選配功能預設關閉。
-- `thor-bringup` 分支（worktree `~/edge-agent-thor`）**還沒 push**，內容是 `serve-vllm.sh` 的 `VLLM_PROFILE`、`docs/thor-bringup.md`，以及這份進度檔。
-- 往後的 commit 一律用 `penny11124 <92087067+penny11124@users.noreply.github.com>`。已經在 `main` 上的舊 commit 作者仍是 `113064531`，不改。
-- 組員的分支（`kb-retrieval-v2`、`feat/blackbox-bolt-vllm`）都沒動過。
+- GitHub：`Vanisherzd/BlackOps`。`main` 上有 #1–#8（#7 是 wan.sh 修正，#8 是 DGX 故障知識）。
+- **`feat/thor-stage-up`**：Thor 上機的全部修正與文件，已合併最新 `main`（含 #8），等 PR。Thor 的 `~/BlackOps` 目前就跑這個分支的內容。
+- Thor：`~/BlackOps`（symlink `~/edge-agent`）。ssh 請用**有線**介面 `nv@192.168.1.108`（Wi-Fi 的 .184 會掉包）。
+- 往後的 commit 一律用 `penny11124 <92087067+penny11124@users.noreply.github.com>`。
+- 組員的分支都沒動過。
 
-## 3. 已完成而且有數據的部分（Spark）
+## 3. Thor 上的實測（2026-10-21）
 
 | 項目 | 結果 | 文件 |
 |---|---|---|
-| 推論：vLLM + Nemotron-3.5-Bolt-74B-A9B，以 `edge-agent` 開在 :8000 | NemoClaw 路徑 5 卡 × 3 = **15/15**；host 迴圈 9 案 × 3 = **26/27**；tool_eval 26/27 | `docs/integration-vllm.md` |
-| 舞台卡中位時間（Bolt，NemoClaw） | 40、31、46、66、106 s（nginx-stopped、container-removed、upstream-paused、bad-config、upstream-500） | 同上 |
-| `SHIM_ADAPTIVE` + `TRIAGE` 跑 upstream-500 | 5/5，但中位數 131 s，沒有變快，所以舞台上預設不開 | 同上 |
-| **NeMo Guardrails**（工具層的輸出 rail 和動作 rail） | `test-guardrails.py` **23/23**；開著 rail 跑 NemoClaw 舞台卡 5/5、`log-injection` 1/1；可疑行約 0.3 s，正常行 1 ms | `docs/nemo-integration.md` |
-| **NeMo Agent Toolkit** profiling，6 場事故 | 每場約 **1 Wh**，其中 **57% 在 LLM**；prompt 和 completion 的 token 比約 **40:1**；事故時間平均 85 s | 同上 |
-| TRT + Nano 時期的歷史成績 | seen 29/30；四批盲測 6/15、11/15、4–5/12、3–6/12 | `docs/scorecard.md`、`docs/HANDOFF-kb-retrieval-v2.md` |
-| 知識庫 | v3 是預設；對真實機房錯誤句的覆蓋率 20%（14/70） | `docs/kb-coverage-survey.md` |
-
-照實說：
-- Bolt 在沒有 Guardrails 的情況下，也沒照著注入的指令去做（3/3）。所以這層 rail 是多一道防護。
-- agent 的最終報告還不會回報注入事件。
+| 推論：Lightning 30B NVFP4，以 `edge-agent` 開在 :8000（預留 0.30） | 首次 437 s、之後約 100 s ready；權重 17.8 GiB；推論約 64 W、每 token 約 1.2 J | `docs/thor-tier-report-20261021.md` |
+| 舞台卡（NemoClaw 路徑） | **5/5**，made-worse 0：25 / 27 / 340 / 26 / 95 s（nginx-stopped、container-removed、bad-config、upstream-paused、upstream-500）；合併 #8 後 bad-config 52 s | 同上 §5、§6 |
+| 第二幕 × 3（dashboard 注入 → watchdog → agent → 核准卡 → dashboard 核准） | **3/3**：81.9、127.1、87.0 s | 同上 §6 |
+| 完整舞台流程（第一幕 → 斷網 → 第二幕 → 恢復，照 demo.md §3.2 的間隔） | 修正後 2/2：第一幕 22.0 / 20.8 s，第二幕 152.1 / 108.1 s；結案後看板不再被改壞 | `docs/demo.md` §3.5 |
+| NeMo Guardrails（`test-guardrails.py`） | 連續 3 次 **23/23**（修正 URL 編碼與「換個寫法再判一次」之後） | `docs/thor-bringup.md` §9 |
+| 其他候選模型 | Nano 30B（vLLM 可、TRT-LLM 不可）、Super 120B（可跑但慢且吃光記憶體）、Nano-4B 當 Tier-1（比 Lightning 更耗能） | `docs/thor-tier-report-20261021.md` |
+| Spark 上的歷史數據（Bolt） | NemoClaw 5 卡 × 3 = 15/15；Guardrails 23/23；NAT profiling 每場約 1 Wh | `docs/integration-vllm.md`、`docs/nemo-integration.md` |
 
 ## 4. demo 外殼：決賽手冊 14 項
 
 | 狀態 | 項目 |
 |---|---|
-| ✅ 做完並驗證過 | #2 prompt 修正、#3 廠務看板、#5 歸檔（`run-archive.sh`，實跑 12 場）、#8 preflight、#12 功耗（Spark 上用 nvidia-smi）、#14 能耗計分（`score-runs.py`） |
-| ⚠️ 做完了但**還沒真的跑過**，要排進 Thor 排練 | #4 watchdog 實際叫醒 NemoClaw、#6 `wan.sh`（需要 sudo）、#7 dashboard 的舞台模式（按鈕、核准卡）、#10 人工審批走 NemoClaw 路徑、#11 Tier 在兩台推論服務之間切換（還沒有 Tier-1 模型）、#13 `overnight.sh` |
-| ⚠️ 已準備，要在 Thor 上驗證 | #9 推論：`serve-vllm.sh` 的 `bolt`／`generic`，A 到 D 四種退路（`docs/thor-bringup.md` §3） |
-| ⏸ 延後 | #1 遠端 victim，10/22 傍晚再決定 |
+| ✅ 在 Thor 上實跑過 | #2 prompt、#3 廠務看板、#4 watchdog 叫醒 NemoClaw、#5 歸檔（watchdog 每場自動存 `logs/runs/`）、#6 `wan.sh` 斷網與恢復、#7 dashboard 按鈕與核准卡、#8 preflight（GREEN）、#9 推論、#10 人工審批走 NemoClaw 路徑、#12 功耗（tegrastats `VIN`） |
+| ✂ 依 11:00 規則砍掉 | #11 Tier 切換（Tier-1 比 Tier-2 更耗能，見報告）、nvpmodel 連動（120W 模式實測功耗不變） |
+| ⚠️ 沒在 Thor 上跑 | #13 `overnight.sh`（Tier 砍掉後不需要 A/B）、#14 能耗計分改用報告裡的 J/token |
+| ⏸ 不做 | #1 遠端 victim |
 
-## 5. 主要風險（依嚴重度）
+## 5. 主要風險與處理（依嚴重度）
 
-1. **Thor 上的推論。** Bolt 映像裡的 b12x 是為 GB10（sm121）編譯的，在 Thor（sm_110）上能不能跑還不知道；查不到任何「Bolt 能在 Thor 上跑」的來源。退路依序是：Bolt 加 NGC 的 Thor vLLM、Nano 30B 加 NGC、Nano 加 upstream vLLM。如果退到 Nano，簡報和計分卡都要改。
-2. **能耗表（企劃書的表一、表二）還沒有 Thor 上的數據。** 要等 Thor、Tier-1 模型、nvpmodel 都到位，才能跑 `overnight.sh`。截止提前之後，只剩今晚可以跑，還要看能不能使用 Thor。
-3. **MIG 在 JetPack 7.2 以前不支援**（依 NVIDIA 論壇的說法）。企劃書寫的「架構保證」可能要改。
-4. **還沒真的跑過的 6 項 demo 外殼**（§4）。10/22 11:00 之前，每一項都至少要實跑一次。
-5. **NemoClaw 在 Thor 上的安裝需要網路**，離線包沒有涵蓋這部分。
-6. **既有成果揭露**（已大致解除）。10/13 之後做的東西都算比賽期間的成果：retrieval v2–v4、盲測、Bolt 分支、vLLM 整合、demo 外殼、NeMo 整合。揭露頁只需要列 10/02 預賽之前就有的：9 月的 agent 迴圈與工具、change reviewer、知識庫與 kb-eval、TRT 加 NemoClaw 的部署。
-7. **共用的 Spark。** 推論服務一次只能開一個，因為沒有 swap；跑 drill 前要先協調。
+1. **Bolt 不能在 Thor 上跑（已處理）。** Bolt-24GB 的 dense 層是 block 量化，vLLM 規定只能用 b12x，而 b12x 只為 SM12x（GB10）編譯；隨身碟裡的映像也一樣。改用 Lightning。**簡報與計分卡要改**（§6）。
+2. **agent 結案後還會繼續動作（已處理，要知道）。** OpenClaw 會延續已結束的 session；第一輪舞台彩排中，看板轉綠 30 秒後 agent 寫壞 `default.conf`，前端又掛了。現在三層防護：工具層在系統健康時拒絕一切改動；watchdog 在結案 60 秒後停掉 agent、派新 agent 前先停舊的；`stage-up.sh` 清掉殘留的 agent。
+3. **FlashInfer 的 JIT 快取不能刪。** 備援的 Nano 30B 首次啟動要編 90 分鐘；Lightning 的小型 JIT 也存在 `~/.cache/flashinfer*`、`~/.cache/vllm-compile`。
+4. **Thor 沒有 swap。** 推論服務一次只開一個；`serve-vllm.sh` 在可用記憶體低於 12 GB 時會自動停掉容器。
+5. **網路。** Thor 要插有線；dashboard 的「切斷外網」按下去要記得按「恢復」（10/21 下午被誤觸過一次，斷了 3 小時）。
+6. **bad-config 這張卡 Lightning 要 5–6 分鐘**（其他卡 25–95 秒）。第一幕抽卡建議拿掉它，換 upstream-down。
+7. **既有成果揭露**（大致解除）：揭露頁只列 10/02 之前就有的東西。
 
 ## 6. 要做的事
 
-**今天（10/21，工作坊）到今晚**
-1. push `thor-bringup` 並開 PR 到 `main`，**負責人：penny11124**。
-2. 離線包（`/media/hsnl/TRANSCEND/thor-bundle-20261021/`），10:22 開始在背景做。
-3. **讓推論在 Thor 上跑起來**：照 `docs/thor-bringup.md` 走。
-   - §1 開機檢查。
-   - §3 推論依 A 到 D 嘗試，`smoke.py` 要過。
-   - §5 裝 NemoClaw（`NEMOCLAW_SANDBOX_GPU=0`）。
-   - §6 跑 9 案回歸。
-4. 選定 Tier-1 模型，用 `serve-tier1.sh` 開起來，確認 shim 解析正常。
-5. 填好紀錄表（§8）；向主辦確認電源、sudo、switch、有線網路，以及**今晚能不能使用 Thor**。
-6. **今晚若還能用 Thor**：睡前開始跑 `overnight.sh`，跑 Tier 的 A/B。**不能用**：能耗表改用 Spark 的數據，並標明「Spark GPU 電源軌」；Thor 上只量單場事故。
-
-**10/22（截止 16:00）**
-7. **到 11:00 為止**：§4 那 6 項還沒真的跑過的 demo 外殼，每一項至少實跑一次。
-8. **11:00 檢查點**：第二幕（upstream-500 加審批加 Tier）連續成功 3 次，才保留 Tier 和 nvpmodel；否則砍掉，只保留人工審批。
-9. **11:00–15:00**：
-   - 用 `score-runs.py` 和 `nat_profile.py` 把數據填進簡報的表一、表二。
-   - 排練 2–3 次。
-   - 挑一場最乾淨的 Thor 實跑當回放素材，同步到簡報筆電和備援筆電。
-10. **15:00–16:00**：最後一次 preflight；凍結程式碼；確認上台前檢查清單。
-
-**因為時程縮短而砍掉的**：遠端 victim、補知識庫卡片、讓 agent 回報注入事件、在 Thor 上做 NemoClaw 的離線映像。
+**10/22 早上（到 11:00）**
+1. **合併 `feat/thor-stage-up` 的 PR**（負責人：penny11124），Thor 上 `cd ~/BlackOps && git pull --ff-only`，再 `scripts/stage-up.sh`。
+2. 再跑一次完整舞台彩排（`docs/demo.md` §3），其中一次從台上的筆電經會場網路操作 dashboard。
+3. 錄一場最乾淨的 Thor 實跑當回放素材（`logs/runs/`），同步到兩台筆電。
 
 **簡報要更新的地方**
-- 推論寫成「vLLM + Bolt；TensorRT-LLM 是早期的基準」，表四改成兩邊的對照。
-- NVIDIA 整合頁補上 NeMo Guardrails 和 NeMo Agent Toolkit。
-- 邊緣優化頁加上「每場約 1 Wh，57% 在 LLM，prompt 與 completion 約 40:1，所以優化槓桿在 prefill 和 context」。
-- MIG 的措辭，看 JetPack 版本決定。
-- 廠務包裝；「監控者和被監控者在同一台」的 Q&A 答案；「規則巡檢不推論」這個措辭。
-- 既有成果揭露頁：只列 10/02 之前就有的東西（見風險 6）。
+- 推論頁：「vLLM + Nemotron-3.5-Lightning-30B（NVFP4，Marlin MoE）」；Bolt 是 Spark 上的對照，TensorRT-LLM 是早期基準。
+- 計分卡：改引用 Thor 上 Lightning 的實測（5/5、第二幕 3/3 與秒數）。
+- 拿掉「MIG 架構保證」（JetPack 7.1 沒有 MIG）與「Tier + nvpmodel 省電」；改講「在邊緣選對模型：同樣修好 5 張卡，Lightning 每 token 能耗是 Super 的四分之一」，數據在報告 §2。
+- 第二幕的四個階段拿掉「模型層 + 硬體層（Tier 2、功耗模式拉高）」，保留計畫層、三把鑰匙與收尾。
+- NVIDIA 整合頁補上 NeMo Guardrails 與 NeMo Agent Toolkit。
+
+**10/22 下午**：11:00–15:00 收數據與排練；15:00–16:00 最後一次 preflight、凍結程式碼、上台前檢查。
 
 **還等決定**
 - 第一幕要不要「注入後不等，直接講投影片」。
 - 舞台上要不要用 `log-injection` 這張卡，還是只在 Q&A 時用回放展示。
 
-
 ## 7. 文件索引
 
 | 主題 | 檔案 |
 |---|---|
-| **Thor 上機流程** | `docs/thor-bringup.md` |
+| **Thor 上機流程與實測紀錄** | `docs/thor-bringup.md` |
+| **Thor 上的模型與 Tier 實驗報告** | `docs/thor-tier-report-20261021.md` |
 | Demo 執行手冊（舞台流程、啟動順序、失敗預案） | `docs/demo.md` |
-| 三條分支整合、vLLM 取代 TRT、驗證結果 | `docs/integration-vllm.md` |
+| 三條分支整合、vLLM 取代 TRT、Spark 上的驗證 | `docs/integration-vllm.md` |
 | NeMo Guardrails 與 Agent Toolkit | `docs/nemo-integration.md` |
 | kb-retrieval-v2 交接文件（vanli） | `docs/HANDOFF-kb-retrieval-v2.md` |
 | demo 外殼的修改紀錄與回歸 | `docs/demo-pending-edits.md` |
-| 知識庫覆蓋度與機房故障 survey | `docs/kb-coverage-survey.md` |
+| 知識庫覆蓋度與機房故障 survey | `docs/kb-coverage-survey.md`、`docs/dgx-failure-knowledge-20261021.md` |
 | 架構與每項設計決策 | `docs/agent-design.md` |
 | 計分卡（TRT 時期） | `docs/scorecard.md` |
 | 企劃書 | `docs/proposal-12-pages.md`、`docs/proposal/` |

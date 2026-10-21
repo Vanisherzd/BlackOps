@@ -1,129 +1,111 @@
-# Blackout Ops 專案進度（2026-10-20 23:40 更新；24:00 補充：整合）
+# Blackout Ops 專案進度（2026-10-21 11:00 更新）
 
-> **2026-10-20 深夜補充：團隊決定推論改用 vLLM，不再用 TensorRT-LLM。** 三條分支整合在 `integrate-vllm`，從 `demo-infra` 分出，再 merge 進 `feat/blackbox-bolt-vllm`，目標是 `main`。
-> - Tier-2 改成 Bolt-74B-A9B，跑在 vLLM 上，以 `edge-agent` 的名稱開在 :8000（`scripts/serve-vllm.sh`）。agent、NemoClaw、工具、KB、demo 外殼都不用改。
-> - 單元測試 33/33 通過。**Bolt 加上整套 agent 的回歸還沒跑**，要先停掉 vanli 的 `trtllm-edge`，需要協調。
-> - 詳見 `docs/integration-vllm.md`。下文提到 TRT 的地方，指的是到目前為止的量測環境。
->
-> **2026-10-21 凌晨補充：NeMo 整合**（決賽要件「必須深度整合 NeMo」），見 `docs/nemo-integration.md`。
-> - **NeMo Guardrails** 接在工具層：輸出 rail 移除被監控系統輸出裡對 agent 下的指令，動作 rail 拒絕照這些指令去做的動作。
->   - 新增故障案例 `log-injection`；`test-guardrails.py` 23/23 PASS。
->   - NemoClaw 路徑開著 rail 跑舞台卡 5/5，`log-injection` 1/1。
->   - 照實說：Bolt 在沒有 rail 時也沒上當（3/3），所以這層是多一道防護。
-> - **NeMo Agent Toolkit profiler** 分析 6 場事故：每場約 1 Wh，57% 花在 LLM；prompt 與 completion 的 token 比約 40:1，所以優化槓桿在 prefill 和 context。
-> - 分支 `feat/nemo`。`~/edge-agent` 已經 fast-forward 到 `719fae0`；所有開關預設關閉。
-
-時程：10/21 工作坊（剩 1 天）→ 10/22–23 黑客松 → 10/23 12:30 code freeze。
-資料來源：三條分支的 git log、`docs/HANDOFF-kb-retrieval-v2.md`（vanli）、`logs/`、今晚的回歸測試。
+時程（**2026-10-21 大會更動**）：**今天 10/21 工作坊** → **10/22 16:00 截止**（原本是 10/23 12:30，少了將近一天）。
+揭露規則（同日更動）：**預賽到決賽之間的實作不算賽前成果**。只有預賽企劃書（10/02）之前就有的東西要列進揭露頁。
+比賽機器：**NVIDIA Jetson AGX Thor**（JetPack 7，sm_110）。開發與驗證都在 DGX Spark（GB10）上做。
 
 ## 1. 一句話現況
 
-- **診斷修復核心**已經成熟並有量化數據：agent、安全規則、三把鑰匙、知識庫、計分卡，都在 kb-retrieval-v2 上。
-- **demo 外殼**：決賽手冊 14 項中 12 項已在 `demo-infra` 上完成並接線，host 迴圈回歸無退步。
-- **還沒驗證的兩件事**：NemoClaw 路徑上的 demo 外殼，以及**整套系統在 Thor 上跑**。
+功能面都做完了，在 Spark 上也驗證過：
+- 核心系統、vLLM + Bolt 推論、NeMo 整合、demo 外殼，已經合進 `main`（`14a8f3e`）。
 
-## 2. 分支
+剩下兩類工作：
+- **把整套搬到 Thor 上，跑通推論**，這是最大的風險。
+- **demo 外殼裡還沒真的跑過的那幾項**，要排進 Thor 上的排練。
 
-```
-main (aec7c0c, 9/30)
- ├─ kb-retrieval-v2 (vanli, 48b16f9, 10/20 23:08)   主線：agent、guards、KB、shim 加速
- │    └─ demo-infra (我們, 已 merge 48b16f9)          demo 外殼；PR 目標：kb-retrieval-v2 → 最後到 main
- └─ feat/blackbox-bolt-vllm (ca74d6a, 10/17)          獨立的 blackbox/ 系統＋Bolt 74B on vLLM :8200
-```
+## 2. 分支與 repo
 
-- repo 已改名為 **https://github.com/Vanisherzd/BlackOps**，舊網址會自動轉過去。
-- demo-infra 合進 kb-retrieval-v2 **沒有程式碼衝突**，並已 merge 最新的 48b16f9。
-- bolt 分支從 9/30 的 main 分出，沒有 kb-retrieval-v2 和 demo-infra 的任何東西。demo 外殼在 bolt 分支上**無效**，因為它不走 `scripts/agent.py`、`ops_api`、`shim`。合併時只有 `.gitignore` 會有文字衝突。
-- Bolt 模型可以當 Tier-2 用：以 `edge-agent` 的名稱開在 :8200，設 `UPSTREAM_T2=http://127.0.0.1:8200`。要注意記憶體，這台沒有 swap。
-- `~/edge-agent`（kb-retrieval-v2）已清乾淨，我們的檔案都在 `~/edge-agent-demo`（demo-infra）。
+- GitHub：`Vanisherzd/BlackOps`。
+- `main` 是 `14a8f3e`，PR #1 和 #2 都已合併；內容是 kb-retrieval-v2、Bolt 分支、demo 外殼、NeMo 的整合。
+- `~/edge-agent` 在 `main` 上，所有選配功能預設關閉。
+- `thor-bringup` 分支（worktree `~/edge-agent-thor`）**還沒 push**，內容是 `serve-vllm.sh` 的 `VLLM_PROFILE`、`docs/thor-bringup.md`，以及這份進度檔。
+- 往後的 commit 一律用 `penny11124 <92087067+penny11124@users.noreply.github.com>`。已經在 `main` 上的舊 commit 作者仍是 `113064531`，不改。
+- 組員的分支（`kb-retrieval-v2`、`feat/blackbox-bolt-vllm`）都沒動過。
 
-## 3. 已完成而且有數據的部分（可直接上簡報）
+## 3. 已完成而且有數據的部分（Spark）
 
-### Agent 能力
-環境：Nemotron-3-Nano-30B-A3B-NVFP4、TensorRT-LLM、DGX Spark。
+| 項目 | 結果 | 文件 |
+|---|---|---|
+| 推論：vLLM + Nemotron-3.5-Bolt-74B-A9B，以 `edge-agent` 開在 :8000 | NemoClaw 路徑 5 卡 × 3 = **15/15**；host 迴圈 9 案 × 3 = **26/27**；tool_eval 26/27 | `docs/integration-vllm.md` |
+| 舞台卡中位時間（Bolt，NemoClaw） | 40、31、46、66、106 s（nginx-stopped、container-removed、upstream-paused、bad-config、upstream-500） | 同上 |
+| `SHIM_ADAPTIVE` + `TRIAGE` 跑 upstream-500 | 5/5，但中位數 131 s，沒有變快，所以舞台上預設不開 | 同上 |
+| **NeMo Guardrails**（工具層的輸出 rail 和動作 rail） | `test-guardrails.py` **23/23**；開著 rail 跑 NemoClaw 舞台卡 5/5、`log-injection` 1/1；可疑行約 0.3 s，正常行 1 ms | `docs/nemo-integration.md` |
+| **NeMo Agent Toolkit** profiling，6 場事故 | 每場約 **1 Wh**，其中 **57% 在 LLM**；prompt 和 completion 的 token 比約 **40:1**；事故時間平均 85 s | 同上 |
+| TRT + Nano 時期的歷史成績 | seen 29/30；四批盲測 6/15、11/15、4–5/12、3–6/12 | `docs/scorecard.md`、`docs/HANDOFF-kb-retrieval-v2.md` |
+| 知識庫 | v3 是預設；對真實機房錯誤句的覆蓋率 20%（14/70） | `docs/kb-coverage-survey.md` |
 
-- 見過的 9 案：29/30 autonomous（`docs/scorecard.md`）。
-- 盲測：
-  - batch 1：6/15
-  - batch 2：11/15
-  - batch 3：v3 4/12、v4 5/12
-  - batch 4：v3 6/12、v4 3/12
-  - 主要限制：需要的資訊沒有工具拿得到，或安全規則只為已知的故障寫好。
-- **分情況開關思考＋開場資料**（vanli，`fd7a79a`，各 54 場）：修好 43/54 vs 41/54，模型呼叫少 45%，見過的題目中位時間 56→38 秒，0 謊報、0 越修越壞。
-- shim 的健康保護網（`189de86`）：關閉思考時，謊報從 6 降到 0。
-- 對照 Bolt：見過的題目 20/20、盲測 8/15；Nano 是 29/30、6/15。
-- expert 剪枝 128→112：21/25，和原版相同，18.5→16.1 GiB，但推論不會變快。
+照實說：
+- Bolt 在沒有 Guardrails 的情況下，也沒照著注入的指令去做（3/3）。所以這層 rail 是多一道防護。
+- agent 的最終報告還不會回報注入事件。
 
-### 知識庫
-詳見 `docs/kb-coverage-survey.md`。
-
-- v4 沒有可量測的效果，**預設維持 v3**。
-- 對真實機房錯誤句的覆蓋率 20%（14/70）：硬體、電源、Proxmox、K8s、L2/L3 網路幾乎是零。
-- 壓縮曲線：準確率持平，輸入 token 降 47–56%。
-
-## 4. Demo 外殼（決賽手冊 14 項；細節見 `docs/demo.md` §6）
+## 4. demo 外殼：決賽手冊 14 項
 
 | 狀態 | 項目 |
 |---|---|
-| ✅ 完成且接線 | #2 prompt 修正、#3 廠務看板、#7 dashboard、#8 preflight、#10 人工審批、#11 Tier、#12 功耗、#14 能耗計分（`score-runs.py`） |
-| ✅ 骨架完成，未實跑 | #4 watchdog（叫醒 NemoClaw 未測）、#5 run-archive、#6 wan.sh（需要 sudo）、#13 overnight |
-| ⚠️ 已準備，要在 Thor 驗證 | #9 Thor 推論：runtime nvidia、`thor-128g`／`64g`、`tier1.yaml`、`serve-tier1.sh` |
-| ⏸ 延後 | #1 遠端 victim：10/22 傍晚檢查點後再決定 |
-
-**今晚另外做的**：
-- 廠務包裝：示範晶圓廠的看板頁，dashboard 改用「產線看板前端／MES API」的名稱。
-- 看板頁改由 dashboard 提供：前端掛掉時頁面會轉紅，不會變成白頁。
-- 修正 vanli 交接文件 §4.1 的 bug：被拒絕的那一輪不再關掉思考，`approval-rejected:` 也一併排除（`f34a08e`，**未經 drill 量測**）。
-- `docs/demo.md` 依實際狀況修訂（原版保留在 git 歷史 `087b503`）。
-
-**回歸測試**（host 迴圈，共用 victim，22:56–23:18）：
-- 見過的 9 案中 6 案一次就過。另外 3 案重跑 1 次，branch 版過 2 案、原版過 1 案，差距在隨機波動範圍內；失敗的紀錄都沒有碰到新加的程式。
-- 打開審批和 Tier 跑 upstream-500：PASS，Tier 1→2→1 都有紀錄。
-- 跑完後，victim 已用 `~/edge-agent` 的程式重建回原狀。
-- 細節見 `docs/demo-pending-edits.md`。
+| ✅ 做完並驗證過 | #2 prompt 修正、#3 廠務看板、#5 歸檔（`run-archive.sh`，實跑 12 場）、#8 preflight、#12 功耗（Spark 上用 nvidia-smi）、#14 能耗計分（`score-runs.py`） |
+| ⚠️ 做完了但**還沒真的跑過**，要排進 Thor 排練 | #4 watchdog 實際叫醒 NemoClaw、#6 `wan.sh`（需要 sudo）、#7 dashboard 的舞台模式（按鈕、核准卡）、#10 人工審批走 NemoClaw 路徑、#11 Tier 在兩台推論服務之間切換（還沒有 Tier-1 模型）、#13 `overnight.sh` |
+| ⚠️ 已準備，要在 Thor 上驗證 | #9 推論：`serve-vllm.sh` 的 `bolt`／`generic`，A 到 D 四種退路（`docs/thor-bringup.md` §3） |
+| ⏸ 延後 | #1 遠端 victim，10/22 傍晚再決定 |
 
 ## 5. 主要風險（依嚴重度）
 
-1. **硬體平台還沒驗證。** 到目前為止全部在 DGX Spark 上做；trtllm-serve 在 Tegra 上沒跑過；Tier-1 的 4B 模型 ID、parser 相容性、記憶體比例都還不知道。10/21 是唯一的驗證窗口。
-2. **企劃書主張的能耗還沒有數據。** 表一、表二仍然空白。要等 Thor 上有 Tier-1 server 和 nvpmodel，才能跑 `overnight.sh`。MIG 也還不確定。
-3. **NemoClaw 路徑的 demo 外殼還沒測。** drill 只在 `~/edge-agent` 裡跑，要等 demo-infra 合進去，或直接在 Thor 上一次 clone。
-4. **既有成果揭露。** 審批和能耗治理原本計畫在黑客松期間完成，現在已提前做完，揭露頁要照實寫。
-5. **共用的 Spark。** victim、沙盒、shim、推論服務都只有一套，跑 drill 前要先跟 vanli 協調時段（HANDOFF §0）。
-6. **知識庫廣度。** 評審若問硬體或電源類故障，目前答不出來。
+1. **Thor 上的推論。** Bolt 映像裡的 b12x 是為 GB10（sm121）編譯的，在 Thor（sm_110）上能不能跑還不知道；查不到任何「Bolt 能在 Thor 上跑」的來源。退路依序是：Bolt 加 NGC 的 Thor vLLM、Nano 30B 加 NGC、Nano 加 upstream vLLM。如果退到 Nano，簡報和計分卡都要改。
+2. **能耗表（企劃書的表一、表二）還沒有 Thor 上的數據。** 要等 Thor、Tier-1 模型、nvpmodel 都到位，才能跑 `overnight.sh`。截止提前之後，只剩今晚可以跑，還要看能不能使用 Thor。
+3. **MIG 在 JetPack 7.2 以前不支援**（依 NVIDIA 論壇的說法）。企劃書寫的「架構保證」可能要改。
+4. **還沒真的跑過的 6 項 demo 外殼**（§4）。10/22 11:00 之前，每一項都至少要實跑一次。
+5. **NemoClaw 在 Thor 上的安裝需要網路**，離線包沒有涵蓋這部分。
+6. **既有成果揭露**（已大致解除）。10/13 之後做的東西都算比賽期間的成果：retrieval v2–v4、盲測、Bolt 分支、vLLM 整合、demo 外殼、NeMo 整合。揭露頁只需要列 10/02 預賽之前就有的：9 月的 agent 迴圈與工具、change reviewer、知識庫與 kb-eval、TRT 加 NemoClaw 的部署。
+7. **共用的 Spark。** 推論服務一次只能開一個，因為沒有 swap；跑 drill 前要先協調。
 
-## 6. 接下來（依序）
+## 6. 要做的事
 
-**今晚／10/21 早上**
-1. push demo-infra，開 PR 到 `kb-retrieval-v2`，請 vanli review；之後一路合到 main。
-2. 跟 vanli 協調一個時段，在 `~/edge-agent` 用合併後的版本跑 NemoClaw 路徑：
-   - 5 張卡 × 3 次。
-   - watchdog 叫醒 agent 實測一場。
-   - `run-archive.sh` 實跑一場。
-   - 打開 `SHIM_ADAPTIVE` 重跑 B 組，驗證 §4.1 的修正。
-3. 準備離線包：Thor 推論映像、4B 模型、HF cache、wheels。
+**今天（10/21，工作坊）到今晚**
+1. push `thor-bringup` 並開 PR 到 `main`，**負責人：penny11124**。
+2. 離線包（`/media/hsnl/TRANSCEND/thor-bundle-20261021/`），10:22 開始在背景做。
+3. **讓推論在 Thor 上跑起來**：照 `docs/thor-bringup.md` 走。
+   - §1 開機檢查。
+   - §3 推論依 A 到 D 嘗試，`smoke.py` 要過。
+   - §5 裝 NemoClaw（`NEMOCLAW_SANDBOX_GPU=0`）。
+   - §6 跑 9 案回歸。
+4. 選定 Tier-1 模型，用 `serve-tier1.sh` 開起來，確認 shim 解析正常。
+5. 填好紀錄表（§8）；向主辦確認電源、sudo、switch、有線網路，以及**今晚能不能使用 Thor**。
+6. **今晚若還能用 Thor**：睡前開始跑 `overnight.sh`，跑 Tier 的 A/B。**不能用**：能耗表改用 Spark 的數據，並標明「Spark GPU 電源軌」；Thor 上只量單場事故。
 
-**10/21 工作坊**
-4. 照 `docs/demo.md` §7 的清單做，**第一優先是 #9 Thor 推論能跑起來**。
+**10/22（截止 16:00）**
+7. **到 11:00 為止**：§4 那 6 項還沒真的跑過的 demo 外殼，每一項至少實跑一次。
+8. **11:00 檢查點**：第二幕（upstream-500 加審批加 Tier）連續成功 3 次，才保留 Tier 和 nvpmodel；否則砍掉，只保留人工審批。
+9. **11:00–15:00**：
+   - 用 `score-runs.py` 和 `nat_profile.py` 把數據填進簡報的表一、表二。
+   - 排練 2–3 次。
+   - 挑一場最乾淨的 Thor 實跑當回放素材，同步到簡報筆電和備援筆電。
+10. **15:00–16:00**：最後一次 preflight；凍結程式碼；確認上台前檢查清單。
 
-**10/22**
-5. 部署到 Thor → 9 案回歸 → 傍晚檢查點（第二幕連續 3 次成功）→ 決定遠端 victim 要不要做 → 夜跑。
+**因為時程縮短而砍掉的**：遠端 victim、補知識庫卡片、讓 agent 回報注入事件、在 Thor 上做 NemoClaw 的離線映像。
 
-**簡報**
-6. 加上廠務包裝；措辭改成「規則巡檢不推論」；加上同機部署的 Q&A 答案；更新揭露頁。
+**簡報要更新的地方**
+- 推論寫成「vLLM + Bolt；TensorRT-LLM 是早期的基準」，表四改成兩邊的對照。
+- NVIDIA 整合頁補上 NeMo Guardrails 和 NeMo Agent Toolkit。
+- 邊緣優化頁加上「每場約 1 Wh，57% 在 LLM，prompt 與 completion 約 40:1，所以優化槓桿在 prefill 和 context」。
+- MIG 的措辭，看 JetPack 版本決定。
+- 廠務包裝；「監控者和被監控者在同一台」的 Q&A 答案；「規則巡檢不推論」這個措辭。
+- 既有成果揭露頁：只列 10/02 之前就有的東西（見風險 6）。
 
-**器材與主辦**
-7. 電源供應器、sudo、switch、有線網路：**repo 裡看不到進度，請負責人確認**。
+**還等決定**
+- 第一幕要不要「注入後不等，直接講投影片」。
+- 舞台上要不要用 `log-injection` 這張卡，還是只在 Q&A 時用回放展示。
 
-## 7. 檔案索引
+
+## 7. 文件索引
 
 | 主題 | 檔案 |
 |---|---|
-| Demo 執行手冊（修訂版） | `docs/demo.md` |
-| demo 修改紀錄與回歸 | `docs/demo-pending-edits.md` |
+| **Thor 上機流程** | `docs/thor-bringup.md` |
+| Demo 執行手冊（舞台流程、啟動順序、失敗預案） | `docs/demo.md` |
+| 三條分支整合、vLLM 取代 TRT、驗證結果 | `docs/integration-vllm.md` |
+| NeMo Guardrails 與 Agent Toolkit | `docs/nemo-integration.md` |
 | kb-retrieval-v2 交接文件（vanli） | `docs/HANDOFF-kb-retrieval-v2.md` |
+| demo 外殼的修改紀錄與回歸 | `docs/demo-pending-edits.md` |
+| 知識庫覆蓋度與機房故障 survey | `docs/kb-coverage-survey.md` |
 | 架構與每項設計決策 | `docs/agent-design.md` |
-| 計分卡 | `docs/scorecard.md`、`scripts/score.py`、`scripts/score-runs.py` |
-| KB 評估、覆蓋度與 survey | `docs/kb-eval*.md`、`docs/kb-repair-cards.md`、`docs/kb-coverage-survey.md`、`scripts/kb-probe.py` |
+| 計分卡（TRT 時期） | `docs/scorecard.md` |
 | 企劃書 | `docs/proposal-12-pages.md`、`docs/proposal/` |
-| Spark 部署 | `docs/hackathon-runbook.md`、`scripts/bootstrap-spark.sh` |
-| 效能 | `docs/bench-2026-09-22.md`、`docs/serving-metrics-2026-09-22.md`、`docs/expert-pruning.md` |

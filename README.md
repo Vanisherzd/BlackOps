@@ -66,8 +66,8 @@ nemo/guardrails/                NeMo Guardrails 的工具輸出 rail（pattern r
 nemo/guardrails-actions/        NeMo Guardrails 的工具輸入（動作）rail：拒絕照注入文字去做的動作
 .nemo-venv/                     NeMo sidecar 的獨立 venv（nemoguardrails、nvidia-nat、nvidia-nat-profiler；不入版控，見 docs/nemo-integration.md §4）
 scripts/
-  serve-vllm.sh                 正式：Bolt on vLLM，以 edge-agent 的名稱開在 :8000；trtllm-edge 還在跑就拒絕啟動；`serve-vllm.sh stop`
-  serve-tier1.sh                Tier-1 小模型 on vLLM，:8010（T1_MODEL 指定，scripts/tier.py 用）
+  serve-vllm.sh                 正式：vLLM，以 edge-agent 的名稱開在 :8000。`VLLM_PROFILE=bolt`（預設，Bolt 用模型卡的參數）或 `generic`（任何模型、任何映像，例如 NGC 的 Thor vLLM）；`stop` / `status` / `DRY_RUN=1`
+  serve-tier1.sh                Tier-1 小模型，:8010（serve-vllm.sh 的 generic profile；T1_MODEL 指定，scripts/tier.py 用）
   serve-trt.sh                  legacy：trtllm-serve 容器，:8000。已在跑就拒絕重啟（FORCE=1 強制）
   serve.sh                      legacy：vLLM + Qwen3.6-35B-A3B-FP8 + MTP，:8100
   oai_shim.py                   :8001 → :8000 的 OpenAI 格式相容層：訊息正規化、tool call salvage、健康保護網、分情況思考（SHIM_ADAPTIVE）、Tier 路由（TIER_MODE）
@@ -441,6 +441,7 @@ prompt 就是值班人員會收到的一句警報，沒有指定任何指令。�
 | 文件 | 內容 |
 |---|---|
 | `docs/project-status-2026-10-20.md` | **整體進度、風險、接下來要做的事** |
+| `docs/thor-bringup.md` | **Jetson AGX Thor 上機流程**：離線包、推論的四種退路、每一步的通過條件、排錯 |
 | `docs/demo.md` | 決賽 demo 執行手冊（現場配置、時間表、失敗預案、啟動順序） |
 | `docs/integration-vllm.md` | 三條分支整合、vLLM 取代 TRT-LLM、驗證結果 |
 | `docs/nemo-integration.md` | NeMo Guardrails 安全 rail、NeMo Agent Toolkit profiling、測試與結果 |

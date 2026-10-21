@@ -6,6 +6,12 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 os.environ.setdefault("HEALTHY_GUARD", "0")
+if "openai" not in sys.modules:                 # agent.py imports the client at module level; these tests never call it
+    try:
+        import openai  # noqa: F401
+    except ImportError:
+        import types
+        sys.modules["openai"] = types.SimpleNamespace(OpenAI=object)
 import agent  # noqa: E402
 
 

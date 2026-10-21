@@ -117,7 +117,9 @@ class CommunityIndex:
 # reranker orders them and its score decides "no reference" below RERANK_MIN_SCORE. Unset, or any failure, means the
 # BM25 order as before: the sidecar can never take the tool down.
 RERANK_URL = os.environ.get("RERANK_URL", "")
-RERANK_TOP_N = int(os.environ.get("RERANK_TOP_N", "20"))
+# 50 candidates and the reranker reading question + answer: chosen on held-out half A (0.789 vs 0.777 for 20/answer),
+# read on half B (0.788 vs 0.775); recall@50 0.998. Costs about 2.5x the rerank time of top-20 (docs/kb-community-20261022.md).
+RERANK_TOP_N = int(os.environ.get("RERANK_TOP_N", "50"))
 # 0 = order only, no abstention: on the held-out halves every floor from 0.05 up turned more right answers into "none"
 # than wrong ones (0.05: right 0.78 -> 0.38, wrong 0.22 -> 0.07); the reranker's value here is the order (wrong@1
 # 0.29 -> 0.22), not the absolute score (docs/kb-community-20261022.md, Gate B).
@@ -171,7 +173,7 @@ FTS_PATH = CORPUS.with_name("community.sqlite")
 _index = None
 
 
-RERANK_PASSAGE = os.environ.get("RERANK_PASSAGE", "answer")   # what the reranker reads: answer | both (title+tags+symptom lines+answer head)
+RERANK_PASSAGE = os.environ.get("RERANK_PASSAGE", "both")   # what the reranker reads: both (title+tags+symptom lines+answer head) | answer
 
 
 def passage(d):

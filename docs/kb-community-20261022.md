@@ -310,7 +310,11 @@ serverfault + unix 完整傾印（CC BY-SA，`scripts/kb-community.py fetch-dump
 | pack | 答案段 | 50 | 0.786 | 0.781 | .842 |
 | pack | 問題＋答案 | 20 | 0.773 | 0.775 | — |
 | pack | 問題＋答案 | 50 | **0.789** | **0.788** | — |
-| digits … | | | （跑中） | | |
+| digits | 答案段 | 20 | （見 logs/rerank-grid） | | |
+| digits | 問題＋答案 | 50 | 0.787 | 0.791 | — |
+
+**選定（半 A 最高者 pack／問題＋答案／top-50，半 B 讀到 0.788）**：`RERANK_PASSAGE=both`、`RERANK_TOP_N=50` 成為預設；數字 token 沒有額外增益，
+斷詞維持 pack。代價：rerank 時間約 2.5 倍（安靜機器上 ~350 ms），只在明確呼叫時付。
 
 讀法：top-50 比 top-20 穩定多 0.6–1.3 個百分點（recall@50 0.998），代價是 rerank 每次多一倍時間；rerank 讀「問題＋答案」在 top-50 時最好。
 數字 token 的四組還在跑；選定前不改預設。

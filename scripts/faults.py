@@ -121,7 +121,9 @@ CASES = {
                                                cause=r"config|semicolon|syntax|emerg|return directive", tier="compound"),
     "compound-detached-paused":           dict(min_actions=2, fix_tools={"docker_restart", "network_repair"},
                                                cause=r"paus|frozen|504|network|detach|edge-net", tier="compound"),
-    "compound-front-stopped-upstream-port": dict(min_actions=2, fix_tools={"docker_start", "docker_restart", "recreate_stack"},
+    # write_config counts too: in 2/2 runs the agent pointed the front end's proxy_pass at :8080 instead of rebuilding
+    # the backend; both end 200/200, and reset() rewrites the site config, so either repair is a clean fix here.
+    "compound-front-stopped-upstream-port": dict(min_actions=2, fix_tools={"docker_start", "docker_restart", "recreate_stack", "write_config"},
                                                cause=r"8080|port|listen|upstream.*(config|layer)|(stop|exit)[a-z]* .*edge-victim\b|edge-victim\b.*(stop|exit)", tier="compound"),
 }
 INJECTED_LINES = (

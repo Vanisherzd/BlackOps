@@ -208,6 +208,27 @@ drill 一致）。之後 `scripts/stage-up.sh` 還原舞台，dashboard 注入 n
 `docs/optimizations-20261022.md`）。**Gate 6 通過。** 結論：這一層對舞台路徑的影響是量到的零，不是推論的零；它的價值只在 agent
 主動問到 runbook 以外的症狀時，而那在 drill 裡從未發生——所以它是給評審問答與未排練故障的保險，不是分數。
 
+## Phase 4 補充 — 「常常找錯」的量化與門檻實驗（03:05）
+
+使用者的觀察「RAG 常找錯資料」在這一層的數字是：held-out 上 top-1 類別錯 **30%**（0.702 對）。試了 IDF 覆蓋率門檻
+（命中 token 的 IDF 和 ÷ 查詢 token 的 IDF 和；在 held-out 的一半調、另一半測）：
+
+| 門檻 | 調整半（對／錯／無） | 測試半（對／錯／無） | Q_gap（對／錯／無） |
+|---|---|---|---|
+| 0（現況） | .69 / .31 / .00 | .71 / .29 / .00 | .87 / .13 / .00 |
+| 0.2 | .59 / .23 / .18 | .62 / .25 / .13 | .87 / .13 / .00 |
+| 0.3 | .35 / .13 / .53 | .39 / .13 / .48 | .84 / .11 / .05 |
+| 0.4 | .18 / .06 / .76 | .22 / .06 / .72 | .68 / .11 / .21 |
+
+每壓掉 1 個錯的要陪葬 2–3 個對的：BM25 的分數不會告訴你它對不對，這正是 `docs/rag-rerank-plan-20261021.md` 說的
+「候選在、排錯」的形狀，該由 cross-encoder reranker 來判，不該由詞彙覆蓋率來判。**沒有加門檻**（維持 MIN_SHARED=2，顯示文字
+一律標「未驗證的假設」）。
+
+下一步（已定、未做）：`nvidia/llama-nemotron-rerank-1b-v2`（不需 token，transformers ≥4.44 + trust_remote_code，權重約 2.5 GB）
+對 BM25 top-20 重排，先在 held-out 與 Q_gap 離線量 category@1 與「無」的判定，再談接進工具；資料擴增走 archive.org 的 SE 完整
+傾印（serverfault 860 MB、unix 706 MB 的 7z）而不是 API 配額。**兩者今晚被擋：DGX 根磁碟 03:10 只剩 1.3 GB（100%）**，
+下載不了模型也解不開傾印；見最終報告的磁碟一節。
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

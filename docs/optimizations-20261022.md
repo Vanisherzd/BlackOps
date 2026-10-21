@@ -49,6 +49,34 @@
 docker_logs ×2 → docker_ps → check_health → docker_start，共 14 s。preflight 與今晚稍早相同：只有 `wan` FAIL（Spark 沒有免密碼
 sudo，Thor 有）。
 
+### 複合故障（新增，tier `compound`；03:31–03:42，`logs/drills-20261022-013101.log`，同上環境）
+
+兩個獨立故障同時發生，第一次修完健康檢查說「還沒好」，agent 要回頭再找第二個原因。各跑兩次：
+
+| 牌 | 內容 | 兩次 | 牆鐘 | agent 的路徑 |
+|---|---|---|---|---|
+| compound-config-upstream-down | 前端站台設定壞＋後端停掉 | PASS, PASS | 76 s, 64 s | logs → restore_config → restart 前端 → 仍 Exited → docker_ps 看到後端停 → start 後端 → restart 前端 → 200/200 |
+| compound-detached-paused | 後端凍結（Paused）＋脫離 edge-net | PASS, PASS | 47 s, 42 s | restart 後端（Paused 的 runbook）→ 仍 504 → curl 不通 → network_repair → 200/200 |
+| compound-front-stopped-upstream-port | 前端停掉＋後端自己的設定改聽 :8080 | PASS, PASS | 52 s, 77 s | start 前端 → /api/ 502 → 讀後端設定、port_check 8080 → **write_config 把 proxy_pass 指到 :8080**（兩次都選改前端，沒選重建後端；兩種都算修好，`fix_tools` 已包含） |
+
+注入：`.venv/bin/python scripts/faults.py inject <case>`；dashboard 要能注入它們需在 stage-up 前 `export DASH_EXTRA_CARDS=compound-config-upstream-down,compound-detached-paused,compound-front-stopped-upstream-port`
+（五個舞台按鈕不變）。要不要換進第一幕是 `demo.md` 的決定；它們比單一故障慢 20–40 s，但故事更像真實事故。
+
+### 一場事故的時間都去哪了（十場 drill 的拆解，`logs/oai-shim.log` START/USAGE 配對）
+
+| 成本 | 中位 | 最大 | 可調？ |
+|---|---|---|---|
+| 模型 decode（所有輪次合計） | 14.1 s（754 completion tokens） | 20.6 s | 不可：≈ 0.58 s + tokens/70；思考在未決輪次 |
+| 其中最後的報告輪 | 3.9 s | 6.0 s | 可（prompt 限字數），但會改舞台上看到的報告文字，沒動 |
+| OpenClaw 啟動 | 2.8 s | 3.3 s | 不可 |
+| 每次工具的框架往返 | ~0.5 s × 6 | — | 不可 |
+| 工具端 | 4.4 s | **34.2 s** | **已修**：`docker_exec cat /var/log/nginx/error.log` 在 nginx 映像裡是連到 stderr 的連結，`cat` 卡到 30 s subprocess 上限——那場 65 s 的 upstream-500 不是模型在想，是 cat 在等。現在 8 s 就放手並告訴 agent 用 docker_logs |
+| 審核 | 0（無 recreate）／1.0–1.5 s | 1.5 s | 已是 `REVIEW_THINK=0` 的數字 |
+| prompt | 每輪 7.0–10.4k tokens，前綴 67–100% | — | prefill ≤ 0.5 s/輪，不是瓶頸；shim 現在會記 `cached_tokens`，前綴快取命中率終於量得到 |
+
+watchdog 走的真實事故（02:26）：偵測 2–4 s → triage 1.2 s → 啟動 2.35 s → 3 輪 5.5/2.6/2.8 s → docker_start 1.4 s → 15.2 s 結案；
+triage 讓第一輪 prompt 多 2.7k tokens，但少 2–3 輪（省 5–7 s）。
+
 ## 給隊友
 
 - Thor 早上：`cd ~/BlackOps && git pull --ff-only && scripts/stage-up.sh`，再跑一次 `demo.md` 的流程。

@@ -1,6 +1,6 @@
 # Blackout Ops 決賽 Demo 執行手冊
 
-初版 2026-10-14 · @peijen；2026-10-20 依實際進度修訂；**2026-10-21 晚上依 Thor 實測修訂**（branch `feat/thor-stage-up`）
+初版 2026-10-14 · @peijen；2026-10-20 依實際進度修訂；**2026-10-21 晚上依 Thor 實測修訂**（PR #9）
 
 > **10/21 Thor 實測後的變更（先讀這段）**：
 > 1. **推論改用 Nemotron-3.5-Lightning-30B-A3B-NVFP4**（vLLM nightly + Marlin MoE，預留 0.30）。Bolt 在 Thor（sm_110）上不能跑：它的量化格式只有 GB10 的 b12x kernel 能執行。
@@ -263,7 +263,7 @@ DASHBOARD_URL=http://127.0.0.1:8097 T1_URL=http://127.0.0.1:8010 scripts/preflig
 **10/22（截止 16:00）**
 - [x] 在 Thor 上實跑 watchdog 叫醒 agent、dashboard 按鈕與核准、`wan.sh` 斷網、歸檔（10/21 晚上提前完成；Tier 切換砍掉）
 - [x] **11:00 檢查點**：第二幕連續 3 次成功（10/21 晚上 3/3：81.9、127.1、87.0 s）
-- [ ] 合併 `feat/thor-stage-up` 的 PR；Thor 上 `git pull --ff-only` 後 `scripts/stage-up.sh`
+- [x] 合併 `feat/thor-stage-up` 的 PR（PR #9，10/21 晚上），Thor 已在 `main`
 - [ ] 11:00–15:00：收數據（`score-runs.py`、`nat_profile.py`）、更新投影片數據頁；排練 2–3 次，其中一次從台上位置操作；錄一場最乾淨的 Thor 實跑當回放素材，同步到兩台筆電
 - [ ] 15:00–16:00：最後一次 preflight，凍結程式碼
 - [ ] 換場前 15 分鐘：跑完 §3.1 的上台前檢查

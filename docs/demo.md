@@ -214,7 +214,7 @@ DASHBOARD_URL=http://127.0.0.1:8097 T1_URL=http://127.0.0.1:8010 scripts/preflig
 - [ ] 離線包兩份：Thor 推論映像、4B 模型、HF cache、wheels
 - [ ] 向主辦確認：電源供應器、sudo、自帶 switch、台上能否有線連到會場網路
 
-**10/21 工作坊（3 人）**
+**10/21 工作坊（3 人）**：照 `docs/thor-bringup.md` 的步驟做
 - [ ] 確認配到的機型：T5000 128 GB 還是 T4000 64 GB。64 GB 時，Bolt（0.45 × 64 ≈ 29 GB，權重就 24 GB）可能放不下 KV cache，改用 `MODEL_ID=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4`，或調高 `GPU_MEMORY_UTILIZATION`
 - [ ] Thor 上 vLLM 能跑起來：`scripts/serve-vllm.sh`（runtime nvidia）；不行就改用 jetson-containers vLLM（`IMAGE`／`BOLT_IMAGE` 可換）；記錄峰值記憶體
 - [ ] 確認 Tier-1 的 4B 模型 ID，並驗證 shim 解析它的 tool call 和 reasoning 都正常

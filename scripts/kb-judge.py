@@ -49,12 +49,20 @@ def main():
     ap.add_argument("--n", type=int, default=240)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--concurrency", type=int, default=2)
+    ap.add_argument("--probes", action="store_true", help="judge the 38 datacenter probe sentences instead of held-out questions")
+    ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    out_path = pathlib.Path(args.out) if args.out else (ROOT / "logs" / ("kb-judge-probes.json" if args.probes else "kb-judge.json"))
     from openai import OpenAI
     client = OpenAI(base_url=BASE, api_key="local")
-    held = [json.loads(l) for l in HOLDOUT.read_text(encoding="utf-8").splitlines() if l.strip()]
-    random.Random(args.seed).shuffle(held)
-    sample = held[:args.n]
+    if args.probes:
+        ns = {"__file__": str(ROOT / "scripts" / "kb-community.py")}
+        exec((ROOT / "scripts" / "kb-community.py").read_text(encoding="utf-8").split("# ---------------------------------------------------------------- HTML")[0], ns)
+        sample = [{"site": "probe", "question_id": i, "title": q, "symptom_lines": [], "category": cat} for i, (cat, q) in enumerate(ns["Q_GAP"])]
+    else:
+        held = [json.loads(l) for l in HOLDOUT.read_text(encoding="utf-8").splitlines() if l.strip()]
+        random.Random(args.seed).shuffle(held)
+        sample = held[:args.n]
     idx = ck.index()
     print(json.dumps({"indexed": len(idx), "backend": type(idx).__name__, "rerank": bool(ck.RERANK_URL), "n": len(sample)}), flush=True)
 
@@ -90,7 +98,7 @@ def main():
                             "judge_seconds": round(sum(v[1] for v in verdicts.values()), 2)})
             if i % 40 == 0:
                 print(f"judged {i}/{len(rows)}", flush=True)
-    OUT.write_text(json.dumps(results, ensure_ascii=False, indent=0))
+    out_path.write_text(json.dumps(results, ensure_ascii=False, indent=0))
 
     n = len(results)
     yes = lambda v: v == "yes"

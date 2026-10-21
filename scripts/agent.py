@@ -7,6 +7,7 @@ Scope is deliberately small: two sandbox containers (see scripts/faults.py). Eve
 remediation tools become no-ops with --dry-run. Each step is appended to logs/agent/<timestamp>.jsonl.
 """
 import argparse
+import concurrent.futures
 import json
 import os
 import pathlib
@@ -29,6 +30,8 @@ CONF_DIR = (ROOT / "victim" / "conf.d").resolve()
 RUNBOOKS = ROOT / "runbooks"
 NAMES = {"edge-victim", "edge-victim-app"}
 HEALTH = {"front": "http://127.0.0.1:8880/", "api": "http://127.0.0.1:8880/api/"}
+EVIDENCE_BUNDLE_TIMEOUT = 8
+EVIDENCE_BUNDLE_LIMIT = 6000
 UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / journal identifier
 
 # --- retrieval discipline ----------------------------------------------------------------------------------------
@@ -286,6 +289,7 @@ directory. Call `finish` once both health URLs return 200 or when you cannot fix
 
 TOOLS = [
     {"name": "check_health", "description": "HTTP status of the front-end and /api/ health URLs", "parameters": {"type": "object", "properties": {}}},
+    {"name": "evidence_bundle", "description": "One call that gathers the first look in parallel: health of both URLs, container states, the last log lines of both containers (with the matching runbook), the site config, the 8880 port and disk usage. Use it as the first move of an incident or right after an action instead of five separate calls; it never changes anything.", "parameters": {"type": "object", "properties": {"containers": {"type": "array", "items": {"type": "string"}, "default": ["edge-victim", "edge-victim-app"]}, "tail": {"type": "integer", "default": 30}}}},
     {"name": "docker_ps", "description": "State of the two containers (docker ps -a), with any memory limit and whether the kernel OOM-killed them", "parameters": {"type": "object", "properties": {}}},
     {"name": "docker_logs", "description": "Last lines of a container's logs", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "tail": {"type": "integer", "default": 40}}, "required": ["name"]}},
     {"name": "docker_exec", "description": "Run one diagnostic inside a container, without a shell (nginx -t/-T, cat, ls, ps, df, du, tail without follow, head, grep, id, env with no arguments). curl is GET/HEAD only to localhost, stack containers or private IP literals; no writes, uploads, custom config or redirects", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "cmd": {"type": "string"}}, "required": ["name", "cmd"]}},
@@ -546,6 +550,57 @@ def run_tool(name, args, dry_run):
     return result
 
 
+def evidence_bundle(args, dry_run):
+    containers = args.get("containers", ["edge-victim", "edge-victim-app"])
+    tail = args.get("tail", 30)
+    calls = ([
+        ("check_health", {}),
+        ("docker_ps", {}),
+    ] + [("docker_logs", {"name": container, "tail": tail}) for container in containers] + [
+        ("read_config", {}),
+        ("port_check", {"port": 8880}),
+        ("disk_usage", {}),
+    ])
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+    futures = [pool.submit(_run_tool, tool, dict(tool_args), dry_run) for tool, tool_args in calls]
+    try:
+        done, pending = concurrent.futures.wait(futures, timeout=EVIDENCE_BUNDLE_TIMEOUT)
+        results = []
+        for (tool, _), future in zip(calls, futures):
+            if future in pending:
+                future.cancel()
+                results.append(f"(evidence_bundle: {tool} failed: timeout after {EVIDENCE_BUNDLE_TIMEOUT:g}s)")
+                continue
+            try:
+                results.append(str(future.result()))
+            except Exception as error:  # noqa: BROAD_EXCEPT_OK - one failed diagnostic must not hide the others
+                results.append(f"(evidence_bundle: {tool} failed: {type(error).__name__}: {error})")
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+    suffix = with_health("")
+    suffix = suffix[1:] if suffix.startswith("\n") else suffix
+    sections = [f"## {tool} {json.dumps(tool_args, ensure_ascii=False, sort_keys=True)}\n{result}"
+                for (tool, tool_args), result in zip(calls, results)]
+    budget = max(0, EVIDENCE_BUNDLE_LIMIT - len(suffix) - 1)
+    body = "\n\n".join(sections)
+    if len(body) > budget:
+        log_indexes = [i for i, (tool, _) in enumerate(calls) if tool == "docker_logs"]
+        fixed = len(body) - sum(len(results[i]) for i in log_indexes)
+        quota = max(0, budget - fixed) // max(1, len(log_indexes))
+        marker = "...(earlier evidence cut)\n"
+        for i in log_indexes:
+            result = results[i]
+            if len(result) <= quota:
+                continue
+            keep = max(0, quota - len(marker))
+            trimmed = marker + result[-keep:] if keep else marker[:quota]
+            tool, tool_args = calls[i]
+            sections[i] = f"## {tool} {json.dumps(tool_args, ensure_ascii=False, sort_keys=True)}\n{trimmed}"
+        body = "\n\n".join(sections)
+    return (body[:budget] + "\n" + suffix)[:EVIDENCE_BUNDLE_LIMIT]
+
+
 def _run_tool(name, args, dry_run):
     if isinstance(args, str):            # some clients send arguments as a JSON string
         try:
@@ -618,6 +673,8 @@ def _run_tool(name, args, dry_run):
             import tier
             tier.set_tier(1, "health green")
         return json.dumps(health)
+    if name == "evidence_bundle":
+        return evidence_bundle(args, dry_run)
     if name == "docker_ps":
         out = docker_ps()
         for marker, runbook in STATE_RUNBOOKS:

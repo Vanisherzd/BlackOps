@@ -147,7 +147,7 @@ INJECTED_LINES = (
 )
 MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk", "kill_process",
             "clear_scratch_volume", "restore_config"}
-DIAGNOSTIC = {"check_health", "docker_ps", "docker_logs", "read_config", "search_runbooks", "search_incident_knowledge", "http_check"}
+DIAGNOSTIC = {"check_health", "evidence_bundle", "docker_ps", "docker_logs", "read_config", "search_runbooks", "search_incident_knowledge", "http_check"}
 
 
 def sh(cmd, check=False):

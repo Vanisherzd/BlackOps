@@ -891,5 +891,29 @@
   "sha256_index": "70f4ebc0a0b05dafc16a299b9b3d2e96d982bb10224b27a4915a00eb6507557e",
   "sha256_holdout": "123aa1b7287537d8ab40c7242b76d9b403647ae4feab63c9d7bed7e7be58347b",
   "index_bytes": 9504669
+ },
+ "build_v2": {
+  "indexed": 66340,
+  "holdout_excluded": 1139,
+  "by_category": {
+   "hardware": 3717,
+   "disk_fs": 4733,
+   "tls_time": 4797,
+   "network": 14419,
+   "app": 4388,
+   "permissions": 10901,
+   "memory_process": 3006,
+   "boot_packages": 6380,
+   "service": 10046,
+   "virtualization": 1326,
+   "docker": 1902,
+   "k8s": 725
+  },
+  "by_site": {
+   "serverfault": 41749,
+   "unix": 24591
+  },
+  "sha256_index": "594c302a33e17698b9f81b5dff4198862a4947f35ec4adb1adff2c621a82acc8",
+  "index_bytes": 92858369
  }
 }

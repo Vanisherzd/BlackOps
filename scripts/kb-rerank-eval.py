@@ -30,7 +30,9 @@ import community_knowledge as ck  # noqa: E402
 
 HOLDOUT = ROOT / "datasets" / "derived" / "stackexchange_ops_qa_20261022" / "holdout.jsonl"
 MODEL = "nvidia/llama-nemotron-rerank-1b-v2"
-THRESHOLDS = (None, -10.0, -5.0, 0.0, 5.0, 10.0)
+# vLLM's /rerank returns sigmoid scores in [0, 1] (the transformers route returns raw logits); thresholds are on that scale.
+THRESHOLDS = (None, 0.1, 0.2, 0.3, 0.5, 0.7, 0.9)
+ROWS_OUT = ROOT / "logs" / "kb-rerank-rows.json"      # per-query (set, category, bm25 top category, rerank top category, score)
 
 
 def q_gap():
@@ -137,7 +139,13 @@ def run_layer(idx, rows, reranker, n_cand, label):
         report["rerank_ms_per_query"] = round(1000 * sum(lat) / max(1, len(lat)), 1)
     else:
         report["bm25 top-1"] = tally(out, ())["bm25 top-1"]
-    print(f"== {label}", json.dumps(report, ensure_ascii=False, indent=1))
+    print(f"== {label}", json.dumps(report, ensure_ascii=False, indent=1), flush=True)
+    try:
+        rows = json.loads(ROWS_OUT.read_text()) if ROWS_OUT.exists() else {}
+        rows[label] = out
+        ROWS_OUT.write_text(json.dumps(rows))
+    except OSError:
+        pass
     return out
 
 
@@ -178,7 +186,9 @@ def main():
     probes, stage = q_gap()
     half_a, half_b = halves()
     idx = ck.CommunityIndex.load()
-    print(json.dumps({"indexed": len(idx.docs), "half_a": len(half_a), "half_b": len(half_b), "probes": len(probes), "model": None if args.dry_run else MODEL}))
+    print(json.dumps({"indexed": len(idx.docs), "half_a": len(half_a), "half_b": len(half_b), "probes": len(probes), "model": None if args.dry_run else MODEL}), flush=True)
+    if ROWS_OUT.exists() and not args.dry_run:
+        ROWS_OUT.unlink()
     import os
     url = os.environ.get("RERANK_URL")
     reranker = None if args.dry_run else (HttpReranker(url) if url else Reranker(args.device))

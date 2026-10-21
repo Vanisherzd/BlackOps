@@ -448,7 +448,7 @@ def evaluate(_):
     held = [json.loads(l) for l in HOLDOUT.read_text(encoding="utf-8").splitlines() if l.strip()] if HOLDOUT.exists() else []
     hits, shown, per_cat = 0, 0, {}
     for r in held:
-        refs = idx.search(" ".join([r["title"], *r["symptom_lines"]]), k=1)
+        refs = ck.rank(" ".join([r["title"], *r["symptom_lines"]]), k=1)      # the live path: BM25, or reranked + floored
         c = per_cat.setdefault(r["category"], Counter())
         c["n"] += 1
         if refs:
@@ -462,12 +462,14 @@ def evaluate(_):
         if not r["symptom_lines"]:
             continue
         s_n += 1
-        refs = idx.search(" ".join(r["symptom_lines"]), k=1)
+        refs = ck.rank(" ".join(r["symptom_lines"]), k=1)
         s_hits += bool(refs) and refs[0][2]["category"] == r["category"]
     share = Counter(d["category"] for d in idx.docs)
     majority = max(share.values()) / max(1, len(idx.docs)) if share else 0
     report["P2"] = {"holdout": len(held), "category_at_1": round(hits / max(1, len(held)), 3),
+                    "wrong_at_1": round((shown - hits) / max(1, len(held)), 3),
                     "returned_a_reference": round(shown / max(1, len(held)), 3), "majority_baseline": round(majority, 3),
+                    "path": "rerank+floor" if ck.RERANK_URL else "bm25",
                     "pass": bool(held) and hits / len(held) >= 0.60 and hits / len(held) >= 2 * majority,
                     "symptom_lines_only": {"n": s_n, "category_at_1": round(s_hits / max(1, s_n), 3)},
                     "by_category": {k: f"{v['hit']}/{v['n']}" for k, v in sorted(per_cat.items())}}
@@ -475,7 +477,7 @@ def evaluate(_):
     # P3: the 38 probe sentences
     rows, right, wrong, none = [], 0, 0, 0
     for cat, q in Q_GAP:
-        refs = [] if ck.stack_covers(q) else idx.search(q, k=2)
+        refs = [] if ck.stack_covers(q) else ck.rank(q, k=2)
         top = refs[0][2] if refs else None
         verdict = "none" if not top else "right" if top["category"] == cat else "wrong"
         right, wrong, none = right + (verdict == "right"), wrong + (verdict == "wrong"), none + (verdict == "none")
@@ -488,7 +490,7 @@ def evaluate(_):
     # latency
     t0 = time.perf_counter()
     for _, q in Q_GAP:
-        idx.search(q, k=2)
+        ck.rank(q, k=2)
     report["latency_ms_per_query"] = round(1000 * (time.perf_counter() - t0) / n, 1)
     print(json.dumps(report, ensure_ascii=False, indent=1))
 

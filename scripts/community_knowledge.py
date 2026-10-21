@@ -77,7 +77,43 @@ class CommunityIndex:
         return out[:k]
 
 
+# Optional cross-encoder reranking (docs/kb-community-20261022.md Gate B): RERANK_URL names a vLLM rerank sidecar
+# (scripts/serve-rerank.sh, nvidia/llama-nemotron-rerank-1b-v2). BM25 keeps the first stage (top RERANK_TOP_N), the
+# reranker orders them and its score decides "no reference" below RERANK_MIN_SCORE. Unset, or any failure, means the
+# BM25 order as before: the sidecar can never take the tool down.
+RERANK_URL = os.environ.get("RERANK_URL", "")
+RERANK_TOP_N = int(os.environ.get("RERANK_TOP_N", "20"))
+RERANK_MIN_SCORE = float(os.environ.get("RERANK_MIN_SCORE", "0.5"))
+RERANK_TIMEOUT = float(os.environ.get("RERANK_TIMEOUT", "5"))
+
 _index = None
+
+
+def rerank(query, cands):
+    """[(rerank_score, shared, doc)] best first, or None when the sidecar did not answer."""
+    import urllib.request
+    try:
+        body = json.dumps({"model": "rerank", "query": query, "top_n": len(cands),
+                           "documents": [f"{d['title']}\n{d['answer_excerpt']}" for _, _, d in cands]}).encode()
+        req = urllib.request.Request(RERANK_URL, data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=RERANK_TIMEOUT) as r:
+            results = json.loads(r.read())["results"]
+        scored = [(float(item["relevance_score"]), cands[item["index"]][1], cands[item["index"]][2]) for item in results]
+        scored.sort(key=lambda x: -x[0])
+        return scored
+    except Exception:
+        return None
+
+
+def rank(query, k=2):
+    """The references the tool would show, best first: reranked and floored when a sidecar answers, BM25 otherwise."""
+    idx = index()
+    if RERANK_URL and idx.docs:
+        cands = idx.search(query, k=RERANK_TOP_N, min_shared=1)
+        scored = rerank(query, cands) if cands else []
+        if scored is not None:
+            return [x for x in scored if x[0] >= RERANK_MIN_SCORE][:k]
+    return idx.search(query, k=k)
 
 
 def index():
@@ -126,6 +162,6 @@ def references(query, k=2):
     try:
         if stack_covers(query):
             return ""
-        return render(index().search(query, k=k))
+        return render(rank(query, k=k))
     except Exception:            # an extra on an extra: never break the tool
         return ""

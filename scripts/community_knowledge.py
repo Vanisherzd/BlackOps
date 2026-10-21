@@ -63,8 +63,12 @@ class CommunityIndex:
         if os.environ.get("KB_COMMUNITY", "1") == "0":
             return cls([])
         if path is None:
+            # v2 (66k documents) only pays off behind the reranker: BM25 alone on v2 was 28/38 right on the probes against
+            # v1's 31/38, while v2 + rerank was 31/38 with held-out category@1 0.776 (docs/kb-community-20261022.md).
+            # So v2 is used when a sidecar is configured (or KB_COMMUNITY_V2=1 forces it); KB_COMMUNITY_V1=1 forces v1.
             shards = sorted(CORPUS_V2.glob("*.jsonl.gz")) if CORPUS_V2.is_dir() else []
-            path = CORPUS_V2 if shards and os.environ.get("KB_COMMUNITY_V1") != "1" else CORPUS
+            want_v2 = os.environ.get("KB_COMMUNITY_V2") == "1" or (RERANK_URL and os.environ.get("KB_COMMUNITY_V1") != "1")
+            path = CORPUS_V2 if shards and want_v2 else CORPUS
         if not path.exists():
             return cls([])
         files = sorted(path.glob("*.jsonl.gz")) if path.is_dir() else [path]

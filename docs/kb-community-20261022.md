@@ -287,7 +287,18 @@ serverfault + unix 完整傾印（CC BY-SA，`scripts/kb-community.py fetch-dump
 資料多了，BM25 的 top-1 在 held-out 上好一點，在 38 句探針上反而多 3 句錯：更大的池子裡近似但不相關的題目更多
 （`ping -M do -s 1472` 排到「SSH 貼大段文字失敗」）。這正是 reranker 該做的事；v2 + rerank 的數字見下一段。
 
-（v2 + rerank：待補。）
+**v2 + rerank（05:05，sidecar :8020）**：
+
+| 路徑 | P2 category@1（held-out 1,139） | P3 對／錯／無 | 每查詢 |
+|---|---|---|---|
+| v1 BM25 | 0.702 | 31／5／2 | 5.5 ms |
+| v1 + rerank | 0.775（半 B） | 33／5／0（無閘門時） | 145 ms |
+| v2 BM25 | 0.722 | 28／8／2 | 63 ms |
+| **v2 + rerank** | **0.776** | **31／5／2** | 98 ms |
+
+結論：類別層面的指標 v2+rerank ≈ v1+rerank；v2 的價值在 10 倍的覆蓋（罕見症狀有題目可配），但 BM25 單獨用 v2 會多配錯，
+所以**規則寫進程式**：有設 `RERANK_URL`（或 `KB_COMMUNITY_V2=1`）才載 v2 分片，否則 v1。分片（每站一個 gzip）在第二批站台
+（askubuntu、dba、networkengineering、devops、raspberrypi）解析完再一次建、一次 commit。
 
 ## 決策與未做的事
 

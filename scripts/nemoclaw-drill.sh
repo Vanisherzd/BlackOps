@@ -7,7 +7,9 @@ echo "=== $(date +%T) reset + inject $CASE"; python scripts/faults.py reset | ta
 PROMPT='Alert: the web stack is degraded. Diagnose it and repair it with your ops tools, then verify both health URLs return 200. Report root cause, actions taken, and final health.'
 # TRIAGE=1: the system takes the first look (scripts/triage.py) and the alert carries it; those calls are made before
 # the log is cleared, so the scorecard counts only what the agent itself called.
-if [ "${TRIAGE:-0}" = "1" ]; then
+# TRIAGE defaults on since 2026-10-22: the stage's watchdog alert carries the triage (WATCH_TRIAGE=1 in stage-up), and a
+# drill should measure the same path; measured 1.2 s of triage against 2-3 fewer model turns (5-7 s). TRIAGE=0 restores the bare alert.
+if [ "${TRIAGE:-1}" = "1" ]; then
   TRI=$(python scripts/triage.py)
   echo "=== $(date +%T) triage ($(printf %s "$TRI" | wc -c) chars)"
   PROMPT="$PROMPT

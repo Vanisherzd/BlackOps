@@ -98,6 +98,16 @@ container-removed 16 s（21）、upstream-500 24 s（28–33）、bad-config 38 
 （原 64–76／42–47／52–77）——牆鐘被模型變異蓋過，品質沒掉。**採用（Spark）**：`SPEC=dspark GPU_MEMORY_UTILIZATION=0.20 scripts/stage-up.sh`；
 serve-vllm 的 generic 與 lightning 路徑都認 SPEC。Thor 的 NGC 映像沒驗過 DSpark／FlashInfer Mamba，不設就是原配方。
 
+### 採用後的舞台（05:07，`SPEC=dspark GPU_MEMORY_UTILIZATION=0.20 scripts/stage-up.sh`）
+
+preflight 與之前相同（只有 `wan`）；dashboard 注入 nginx-stopped → watchdog 開事故 4.9 s → resolved **14.9 s**（原 18.4 s）。
+記憶體（`scripts/mem-profile.sh`，1 Hz，涵蓋 DSpark drill 尾段、兩個 Lightning 實例並存、評測、切換）：vllm-edge RSS 3.55 → 3.69 GiB
+（DSpark +0.15）、rerank sidecar 3.34 GiB、ops-api 1.15–1.30 GiB（bge-small 與知識庫）、sandbox 0.41–0.91 GiB；兩個實例並存時
+MemAvailable 最低 44 GiB，切回單一實例後 74 GiB。這台 vLLM 的 usage 不回 `prompt_tokens_details`（None），所以 shim 記的
+`cached_tokens` 永遠不會出現；前綴快取命中率要從 vLLM 的 `/metrics` 計數器讀（下一輪）。
+
+drill harness：`nemoclaw-drill.sh` 的 `TRIAGE` 改為預設開（與舞台 watchdog 一致；`TRIAGE=0` 回到裸告警）。
+
 ## 給隊友
 
 - Thor 早上：`cd ~/BlackOps && git pull --ff-only && scripts/stage-up.sh`，再跑一次 `demo.md` 的流程。

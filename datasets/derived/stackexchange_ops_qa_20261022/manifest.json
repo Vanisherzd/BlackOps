@@ -1,0 +1,895 @@
+{
+ "schema": "blackout-ops-community-qa/v1",
+ "fetched_at": "2026-10-22T01:09:10+0800",
+ "source": "Stack Exchange API 2.3, search/advanced accepted=True sort=votes, 100 per tag; answers by id",
+ "license": "CC BY-SA (per-row `license`/`answer_license`; attribution = link + owner fields)",
+ "api_calls": 197,
+ "quota_remaining": 99,
+ "questions_seen": 9349,
+ "incident_like": 7706,
+ "answers_fetched": 7706,
+ "dropped_short_answer": 111,
+ "rows": 7595,
+ "by_site": {
+  "serverfault": 4709,
+  "unix": 2886
+ },
+ "by_category": {
+  "hardware": 918,
+  "disk_fs": 956,
+  "tls_time": 619,
+  "network": 1102,
+  "memory_process": 705,
+  "app": 227,
+  "permissions": 632,
+  "boot_packages": 896,
+  "service": 587,
+  "virtualization": 424,
+  "docker": 354,
+  "k8s": 175
+ },
+ "by_license": {
+  "CC BY-SA 3.0": 4700,
+  "CC BY-SA 2.5": 714,
+  "CC BY-SA 4.0": 2181
+ },
+ "per_tag": [
+  {
+   "site": "serverfault",
+   "tag": "ipmi",
+   "category": "hardware",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "serverfault",
+   "tag": "ecc",
+   "category": "hardware",
+   "returned": 45,
+   "new": 45
+  },
+  {
+   "site": "serverfault",
+   "tag": "nvidia",
+   "category": "hardware",
+   "returned": 25,
+   "new": 25
+  },
+  {
+   "site": "serverfault",
+   "tag": "gpu",
+   "category": "hardware",
+   "returned": 12,
+   "new": 10
+  },
+  {
+   "site": "serverfault",
+   "tag": "pcie",
+   "category": "hardware",
+   "returned": 0,
+   "new": 0
+  },
+  {
+   "site": "serverfault",
+   "tag": "temperature",
+   "category": "hardware",
+   "returned": 0,
+   "new": 0
+  },
+  {
+   "site": "serverfault",
+   "tag": "ups",
+   "category": "hardware",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "serverfault",
+   "tag": "power-supply",
+   "category": "hardware",
+   "returned": 0,
+   "new": 0
+  },
+  {
+   "site": "serverfault",
+   "tag": "smart",
+   "category": "hardware",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "serverfault",
+   "tag": "raid",
+   "category": "hardware",
+   "returned": 100,
+   "new": 98
+  },
+  {
+   "site": "serverfault",
+   "tag": "mdadm",
+   "category": "hardware",
+   "returned": 100,
+   "new": 89
+  },
+  {
+   "site": "serverfault",
+   "tag": "hard-drive",
+   "category": "hardware",
+   "returned": 100,
+   "new": 80
+  },
+  {
+   "site": "serverfault",
+   "tag": "nvme",
+   "category": "hardware",
+   "returned": 46,
+   "new": 44
+  },
+  {
+   "site": "unix",
+   "tag": "nvidia",
+   "category": "hardware",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "unix",
+   "tag": "raid",
+   "category": "hardware",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "unix",
+   "tag": "mdadm",
+   "category": "hardware",
+   "returned": 100,
+   "new": 55
+  },
+  {
+   "site": "unix",
+   "tag": "hard-disk",
+   "category": "hardware",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "serverfault",
+   "tag": "proxmox",
+   "category": "virtualization",
+   "returned": 100,
+   "new": 99
+  },
+  {
+   "site": "serverfault",
+   "tag": "ceph",
+   "category": "virtualization",
+   "returned": 77,
+   "new": 71
+  },
+  {
+   "site": "serverfault",
+   "tag": "kvm-virtualization",
+   "category": "virtualization",
+   "returned": 100,
+   "new": 99
+  },
+  {
+   "site": "serverfault",
+   "tag": "libvirt",
+   "category": "virtualization",
+   "returned": 100,
+   "new": 74
+  },
+  {
+   "site": "unix",
+   "tag": "kvm",
+   "category": "virtualization",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "unix",
+   "tag": "libvirt",
+   "category": "virtualization",
+   "returned": 100,
+   "new": 79
+  },
+  {
+   "site": "serverfault",
+   "tag": "kubernetes",
+   "category": "k8s",
+   "returned": 100,
+   "new": 98
+  },
+  {
+   "site": "serverfault",
+   "tag": "kubectl",
+   "category": "k8s",
+   "returned": 29,
+   "new": 24
+  },
+  {
+   "site": "serverfault",
+   "tag": "etcd",
+   "category": "k8s",
+   "returned": 28,
+   "new": 26
+  },
+  {
+   "site": "serverfault",
+   "tag": "kubeadm",
+   "category": "k8s",
+   "returned": 54,
+   "new": 44
+  },
+  {
+   "site": "serverfault",
+   "tag": "docker",
+   "category": "docker",
+   "returned": 100,
+   "new": 97
+  },
+  {
+   "site": "serverfault",
+   "tag": "docker-compose",
+   "category": "docker",
+   "returned": 100,
+   "new": 89
+  },
+  {
+   "site": "serverfault",
+   "tag": "containers",
+   "category": "docker",
+   "returned": 100,
+   "new": 88
+  },
+  {
+   "site": "serverfault",
+   "tag": "overlayfs",
+   "category": "docker",
+   "returned": 6,
+   "new": 6
+  },
+  {
+   "site": "unix",
+   "tag": "docker",
+   "category": "docker",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "serverfault",
+   "tag": "disk-space-utilization",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "serverfault",
+   "tag": "filesystems",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 93
+  },
+  {
+   "site": "serverfault",
+   "tag": "ext4",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 80
+  },
+  {
+   "site": "serverfault",
+   "tag": "xfs",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 85
+  },
+  {
+   "site": "serverfault",
+   "tag": "nfs",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "serverfault",
+   "tag": "lvm",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 80
+  },
+  {
+   "site": "serverfault",
+   "tag": "inode",
+   "category": "disk_fs",
+   "returned": 60,
+   "new": 48
+  },
+  {
+   "site": "unix",
+   "tag": "disk-usage",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 98
+  },
+  {
+   "site": "unix",
+   "tag": "filesystems",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "unix",
+   "tag": "ext4",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 90
+  },
+  {
+   "site": "unix",
+   "tag": "xfs",
+   "category": "disk_fs",
+   "returned": 91,
+   "new": 88
+  },
+  {
+   "site": "unix",
+   "tag": "nfs",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 98
+  },
+  {
+   "site": "unix",
+   "tag": "lvm",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 84
+  },
+  {
+   "site": "unix",
+   "tag": "inode",
+   "category": "disk_fs",
+   "returned": 100,
+   "new": 83
+  },
+  {
+   "site": "serverfault",
+   "tag": "memory",
+   "category": "memory_process",
+   "returned": 100,
+   "new": 92
+  },
+  {
+   "site": "serverfault",
+   "tag": "out-of-memory",
+   "category": "memory_process",
+   "returned": 0,
+   "new": 0
+  },
+  {
+   "site": "serverfault",
+   "tag": "swap",
+   "category": "memory_process",
+   "returned": 100,
+   "new": 88
+  },
+  {
+   "site": "serverfault",
+   "tag": "ulimit",
+   "category": "memory_process",
+   "returned": 82,
+   "new": 80
+  },
+  {
+   "site": "serverfault",
+   "tag": "file-descriptors",
+   "category": "memory_process",
+   "returned": 12,
+   "new": 11
+  },
+  {
+   "site": "serverfault",
+   "tag": "zombie-process",
+   "category": "memory_process",
+   "returned": 0,
+   "new": 0
+  },
+  {
+   "site": "serverfault",
+   "tag": "kernel-panic",
+   "category": "memory_process",
+   "returned": 38,
+   "new": 37
+  },
+  {
+   "site": "serverfault",
+   "tag": "kernel",
+   "category": "memory_process",
+   "returned": 100,
+   "new": 90
+  },
+  {
+   "site": "serverfault",
+   "tag": "load-average",
+   "category": "memory_process",
+   "returned": 42,
+   "new": 41
+  },
+  {
+   "site": "unix",
+   "tag": "out-of-memory",
+   "category": "memory_process",
+   "returned": 88,
+   "new": 88
+  },
+  {
+   "site": "unix",
+   "tag": "swap",
+   "category": "memory_process",
+   "returned": 100,
+   "new": 90
+  },
+  {
+   "site": "unix",
+   "tag": "ulimit",
+   "category": "memory_process",
+   "returned": 86,
+   "new": 81
+  },
+  {
+   "site": "unix",
+   "tag": "kernel-panic",
+   "category": "memory_process",
+   "returned": 99,
+   "new": 98
+  },
+  {
+   "site": "unix",
+   "tag": "kernel",
+   "category": "memory_process",
+   "returned": 100,
+   "new": 93
+  },
+  {
+   "site": "serverfault",
+   "tag": "ssl",
+   "category": "tls_time",
+   "returned": 100,
+   "new": 99
+  },
+  {
+   "site": "serverfault",
+   "tag": "ssl-certificate",
+   "category": "tls_time",
+   "returned": 100,
+   "new": 63
+  },
+  {
+   "site": "serverfault",
+   "tag": "openssl",
+   "category": "tls_time",
+   "returned": 100,
+   "new": 76
+  },
+  {
+   "site": "serverfault",
+   "tag": "certificate",
+   "category": "tls_time",
+   "returned": 100,
+   "new": 73
+  },
+  {
+   "site": "serverfault",
+   "tag": "ntp",
+   "category": "tls_time",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "serverfault",
+   "tag": "chrony",
+   "category": "tls_time",
+   "returned": 31,
+   "new": 28
+  },
+  {
+   "site": "serverfault",
+   "tag": "timezone",
+   "category": "tls_time",
+   "returned": 100,
+   "new": 97
+  },
+  {
+   "site": "unix",
+   "tag": "openssl",
+   "category": "tls_time",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "unix",
+   "tag": "ntp",
+   "category": "tls_time",
+   "returned": 100,
+   "new": 100
+  },
+  {
+   "site": "serverfault",
+   "tag": "networking",
+   "category": "network",
+   "returned": 100,
+   "new": 97
+  },
+  {
+   "site": "serverfault",
+   "tag": "iptables",
+   "category": "network",
+   "returned": 100,
+   "new": 88
+  },
+  {
+   "site": "serverfault",
+   "tag": "nftables",
+   "category": "network",
+   "returned": 100,
+   "new": 99
+  },
+  {
+   "site": "serverfault",
+   "tag": "firewall",
+   "category": "network",
+   "returned": 100,
+   "new": 72
+  },
+  {
+   "site": "serverfault",
+   "tag": "routing",
+   "category": "network",
+   "returned": 100,
+   "new": 90
+  },
+  {
+   "site": "serverfault",
+   "tag": "mtu",
+   "category": "network",
+   "returned": 70,
+   "new": 69
+  },
+  {
+   "site": "serverfault",
+   "tag": "arp",
+   "category": "network",
+   "returned": 100,
+   "new": 95
+  },
+  {
+   "site": "serverfault",
+   "tag": "bonding",
+   "category": "network",
+   "returned": 100,
+   "new": 96
+  },
+  {
+   "site": "serverfault",
+   "tag": "conntrack",
+   "category": "network",
+   "returned": 32,
+   "new": 32
+  },
+  {
+   "site": "serverfault",
+   "tag": "dhcp",
+   "category": "network",
+   "returned": 100,
+   "new": 91
+  },
+  {
+   "site": "serverfault",
+   "tag": "vlan",
+   "category": "network",
+   "returned": 100,
+   "new": 91
+  },
+  {
+   "site": "serverfault",
+   "tag": "linux-networking",
+   "category": "network",
+   "returned": 100,
+   "new": 78
+  },
+  {
+   "site": "serverfault",
+   "tag": "dns",
+   "category": "network",
+   "returned": 0,
+   "new": 0
+  },
+  {
+   "site": "serverfault",
+   "tag": "bind",
+   "category": "network",
+   "returned": 100,
+   "new": 95
+  },
+  {
+   "site": "unix",
+   "tag": "networking",
+   "category": "network",
+   "returned": 100,
+   "new": 96
+  },
+  {
+   "site": "unix",
+   "tag": "iptables",
+   "category": "network",
+   "returned": 100,
+   "new": 93
+  },
+  {
+   "site": "unix",
+   "tag": "routing",
+   "category": "network",
+   "returned": 100,
+   "new": 87
+  },
+  {
+   "site": "unix",
+   "tag": "dns",
+   "category": "network",
+   "returned": 100,
+   "new": 92
+  },
+  {
+   "site": "serverfault",
+   "tag": "nginx",
+   "category": "service",
+   "returned": 100,
+   "new": 88
+  },
+  {
+   "site": "serverfault",
+   "tag": "apache-2.4",
+   "category": "service",
+   "returned": 100,
+   "new": 93
+  },
+  {
+   "site": "serverfault",
+   "tag": "systemd",
+   "category": "service",
+   "returned": 100,
+   "new": 92
+  },
+  {
+   "site": "serverfault",
+   "tag": "haproxy",
+   "category": "service",
+   "returned": 100,
+   "new": 97
+  },
+  {
+   "site": "serverfault",
+   "tag": "php-fpm",
+   "category": "service",
+   "returned": 100,
+   "new": 85
+  },
+  {
+   "site": "unix",
+   "tag": "systemd",
+   "category": "service",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "unix",
+   "tag": "nginx",
+   "category": "service",
+   "returned": 100,
+   "new": 97
+  },
+  {
+   "site": "serverfault",
+   "tag": "ssh",
+   "category": "permissions",
+   "returned": 100,
+   "new": 91
+  },
+  {
+   "site": "serverfault",
+   "tag": "permissions",
+   "category": "permissions",
+   "returned": 100,
+   "new": 81
+  },
+  {
+   "site": "serverfault",
+   "tag": "sudo",
+   "category": "permissions",
+   "returned": 100,
+   "new": 95
+  },
+  {
+   "site": "serverfault",
+   "tag": "selinux",
+   "category": "permissions",
+   "returned": 100,
+   "new": 93
+  },
+  {
+   "site": "unix",
+   "tag": "ssh",
+   "category": "permissions",
+   "returned": 100,
+   "new": 93
+  },
+  {
+   "site": "unix",
+   "tag": "permissions",
+   "category": "permissions",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "unix",
+   "tag": "sudo",
+   "category": "permissions",
+   "returned": 100,
+   "new": 86
+  },
+  {
+   "site": "unix",
+   "tag": "selinux",
+   "category": "permissions",
+   "returned": 100,
+   "new": 96
+  },
+  {
+   "site": "serverfault",
+   "tag": "grub",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 90
+  },
+  {
+   "site": "serverfault",
+   "tag": "fstab",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 93
+  },
+  {
+   "site": "serverfault",
+   "tag": "apt",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 89
+  },
+  {
+   "site": "serverfault",
+   "tag": "dpkg",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 86
+  },
+  {
+   "site": "serverfault",
+   "tag": "yum",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "serverfault",
+   "tag": "cron",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "serverfault",
+   "tag": "logrotate",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "serverfault",
+   "tag": "rsyslog",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 93
+  },
+  {
+   "site": "unix",
+   "tag": "grub",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "unix",
+   "tag": "fstab",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 82
+  },
+  {
+   "site": "unix",
+   "tag": "apt",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 96
+  },
+  {
+   "site": "unix",
+   "tag": "dpkg",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 92
+  },
+  {
+   "site": "unix",
+   "tag": "cron",
+   "category": "boot_packages",
+   "returned": 100,
+   "new": 94
+  },
+  {
+   "site": "serverfault",
+   "tag": "java",
+   "category": "app",
+   "returned": 100,
+   "new": 87
+  },
+  {
+   "site": "serverfault",
+   "tag": "mysql",
+   "category": "app",
+   "returned": 100,
+   "new": 86
+  },
+  {
+   "site": "serverfault",
+   "tag": "postgresql",
+   "category": "app",
+   "returned": 100,
+   "new": 81
+  },
+  {
+   "site": "serverfault",
+   "tag": "redis",
+   "category": "app",
+   "returned": 100,
+   "new": 94
+  }
+ ],
+ "sha256_qa": "ef27ec9d52cd43f4c38f34750101d700f45f915f2e75973a0c7e2c6b661293f7",
+ "build": {
+  "seed": 20261022,
+  "holdout_fraction": 0.15,
+  "indexed": 6456,
+  "holdout": 1139,
+  "indexed_by_category": {
+   "hardware": 780,
+   "disk_fs": 813,
+   "tls_time": 526,
+   "network": 937,
+   "app": 193,
+   "permissions": 537,
+   "memory_process": 599,
+   "boot_packages": 762,
+   "service": 499,
+   "virtualization": 360,
+   "docker": 301,
+   "k8s": 149
+  },
+  "sha256_index": "70f4ebc0a0b05dafc16a299b9b3d2e96d982bb10224b27a4915a00eb6507557e",
+  "sha256_holdout": "123aa1b7287537d8ab40c7242b76d9b403647ae4feab63c9d7bed7e7be58347b",
+  "index_bytes": 9504669
+ }
+}

@@ -164,6 +164,19 @@ Gate 3 看 drill 牆鐘：MTP 的 8 場 drill 跑中。
 `compound-triple`（前端設定壞＋後端停＋後端改埠，三層三因）、`upstream-log-flood-500`（upstream-500 埋在 3,000 行 heartbeat
 通知裡，考「在雜訊裡找那一行」）。目錄現在 36 個案例、10 個 tier；全目錄 regression（`scripts/regression.sh`）排在引擎決定之後。
 
+## Agent 框架：今晚併入 main 的四個旗標（全部預設關或與現況等價）
+
+| 項目 | 旗標 | 做什麼 | 驗證狀態 |
+|---|---|---|---|
+| `evidence_bundle` 工具 | 無（唯讀工具，直接列出） | 一呼叫平行收齊：兩個健康 URL、docker_ps、兩個容器的 log（含 runbook）、站台設定、8880、磁碟；6000 字上限、一筆 trace | 單元測試通過；drill 行為待 regression（agent 自己決定用不用） |
+| 平行專家診斷 `parallel_diagnosis` | `AGENT_MODE=adaptive` | service／platform 兩個**唯讀**專家（no-think、≤4 輪、各自工具子集、越界即拒）並行＋知識查詢；合併出一致／衝突／待查；動作仍只走原工具＋reviewer＋審批。觸發是確定性的：動作後健康仍紅的那一行 | 單元測試通過；要用 compound／datacenter drill 比 single（Gate 2：成功率或 RC 正確率或 MTTR 要變好，made-worse 0） |
+| 已驗證事故記憶 | `INCIDENT_MEMORY`（預設開；recall 空時無影響） | watchdog 在 resolved 時把症狀、動作順序、原因、驗證寫進 `logs/incident-memory.jsonl`；`search_incident_knowledge` 先回「本 stack 自己修過」 | 單元測試通過；第一筆記憶要等真實事故結案 |
+| 資源 governor | `RESOURCE_GOVERNOR=1` | MemAvailable 門檻決定 specialist 並行數、reranker 開關、語料 v1/v2 | 單元測試通過 |
+
+Watchdog 本來就在：2 s 巡檢兩個健康 URL、連兩次失敗開事故、triage 第一眼、派 sandbox agent（量到 4 s 偵測、15 s 結案）。
+正在加的是「更多感官」（`WATCH_SIGNALS=1`，Codex 進行中）：容器狀態與重啟次數、nginx `[emerg]/[crit]`、磁碟／inode 門檻、docker events
+（die／oom／kill）——讓「表面健康但在壞」的狀況在健康 URL 倒下之前就被看到。
+
 ## 外部建議（GPT 的 04:06 路線圖）可行性審查（06:50）
 
 逐條對照我們量到的數字，不照單全收：

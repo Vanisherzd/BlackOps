@@ -5,10 +5,11 @@
 #   scripts/wan.sh down --yes     # cut (needs sudo iptables; --yes because on a shared host it cuts everyone)
 #   scripts/wan.sh up             # restore
 #   scripts/wan.sh status         # "online" | "offline sandbox_blocked=<n> other_blocked=<n>"
-# SANDBOX_NET (default 172.24.0.0/16, README section 10) is the sandbox bridge; confirm it on the box with
-# `docker network inspect` before the stage. Only it is counted apart, so the OS's NTP or apt does not move the
+# SANDBOX_NET is the sandbox bridge, read from the openshell-docker network (Spark 172.24.0.0/16, Thor 172.19.0.0/16);
+# 172.24.0.0/16 if that network is missing. Only it is counted apart, so the OS's NTP or apt does not move the
 # counter the audience sees. sudoers needs only iptables and ip6tables for this script.
 CHAIN=BLACKOUT_WAN
+SANDBOX_NET="${SANDBOX_NET:-$(docker network inspect openshell-docker --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}' 2>/dev/null | awk '{print $1}')}"
 SANDBOX_NET="${SANDBOX_NET:-172.24.0.0/16}"
 PRIV4="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 127.0.0.0/8 169.254.0.0/16 100.64.0.0/10 224.0.0.0/4 255.255.255.255/32"
 PRIV6="::1/128 fe80::/10 fc00::/7 ff00::/8"

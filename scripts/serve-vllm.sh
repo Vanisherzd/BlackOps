@@ -17,14 +17,23 @@
 #   scripts/serve-vllm.sh status               container, health, served models
 # Examples (docs/thor-bringup.md):
 #   VLLM_PROFILE=generic IMAGE=nvcr.io/nvidia/vllm:26.01-py3 MODEL_ID=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 \
-#     REASONING_PARSER=nano_v3 scripts/serve-vllm.sh
-#   VLLM_PROFILE=generic IMAGE=nvcr.io/nvidia/vllm:26.01-py3 MODEL_ID=nvidia/NVIDIA-Nemotron-3.5-Bolt-74B-A9B-24GB \
-#     REASONING_PARSER=ultra_v3 scripts/serve-vllm.sh
+#     REASONING_PARSER=nano_v3 EXTRA_ARGS="--kv-cache-dtype fp8" \
+#     VLLM_ENV="VLLM_USE_FLASHINFER_MOE_FP4=1 VLLM_FLASHINFER_MOE_BACKEND=throughput" scripts/serve-vllm.sh
+#     (Thor, from the model card: without the FlashInfer MoE env the NVFP4 MoE fails "Non-gated activations are only
+#     supported by the flashinfer CUTLASS backend". The first start JIT-compiles FlashInfer for sm_110, 30+ min: use
+#     READY_TIMEOUT=3600; the kernels land in COMPILE_CACHE and later starts reuse them.)
+#   Bolt-74B-A9B-24GB does not run on Thor (2026-10-21): its block-quantized dense weights need b12x, built for SM12x
+#   (GB10) only, and the NGC 26.01 image's transformers is too old for its remote code.
 # Environment (both profiles): MODEL_ID, PORT (8000), HOST (0.0.0.0), NAME (vllm-edge), SERVED_NAME (edge-agent),
 #   GPU_MEMORY_UTILIZATION (0.45), MAX_MODEL_LEN (32768), MAX_NUM_SEQS (2), HF_HOME, HF_HUB_OFFLINE (1),
 #   GPU_FLAGS (--runtime nvidia on a Jetson, --gpus all elsewhere). DRY_RUN=1 (generic): print the docker command only.
+#   READY_TIMEOUT (900 s). MIN_AVAIL_GB (12, Jetson only): while waiting, remove the container if MemAvailable drops
+#   below it; with no swap, running out freezes the box and only a power cycle brings it back.
 # generic only: IMAGE, TOOL_PARSER (qwen3_coder), REASONING_PARSER (none), EXTRA_ARGS, ENTRY ("vllm serve" unless the
 #   image's own entrypoint is the server, as in vllm/vllm-openai and blackbox-vllm-bolt).
+#   VLLM_ENV: space-separated NAME=VALUE pairs passed into the container. COMPILE_CACHE ($HOME/.cache): its flashinfer/
+#   and vllm-compile/ are mounted so JIT kernels and torch.compile output survive the container. MAX_JOBS (4 on a
+#   Jetson): parallel kernel compiles; unbounded, 49 nvcc jobs took MemAvailable from 78 to 25 GB on Thor.
 # The box has no swap and one inference server takes about half of it: this refuses to start beside trtllm-edge or a
 # second vLLM server on the same port.
 set -euo pipefail
@@ -55,15 +64,22 @@ if health; then
 fi
 
 wait_ready() {   # /health, then the served name in /v1/models (a server can be healthy before the model is listed)
-  local i
-  for i in $(seq 1 180); do
+  local i avail limit=$(( ${READY_TIMEOUT:-900} / 5 ))
+  for i in $(seq 1 "$limit"); do
     if health && curl -s "http://127.0.0.1:$PORT/v1/models" | grep -q "\"$SERVED_NAME\""; then
       echo "ready: $SERVED_NAME on :$PORT ($PROFILE)"; return 0
     fi
     docker ps --format '{{.Names}}' | grep -qx "$NAME" || { echo "container $NAME exited; docker logs $NAME" >&2; return 1; }
+    if [ -f /etc/nv_tegra_release ]; then
+      avail=$(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo)
+      if [ "$avail" -lt "${MIN_AVAIL_GB:-12}" ]; then
+        docker rm -f "$NAME" >/dev/null 2>&1
+        echo "MemAvailable ${avail} GB < ${MIN_AVAIL_GB:-12} GB: removed $NAME before the box runs out" >&2; return 1
+      fi
+    fi
     sleep 5
   done
-  echo "not ready after 15 min; docker logs $NAME" >&2; return 1
+  echo "not ready after ${READY_TIMEOUT:-900} s; docker logs $NAME" >&2; return 1
 }
 
 case "$PROFILE" in
@@ -86,7 +102,14 @@ case "$PROFILE" in
           --max-model-len "${MAX_MODEL_LEN:-32768}" --max-num-seqs "${MAX_NUM_SEQS:-2}"
           --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION:-0.45}" --enable-chunked-prefill --trust-remote-code
           --enable-auto-tool-choice --tool-call-parser "${TOOL_PARSER:-qwen3_coder}")
-    MOUNTS=(-v "${HF_HOME:-$HOME/.cache/huggingface}:/root/.cache/huggingface")
+    CC="${COMPILE_CACHE:-$HOME/.cache}"
+    mkdir -p "$CC/flashinfer" "$CC/vllm-compile"
+    MOUNTS=(-v "${HF_HOME:-$HOME/.cache/huggingface}:/root/.cache/huggingface"
+            -v "$CC/flashinfer:/root/.cache/flashinfer" -v "$CC/vllm-compile:/root/.cache/vllm")
+    ENVS=(-e HF_HUB_OFFLINE -e HF_HOME=/root/.cache/huggingface)
+    JOBS="${MAX_JOBS:-$([ -f /etc/nv_tegra_release ] && echo 4)}"
+    [ -n "$JOBS" ] && ENVS+=(-e "MAX_JOBS=$JOBS" -e FLASHINFER_NVCC_THREADS=1)
+    for kv in ${VLLM_ENV:-}; do ENVS+=(-e "$kv"); done
     # Nemotron checkpoints ship their reasoning parser as a plugin file (Nano: nano_v3_reasoning_parser.py in the
     # model repo; Bolt: ultra_v3, vendored under deploy/vllm/). Found in the HF cache, it is passed as a plugin; the
     # cache is mounted at the same relative path, so the container sees it too.
@@ -102,15 +125,14 @@ case "$PROFILE" in
     # shellcheck disable=SC2206
     [ -n "${EXTRA_ARGS:-}" ] && ARGS+=($EXTRA_ARGS)
     if [ "${DRY_RUN:-0}" = "1" ]; then                       # print what would run; start nothing
-      echo docker run -d --name "$NAME" $GPU_FLAGS --ipc host --network host --restart no -e HF_HUB_OFFLINE \
-        -e HF_HOME=/root/.cache/huggingface "${MOUNTS[@]}" "$IMAGE" $ENTRY "$MODEL_ID" "${ARGS[@]}"; exit 0
+      echo docker run -d --name "$NAME" $GPU_FLAGS --ipc host --network host --restart no "${ENVS[@]}" \
+        "${MOUNTS[@]}" "$IMAGE" $ENTRY "$MODEL_ID" "${ARGS[@]}"; exit 0
     fi
     mkdir -p logs
     # shellcheck disable=SC2086
     printf '%s\n' "$IMAGE" $ENTRY "$MODEL_ID" "${ARGS[@]}" > logs/vllm-edge-args.txt
     # shellcheck disable=SC2086
-    docker run -d --name "$NAME" $GPU_FLAGS --ipc host --network host --restart no \
-      -e HF_HUB_OFFLINE -e HF_HOME=/root/.cache/huggingface "${MOUNTS[@]}" \
+    docker run -d --name "$NAME" $GPU_FLAGS --ipc host --network host --restart no "${ENVS[@]}" "${MOUNTS[@]}" \
       "$IMAGE" $ENTRY "$MODEL_ID" "${ARGS[@]}" >/dev/null
     echo "started $NAME: $IMAGE $MODEL_ID (args in logs/vllm-edge-args.txt)"
     wait_ready ;;

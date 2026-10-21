@@ -55,7 +55,7 @@
 | 第一階段（BM25／FTS5）recall@20／@50 | 0.98／0.99 | held-out 1,139 題（從未進索引） |
 | 類別代理 category@1 | v1 BM25 0.70 → v1+rerank 0.775；159k+rerank 0.765 | 類別標籤只有 34% 與真相關一致，**別拿這個當品質** |
 | **真相關（LLM 判官）**：第 1 名對題／前 5 名有對題 | held-out：6%／13%／25%（BM25／rerank 第 1／前 5）；機房探針 38 句：v1 29%／45%，**159k 語料 42%／74%** | `scripts/kb-judge.py`；判官 = Lightning no-think 一個字 |
-| 上線規則 | BM25/FTS5 top-50 → rerank（讀問題＋答案）→ **判官閘門**（只給判官說 yes 的） | 預設開；沒對題就不給 |
+| 上線規則 | **159k 語料（FTS5）top-50 → rerank（讀問題＋答案）→ 判官閘門**（只給判官說 yes 的）；FTS5 後端探針 45%／71% | 預設；沒對題就不給 |
 | 檢索延遲 | BM25 5.5 ms（6k）／FTS5 44 ms（159k）；rerank 145 ms（安靜）～1.2 s（滿載） | 只在明確呼叫知識工具時付 |
 | 修復卡 phrase gate | 漏推 0/8 → 6/8；誤推 3 → 0 | `scripts/kb-gate-probe.py` |
 | 一次性診斷 benchmark（63 題、封閉標籤） | Lightning strict 6%，RAG 無幫助 | 這題不是 KB 的用途，誠實列出 |

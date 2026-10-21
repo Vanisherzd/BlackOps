@@ -170,6 +170,43 @@ class FtsIndex:
 
 
 FTS_PATH = CORPUS.with_name("community.sqlite")
+
+
+def build_fts(sources=None, out=None):
+    """kb/artifacts/community.sqlite from the v2 shards (default) or any list of jsonl/jsonl.gz files: docs table + FTS5
+    over index_text. Rebuildable and gitignored; ops_api builds it at start when the shards are there and it is not."""
+    import gzip
+    import sqlite3
+    sources = sources if sources is not None else sorted(CORPUS_V2.glob("*.jsonl.gz"))
+    out = out or FTS_PATH
+    tmp = out.with_suffix(".sqlite.tmp")
+    if tmp.exists():
+        tmp.unlink()
+    con = sqlite3.connect(tmp)
+    con.execute("CREATE TABLE docs (id TEXT, site TEXT, title TEXT, tags TEXT, category TEXT, score INTEGER, link TEXT, owner TEXT, "
+                "license TEXT, answer_owner TEXT, answer_license TEXT, answer_id INTEGER, answer_excerpt TEXT, index_text TEXT)")
+    con.execute("CREATE VIRTUAL TABLE fts USING fts5(index_text, content='docs', content_rowid='rowid', tokenize='unicode61')")
+    n = 0
+    for f in sources:
+        text = gzip.open(f, "rt", encoding="utf-8").read() if str(f).endswith(".gz") else pathlib.Path(f).read_text(encoding="utf-8")
+        rows = []
+        for l in text.splitlines():
+            if not l.strip():
+                continue
+            d = json.loads(l)
+            rows.append((d["id"], d["site"], d["title"], json.dumps(d.get("tags", [])), d["category"], d.get("score", 0), d["link"],
+                         d.get("owner", ""), d.get("license", ""), d.get("answer_owner", ""), d.get("answer_license", ""),
+                         d.get("answer_id"), d["answer_excerpt"], d["index_text"]))
+        con.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+        n += len(rows)
+    con.execute("INSERT INTO fts(fts) VALUES('rebuild')")
+    con.execute("INSERT INTO fts(fts) VALUES('optimize')")
+    con.commit()
+    con.close()
+    tmp.replace(out)
+    return n
+
+
 _index = None
 
 
@@ -223,10 +260,14 @@ def rank(query, k=2):
 
 
 def index():
-    """COMMUNITY_BACKEND=fts5 (and the sqlite file present) selects FtsIndex; otherwise the in-memory CommunityIndex."""
+    """Default since 2026-10-22 07:15: the 7-site corpus on SQLite FTS5 when kb/artifacts/community.sqlite exists (built by
+    ops_api at start from the shards, or `kb-community.py build-fts`), because with rerank + the judge gate it gives
+    on-topic references for 71-74 % of the datacenter probes against v1's 45 %, at a few MB of RAM. COMMUNITY_BACKEND=
+    python forces the in-memory index (v1, or v2 with KB_COMMUNITY_V2=1); KB_COMMUNITY=0 disables the layer."""
     global _index
     if _index is None:
-        if os.environ.get("COMMUNITY_BACKEND") == "fts5" and FTS_PATH.exists() and os.environ.get("KB_COMMUNITY", "1") != "0":
+        backend = os.environ.get("COMMUNITY_BACKEND", "fts5")
+        if backend == "fts5" and FTS_PATH.exists() and os.environ.get("KB_COMMUNITY", "1") != "0" and os.environ.get("KB_COMMUNITY_V1") != "1":
             _index = FtsIndex(FTS_PATH)
         else:
             _index = CommunityIndex.load()

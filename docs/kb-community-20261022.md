@@ -342,6 +342,11 @@ EDAC、cron），全部 no 的是硬體／UPS／GPU Xid／K8s／Proxmox／Ceph�
 覆蓋率 45% 對比之前「100% 給、71% 不對題」。接著量 159k 語料 + 判官：如果硬體／K8s／Proxmox 那些句子在大語料裡有對題的候選，
 「大語料＋rerank＋判官」就是知識工具該用的組合（判官解掉了當初擋住 v2 的誤導問題）。
 
+**159k 語料 + rerank + 判官，38 句探針（10:05）**：Python 索引第 1 名對題 **42.1%**／前 5 名 **73.7%**；FTS5 後端 **44.7%／71.1%**——
+兩個後端等價，FTS5 只要幾 MB 記憶體。**知識工具預設改為：v2 分片（FTS5）→ rerank top-50 → 判官閘門**；ops_api 啟動時若有分片而沒有
+sqlite 就自己建（159k 約一分鐘，一次）。`COMMUNITY_BACKEND=python` 或 `KB_COMMUNITY_V1=1` 可退回。這一刻起，Gate 1 的結論改寫：
+用類別代理量不出來的價值，用真相關量出來了——大語料的意義是覆蓋，precision 靠判官守。
+
 ## 決策與未做的事
 
 - 社群層只進 `search_incident_knowledge`；`knowledge_note`、runbook 檢索、reviewer、guards 一律不變。

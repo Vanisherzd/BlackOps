@@ -451,37 +451,13 @@ def build(argv):
 
 # ---------------------------------------------------------------- SQLite FTS5 build
 def build_fts(argv):
-    """kb/artifacts/community.sqlite from the v2 shards (or v1 with --v1): docs table + FTS5 over index_text. Rebuildable,
-    gitignored (~300 MB at 159k documents); the runtime uses it with COMMUNITY_BACKEND=fts5."""
-    import gzip, sqlite3
+    """kb/artifacts/community.sqlite from the v2 shards (or v1 with --v1); the build itself lives in community_knowledge."""
     import community_knowledge as ck
-    src = [INDEX] if "--v1" in argv else sorted(ck.CORPUS_V2.glob("*.jsonl.gz"))
-    out = ck.FTS_PATH
-    if out.exists():
-        out.unlink()
-    con = sqlite3.connect(out)
-    con.execute("CREATE TABLE docs (id TEXT, site TEXT, title TEXT, tags TEXT, category TEXT, score INTEGER, link TEXT, owner TEXT, "
-                "license TEXT, answer_owner TEXT, answer_license TEXT, answer_id INTEGER, answer_excerpt TEXT, index_text TEXT)")
-    con.execute("CREATE VIRTUAL TABLE fts USING fts5(index_text, content='docs', content_rowid='rowid', tokenize='unicode61')")
-    n = 0
+    src = [INDEX] if "--v1" in argv else None
     t0 = time.time()
-    for f in src:
-        text = gzip.open(f, "rt", encoding="utf-8").read() if str(f).endswith(".gz") else f.read_text(encoding="utf-8")
-        rows = []
-        for l in text.splitlines():
-            if not l.strip():
-                continue
-            d = json.loads(l)
-            rows.append((d["id"], d["site"], d["title"], json.dumps(d.get("tags", [])), d["category"], d.get("score", 0), d["link"],
-                         d.get("owner", ""), d.get("license", ""), d.get("answer_owner", ""), d.get("answer_license", ""),
-                         d.get("answer_id"), d["answer_excerpt"], d["index_text"]))
-        con.executemany("INSERT INTO docs VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
-        n += len(rows)
-    con.execute("INSERT INTO fts(fts) VALUES('rebuild')")
-    con.execute("INSERT INTO fts(fts) VALUES('optimize')")
-    con.commit(); con.close()
-    print(json.dumps({"docs": n, "sources": [str(f.relative_to(ROOT)) for f in src], "bytes": out.stat().st_size,
-                      "seconds": round(time.time() - t0, 1), "out": str(out.relative_to(ROOT))}))
+    n = ck.build_fts(src)
+    print(json.dumps({"docs": n, "sources": "v1" if src else "community_v2 shards", "bytes": ck.FTS_PATH.stat().st_size,
+                      "seconds": round(time.time() - t0, 1), "out": str(ck.FTS_PATH.relative_to(ROOT))}))
 
 
 # ---------------------------------------------------------------- eval

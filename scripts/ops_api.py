@@ -124,6 +124,9 @@ def warm_community_index():
     so the agent's first search_incident_knowledge call does not pay for it. Failures stay silent: the layer is an extra."""
     try:
         import community_knowledge
+        if (not community_knowledge.FTS_PATH.exists() and community_knowledge.CORPUS_V2.is_dir()
+                and any(community_knowledge.CORPUS_V2.glob("*.jsonl.gz")) and os.environ.get("COMMUNITY_BACKEND", "fts5") == "fts5"):
+            community_knowledge.build_fts()          # ~a minute for 159k documents, once per checkout
         community_knowledge.index()
     except Exception:
         pass

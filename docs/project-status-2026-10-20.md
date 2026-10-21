@@ -15,7 +15,7 @@
 ## 2. 分支與 repo
 
 - GitHub：`Vanisherzd/BlackOps`。`main` 上有 #1–#8（#7 是 wan.sh 修正，#8 是 DGX 故障知識）。
-- **`feat/thor-stage-up`**：Thor 上機的全部修正與文件，已合併最新 `main`（含 #8），等 PR。Thor 的 `~/BlackOps` 目前就跑這個分支的內容。
+- **PR #9（`feat/thor-stage-up`）已於 10/21 晚上合併進 `main`**（`166c8ed`）：Thor 上機的全部修正與文件，含 #8。Thor 的 `~/BlackOps` 在 `main` 上。
 - Thor：`~/BlackOps`（symlink `~/edge-agent`）。ssh 請用**有線**介面 `nv@192.168.1.108`（Wi-Fi 的 .184 會掉包）。
 - 往後的 commit 一律用 `penny11124 <92087067+penny11124@users.noreply.github.com>`。
 - 組員的分支都沒動過。
@@ -54,7 +54,7 @@
 ## 6. 要做的事
 
 **10/22 早上（到 11:00）**
-1. **合併 `feat/thor-stage-up` 的 PR**（負責人：penny11124），Thor 上 `cd ~/BlackOps && git pull --ff-only`，再 `scripts/stage-up.sh`。
+1. ~~合併 `feat/thor-stage-up` 的 PR~~：已完成（PR #9）。Thor 若重開機或服務掛了：`cd ~/BlackOps && git pull --ff-only && scripts/stage-up.sh`。
 2. 再跑一次完整舞台彩排（`docs/demo.md` §3），其中一次從台上的筆電經會場網路操作 dashboard。
 3. 錄一場最乾淨的 Thor 實跑當回放素材（`logs/runs/`），同步到兩台筆電。
 

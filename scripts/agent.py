@@ -22,13 +22,13 @@ import urllib.parse
 import urllib.request
 
 from openai import OpenAI
+from ops_safety import diagnostic_argv, restore_config_file
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONF_DIR = (ROOT / "victim" / "conf.d").resolve()
 RUNBOOKS = ROOT / "runbooks"
 NAMES = {"edge-victim", "edge-victim-app"}
 HEALTH = {"front": "http://127.0.0.1:8880/", "api": "http://127.0.0.1:8880/api/"}
-EXEC_ALLOW = ("nginx -t", "nginx -T", "cat ", "ls", "ps", "curl", "df", "du", "tail", "head", "grep", "id", "env")
 UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / journal identifier
 
 # --- retrieval discipline ----------------------------------------------------------------------------------------
@@ -286,7 +286,7 @@ TOOLS = [
     {"name": "check_health", "description": "HTTP status of the front-end and /api/ health URLs", "parameters": {"type": "object", "properties": {}}},
     {"name": "docker_ps", "description": "State of the two containers (docker ps -a), with any memory limit and whether the kernel OOM-killed them", "parameters": {"type": "object", "properties": {}}},
     {"name": "docker_logs", "description": "Last lines of a container's logs", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "tail": {"type": "integer", "default": 40}}, "required": ["name"]}},
-    {"name": "docker_exec", "description": "Run a read-only diagnostic command inside a running container (nginx -t, cat, ls, ps, curl, df, du, tail, head, grep)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "cmd": {"type": "string"}}, "required": ["name", "cmd"]}},
+    {"name": "docker_exec", "description": "Run one diagnostic inside a container, without a shell (nginx -t/-T, cat, ls, ps, df, du, tail without follow, head, grep, id, env with no arguments). curl is GET/HEAD only to localhost, stack containers or private IP literals; no writes, uploads, custom config or redirects", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "cmd": {"type": "string"}}, "required": ["name", "cmd"]}},
     {"name": "docker_start", "description": "Start a stopped container", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "docker_restart", "description": "Restart a container (needed after a config change)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "read_config", "description": "Read the front end's (edge-victim's) nginx site config, a host file mounted at /etc/nginx/conf.d/default.conf. edge-victim-app has its own file at that path inside its container: docker_exec cat", "parameters": {"type": "object", "properties": {}}},
@@ -310,7 +310,7 @@ TOOLS = [
 
 
 def sh(cmd, timeout=30, limit=4000):
-    r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+    r = subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True, text=True, timeout=timeout)
     out = (r.stdout + r.stderr).strip()
     if not out:
         return f"(exit {r.returncode}, no output)"
@@ -593,13 +593,16 @@ def _run_tool(name, args, dry_run):
                     return attach_named(out, runbook)
         return attach_runbook(out, query)
     if name == "docker_exec":
-        cmd = args["cmd"].strip()
-        if not cmd.startswith(EXEC_ALLOW) or any(t in cmd for t in (";", "&&", "|", ">", "`", "$(")):
-            return ("denied: docker_exec runs one read-only command (nginx -t, cat, ls, ps, curl, df, du, tail, head, "
-                    "grep, id, env) with no ; && | > ` or $(. Next: one such command, e.g. "
-                    '{"name": "edge-victim-app", "cmd": "df -h /"}; to change state use the action tools '
-                    "(write_config, docker_start/docker_restart, network_repair, recreate_stack, clear_scratch_volume).")
-        return guard(args["name"]) or sh(f"docker exec {args['name']} sh -c {json.dumps(cmd)}")
+        denied = guard(args["name"])
+        if denied:
+            return denied
+        try:
+            command = diagnostic_argv(args["cmd"])
+        except ValueError as error:
+            return (f"denied: {error}. Next: use one read-only diagnostic, e.g. "
+                    '{"name": "edge-victim-app", "cmd": "df -h /"}. '
+                    "Use action tools for changes; curl only supports GET/HEAD without file output or redirects.")
+        return sh(["docker", "exec", args["name"], *command])
     if name in ("docker_start", "docker_restart"):
         d = guard(args["name"])
         if d:
@@ -642,15 +645,17 @@ def _run_tool(name, args, dry_run):
         (CONF_DIR / "default.conf").write_text(content)
         return "written, but not applied: nginx only reads it on start. Call docker_restart {\"name\": \"edge-victim\"} now."
     if name == "restore_config":
-        src = KNOWN_GOOD if args.get("source", "known-good") != "previous" else PREVIOUS
+        source = args.get("source", "known-good")
+        if source not in ("known-good", "previous"):
+            return "error: restore_config source must be known-good or previous"
+        src = KNOWN_GOOD if source == "known-good" else PREVIOUS
         if not src.exists():
             return (f"error: no {args.get('source', 'known-good')} copy exists. Next: read_config, then write_config the "
                     "complete corrected file.")
         if dry_run:
             return f"DRY-RUN: would restore {src.name}"
         KNOWN_GOOD_DIR.mkdir(parents=True, exist_ok=True)
-        PREVIOUS.write_text((CONF_DIR / "default.conf").read_text())
-        (CONF_DIR / "default.conf").write_text(src.read_text())
+        restore_config_file(CONF_DIR / "default.conf", src, PREVIOUS)
         return (f"restored {src.name} into default.conf (the replaced file is kept as previous.conf), not applied yet: "
                 'nginx reads it on start. Next: docker_restart {"name": "edge-victim"}.')
     if name == "search_runbooks":

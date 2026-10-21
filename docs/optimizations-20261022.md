@@ -77,6 +77,23 @@ sudo，Thor 有）。
 watchdog 走的真實事故（02:26）：偵測 2–4 s → triage 1.2 s → 啟動 2.35 s → 3 輪 5.5/2.6/2.8 s → docker_start 1.4 s → 15.2 s 結案；
 triage 讓第一輪 prompt 多 2.7k tokens，但少 2–3 輪（省 5–7 s）。
 
+### 推論加速：DSpark speculative decoding（model card 的 DGX Spark 配方，04:35–04:42）
+
+Lightning 的 model card 在 Spark 上推薦 DSpark drafter（`nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark`，1.35 GB，
+`--speculative_config.num_speculative_tokens 3 --mamba-backend flashinfer`）；舞台配方沒用它。開第二個實例（:8002，util 0.20）跟現役
+的（:8000）同一組 prompt 跑 `scripts/decode-bench.py`（temperature 0、thinking on、各 3 次取中位）：
+
+| prompt | 現役 tok/s | DSpark tok/s | 加速 | chars/token（現役 → DSpark） |
+|---|---|---|---|---|
+| tool-turn（2.4k prompt，86 tokens） | 51.4 | **65.1** | +27% | 2.81 → 2.73 |
+| report（1.8k prompt，700 tokens） | 67.4 | **100.3** | +49% | 3.93 → 3.92 |
+| long-context（8.9k prompt，700 tokens） | 68.0 | **91.0** | +34% | 3.71 → 3.57 |
+
+輸出密度一樣（上次 NGram 壞掉時 chars/token 崩到一個字；這次沒有；`report` 兩邊都被 bench 標 OUTPUT BROKEN 是那個 prompt 自己把 700 tokens
+想完，A/B 相同）。容器 RSS 4.08 GiB 對 3.57 GiB（+0.5 GB），unified memory 多一份 draft 權重。speculative decoding 帶驗證在理論上不改分布，
+但 2026-10-19 NGram 的教訓是「量過才算」：drill 品質驗證見下。啟用方式：`SPEC=dspark scripts/serve-vllm.sh`（lightning profile 的選配；
+Thor 不設就是原配方）。
+
 ## 給隊友
 
 - Thor 早上：`cd ~/BlackOps && git pull --ff-only && scripts/stage-up.sh`，再跑一次 `demo.md` 的流程。

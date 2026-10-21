@@ -13,9 +13,8 @@ from collections import Counter
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CORPUS = ROOT / "kb" / "artifacts" / "community_v1.jsonl"
-# API rows + the archive.org dumps; used when present (KB_COMMUNITY_V1=1 forces v1); the .gz form is what git carries
-CORPUS_V2 = next((p for p in (CORPUS.with_name("community_v2.jsonl"), CORPUS.with_name("community_v2.jsonl.gz")) if p.exists()),
-                 CORPUS.with_name("community_v2.jsonl.gz"))
+# API rows + the archive.org dumps as per-site gzip shards; used when the directory has shards (KB_COMMUNITY_V1=1 forces v1)
+CORPUS_V2 = CORPUS.with_name("community_v2")
 
 MIN_SHARED = 2          # a reference needs at least this many distinct query tokens in the document, else "no reference"
 K1, B = 1.2, 0.75       # KnowledgeBaseV2's defaults
@@ -61,16 +60,23 @@ class CommunityIndex:
 
     @classmethod
     def load(cls, path=None):
-        if path is None:
-            path = CORPUS_V2 if CORPUS_V2.exists() and os.environ.get("KB_COMMUNITY_V1") != "1" else CORPUS
-        if os.environ.get("KB_COMMUNITY", "1") == "0" or not path.exists():
+        if os.environ.get("KB_COMMUNITY", "1") == "0":
             return cls([])
-        if str(path).endswith(".gz"):
-            import gzip
-            text = gzip.open(path, "rt", encoding="utf-8").read()
-        else:
-            text = path.read_text(encoding="utf-8")
-        return cls([json.loads(l) for l in text.splitlines() if l.strip()])
+        if path is None:
+            shards = sorted(CORPUS_V2.glob("*.jsonl.gz")) if CORPUS_V2.is_dir() else []
+            path = CORPUS_V2 if shards and os.environ.get("KB_COMMUNITY_V1") != "1" else CORPUS
+        if not path.exists():
+            return cls([])
+        files = sorted(path.glob("*.jsonl.gz")) if path.is_dir() else [path]
+        docs = []
+        for f in files:
+            if str(f).endswith(".gz"):
+                import gzip
+                text = gzip.open(f, "rt", encoding="utf-8").read()
+            else:
+                text = f.read_text(encoding="utf-8")
+            docs += [json.loads(l) for l in text.splitlines() if l.strip()]
+        return cls(docs)
 
     def search(self, query, k=2, min_shared=MIN_SHARED):
         """[(score, shared_tokens, doc)] best first; only documents sharing >= min_shared distinct query tokens."""

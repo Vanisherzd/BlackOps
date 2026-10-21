@@ -7,7 +7,7 @@ written before any data was fetched: docs/kb-community-20261022.md.
   .venv/bin/python scripts/kb-community.py probe "<text>"   what the agent's tool would append for this sentence
   .venv/bin/python scripts/kb-community.py fetch-dump <site> <Posts.xml> <Users.xml>
                                                             the archive.org data dump of one site -> dump-<site>.jsonl (same rows; no API quota)
-  .venv/bin/python scripts/kb-community.py build --dump     index = API rows + dump rows, v1 hold-out excluded by id -> kb/artifacts/community_v2.jsonl
+  .venv/bin/python scripts/kb-community.py build --dump     index = API rows + dump rows, v1 hold-out excluded by id -> kb/artifacts/community_v2/<site>.jsonl.gz
 
 Stdlib only. The API needs no key: 300 requests per IP per day, 100 items per request; `backoff` is honoured.
 Content is CC BY-SA (2.5 before 2011-04-08, 3.0 before 2018-05-02, 4.0 after); every row keeps link, author and licence.
@@ -65,6 +65,29 @@ for _cat, _sites in TAGS:
     for _tags in _sites.values():
         for _t in _tags:
             TAG_CATEGORY.setdefault(_t, _cat)
+# Dump-only sites (no API fetch) and the tags they use for the same twelve categories. Windows-only tags are left out
+# on purpose: a reference the agent can act on has to be about a Linux host, a container or a network.
+DUMP_HOSTS = {"serverfault": "serverfault.com", "unix": "unix.stackexchange.com", "askubuntu": "askubuntu.com",
+              "devops": "devops.stackexchange.com", "networkengineering": "networkengineering.stackexchange.com",
+              "dba": "dba.stackexchange.com", "raspberrypi": "raspberrypi.stackexchange.com", "superuser": "superuser.com"}
+EXTRA_TAG_CATEGORY = {
+    "hardware": ["drivers", "nvidia-graphics", "gpu", "sd-card", "power", "power-supply", "temperature", "usb", "hard-drive", "ssd", "raid", "smart"],
+    "virtualization": ["proxmox", "ceph", "kvm", "qemu", "libvirt", "virtualbox", "lxd", "lxc", "vmware"],
+    "k8s": ["kubernetes", "kubectl", "helm", "etcd", "kubeadm", "minikube", "openshift"],
+    "docker": ["docker", "docker-compose", "containers", "podman", "dockerfile", "containerd"],
+    "disk_fs": ["filesystem", "filesystems", "mount", "partitioning", "ext4", "xfs", "btrfs", "zfs", "nfs", "lvm", "disk-space", "disk-usage", "fstab", "inode"],
+    "memory_process": ["memory", "ram", "swap", "out-of-memory", "kernel", "kernel-panic", "cpu", "cpu-load", "process", "ulimit", "performance"],
+    "tls_time": ["ssl", "tls", "certificates", "openssl", "ntp", "time", "timezone", "date", "lets-encrypt"],
+    "network": ["networking", "network", "dns", "dhcp", "routing", "router", "switch", "vlan", "mtu", "arp", "bgp", "ospf", "ipv4", "ipv6",
+                "firewall", "iptables", "nftables", "ufw", "nat", "wireless", "ethernet", "bonding", "bridge", "vpn", "wireguard", "openvpn", "cisco", "spanning-tree", "lacp"],
+    "service": ["nginx", "apache2", "apache-2.4", "systemd", "services", "haproxy", "php-fpm", "server", "web-server"],
+    "permissions": ["ssh", "permissions", "sudo", "selinux", "apparmor", "chmod", "chown", "users", "authentication"],
+    "boot_packages": ["grub", "grub2", "boot", "apt", "dpkg", "yum", "dnf", "snap", "package-management", "upgrade", "cron", "logrotate", "rsyslog", "journald", "uefi", "initramfs"],
+    "app": ["java", "mysql", "mariadb", "postgresql", "redis", "mongodb", "sql-server", "oracle", "replication", "backup", "jenkins", "ansible", "terraform", "ci-cd", "gitlab"],
+}
+for _cat, _tags in EXTRA_TAG_CATEGORY.items():
+    for _t in _tags:
+        TAG_CATEGORY.setdefault(_t, _cat)
 CATEGORY_ORDER = [c for c, _ in TAGS]
 
 SYMPTOM_RE = re.compile(r"error|fail|denied|refused|time(d)? ?out|cannot|can't|unable|no space|emerg|crit|warn|exit|kill"
@@ -294,7 +317,7 @@ def fetch_dump(argv):
     accepted answers. Users.xml gives the display names the licence asks us to credit. Rows match the API schema."""
     import xml.etree.ElementTree as ET
     site, posts, users = argv[2], pathlib.Path(argv[3]), pathlib.Path(argv[4])
-    host = {"serverfault": "serverfault.com", "unix": "unix.stackexchange.com"}[site]
+    host = DUMP_HOSTS[site]
     names = {}
     for _, el in ET.iterparse(str(users), events=("end",)):
         if el.tag == "row":
@@ -373,12 +396,26 @@ def build(argv):
                  "category": r["category"], "score": r["score"], "link": r["link"], "owner": r["owner"], "license": r["license"],
                  "answer_owner": r["answer_owner"], "answer_license": r["answer_license"], "answer_id": r["accepted_answer_id"],
                  "index_text": index_text(r), "answer_excerpt": excerpt(r["answer_text"])} for r in rows]
-        out = INDEX.with_name("community_v2.jsonl")
-        out.write_text("".join(json.dumps(d, ensure_ascii=False) + "\n" for d in docs), encoding="utf-8")
+        import gzip
+        shard_dir = INDEX.with_name("community_v2")
+        shard_dir.mkdir(exist_ok=True)
+        for old_shard in shard_dir.glob("*.jsonl.gz"):
+            old_shard.unlink()
+        shards = {}
+        for d in docs:
+            shards.setdefault(d["site"], []).append(d)
+        sizes = {}
+        for site_name, ds in sorted(shards.items()):
+            out = shard_dir / f"{site_name}.jsonl.gz"
+            with gzip.open(out, "wt", encoding="utf-8", compresslevel=9) as f:
+                f.write("".join(json.dumps(d, ensure_ascii=False) + "\n" for d in ds))
+            sizes[site_name] = {"docs": len(ds), "bytes": out.stat().st_size, "sha256": hashlib.sha256(out.read_bytes()).hexdigest()[:16]}
+        legacy = INDEX.with_name("community_v2.jsonl")
+        if legacy.exists():
+            legacy.unlink()                      # superseded by the shards; the loader reads the directory
         m = json.loads(MANIFEST.read_text(encoding="utf-8"))
         m["build_v2"] = {"indexed": len(docs), "holdout_excluded": len(held), "by_category": dict(Counter(d["category"] for d in docs)),
-                         "by_site": dict(Counter(d["site"] for d in docs)), "sha256_index": hashlib.sha256(out.read_bytes()).hexdigest(),
-                         "index_bytes": out.stat().st_size}
+                         "by_site": dict(Counter(d["site"] for d in docs)), "shards": sizes, "shard_dir": str(shard_dir.relative_to(ROOT))}
         MANIFEST.write_text(json.dumps(m, ensure_ascii=False, indent=1), encoding="utf-8")
         print(json.dumps(m["build_v2"], ensure_ascii=False, indent=1))
         return

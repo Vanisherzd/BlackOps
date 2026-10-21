@@ -75,6 +75,28 @@ class HostDispatchTest(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
+    def setUp(self):
+        # these tests act inside an incident: the stack is down, whatever the real health URLs say
+        health = patch.object(self.agent, "http_status", return_value=500)
+        health.start()
+        self.addCleanup(health.stop)
+
+    def test_healthy_stack_refuses_state_changes(self):
+        with patch.object(self.agent, "http_status", return_value=200), patch.object(self.agent, "sh") as run:
+            for name, args in (("docker_restart", {"name": "edge-victim"}), ("write_config", {"content": "x"}),
+                               ("restore_config", {"source": "known-good"})):
+                with self.subTest(tool=name):
+                    result = self.agent._run_tool(name, args, False)
+                    self.assertTrue(result.startswith("refused: (automatic rule) the stack is healthy"), result)
+            run.assert_not_called()
+
+    def test_healthy_guard_can_be_switched_off(self):
+        with patch.object(self.agent, "http_status", return_value=200), \
+                patch.dict(self.agent.os.environ, {"HEALTHY_GUARD": "0"}), \
+                patch.dict(self.agent._incident, runbook_seen=False, refusals=0):
+            result = self.agent._run_tool("docker_restart", {"name": "edge-victim"}, False)
+        self.assertNotIn("the stack is healthy", result)
+
     def test_existing_diagnostic_forms_are_not_newly_denied(self):
         commands = [
             "nginx -t", "nginx -t -c /tmp/custom.conf", "df -h /", "du -sh /var/cache/nginx /tmp",

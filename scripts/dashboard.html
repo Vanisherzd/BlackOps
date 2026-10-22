@@ -384,7 +384,7 @@ function connect(){
   };
   es.onerror = () => {};
 }
-setInterval(() => { if (Date.now() - lastSeen > 5000) pill($('p-link'), '連不到 Thor（改用回放）', 'bad'); }, 1000);
+setInterval(() => { if (Date.now() - lastSeen > 5000) pill($('p-link'), '資料流重新連線中…', 'warn'); }, 1000);
 
 function loadBoard(){
   // nginx's catch-all answers 200 text/plain until /board/ exists, so only an HTML answer is the board

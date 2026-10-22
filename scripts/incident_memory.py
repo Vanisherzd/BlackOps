@@ -92,7 +92,7 @@ def _index():
                 record = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            record["index_text"] = " ".join([*record.get("symptoms", []), str(record.get("root_cause", ""))])
+            record["index_text"] = " ".join([*record.get("symptoms", []), *record.get("containers", []), str(record.get("root_cause", ""))])
             docs.append(record)
         _cache_key, _cache_index = key, CommunityIndex(docs)
     return _cache_index

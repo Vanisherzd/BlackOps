@@ -21,7 +21,7 @@ section h2{font-size:13px;color:var(--dim);margin:0 0 8px;font-weight:600;letter
 .lights{display:flex;gap:16px}
 .light{flex:1;padding:14px;border-radius:8px;text-align:center;font-size:16px;font-weight:600;background:#222}
 .light.ok{background:rgba(47,191,113,.15);color:var(--ok)}.light.bad{background:rgba(229,72,77,.18);color:var(--bad)}
-iframe{width:100%;height:220px;border:1px solid var(--line);border-radius:6px;margin-top:10px;background:#fff;display:none}
+iframe{width:100%;height:220px;border:1px solid var(--line);border-radius:6px;margin-top:10px;background:var(--bg);color-scheme:dark;display:none}
 #trace{height:62vh;overflow-y:auto;font:13px/1.45 system-ui,-apple-system,"Noto Sans TC",sans-serif}
 .legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin:-2px 0 8px;font-size:12px;color:var(--dim)}
 .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
@@ -181,6 +181,10 @@ function phaseOf(r){
   if (r.tool === 'check_health') return ['驗證', 'verify'];
   return ['觀察', 'obs'];
 }
+function fmtStatus(st){
+  if (st && typeof st === 'object') return Object.entries(st).map(([k, v]) => (k === 'front' ? '前端' : k === 'api' ? 'API' : k) + ' ' + (v === 200 ? '200' : (v || '無回應'))).join(' / ');
+  return String(st).replace(/"front":\s*/g, '前端 ').replace(/"api":\s*/g, 'API ').replace(/[{}"]/g, '');
+}
 function firstLine(txt, re){ const m = String(txt || '').split('\n').find(l => re.test(l)); return m ? m.trim() : ''; }
 function explain(r){
   const a = r.args || {}, txt = String(r.text || '');
@@ -189,8 +193,17 @@ function explain(r){
   else if (r.cls === 'denied') bad = '被拒絕：' + short(txt.replace(/^denied:\s*/, ''), 160);
   else if (r.cls === 'review-rejected') bad = '審核代理否決：' + short(txt.replace(/^review-rejected:\s*/, ''), 160);
   else if (r.src === 'review') { what = (txt.startsWith('APPROVE') ? '審核通過：' : '審核否決：') + r.tool; sub = short(txt.replace(/^(APPROVE|REJECT):\s*/, ''), 160); }
-  else if (r.src === 'incident') { what = '事故 ' + r.tool; sub = short(txt, 140); }
-  else if (r.src === 'tier') { what = '推論模式 ' + r.tool; sub = short(txt, 120); }
+  else if (r.src === 'incident') {
+    let d = {}; try { d = JSON.parse(txt); } catch (err) {}
+    const st = d.status ? ' · 健康 ' + fmtStatus(d.status) : '';
+    what = ({open: d.dispatched ? '巡檢發現異常，開事故並派工給 agent' : `巡檢發現異常，開事故（${d.why === 'drill in progress' ? '演練進行中，只觀察不派工' : d.why === 'dry-run' ? '乾跑' : (d.why || '未派工')}）`,
+             close: `事故結案：${d.outcome === 'resolved' ? '服務恢復' : d.outcome || ''}${d.seconds != null ? '，共 ' + d.seconds + ' s' : ''}`,
+             'agent-done': 'agent 回報完成', 'agent-done-unhealthy': 'agent 結束了但服務仍異常', timeout: 'agent 逾時，巡檢接手',
+             signal: `訊號層：${d.signal || ''}${d.severity ? '（' + d.severity + '）' : ''}`,
+             'previous-agent-stopped': '停掉上一場殘留的 agent', 'agent-stopped-after-close': '結案後把還在跑的 agent 收掉'})[r.tool] || ('事故事件 ' + r.tool);
+    sub = (d.id ? '事故 ' + d.id : '') + st + (d.rc != null ? ' · 結束碼 ' + d.rc : '') + (d.detail ? ' · ' + short(d.detail, 100) : '');
+  }
+  else if (r.src === 'tier') { let d = {}; try { d = JSON.parse(txt); } catch (err) {} what = `推論模式切到 Tier-${d.tier != null ? d.tier : r.tool.replace(/\D/g, '')}${d.mode ? '（' + d.mode + '）' : ''}`; sub = d.reason ? short(d.reason, 120) : ''; }
   else {
     if (r.tool === 'check_health') { const m = txt.match(/\{[^}]*\}/); if (m) sub = '結果：' + m[0].replace(/"front":\s*/, '前端 ').replace(/"api":\s*/, 'API ').replace(/[{}"]/g, ''); }
     else if (r.tool === 'docker_ps') sub = short(txt.split('\n').filter(Boolean).slice(0, 3).join(' · ').replace(/\t/g, ' '), 140);
@@ -277,10 +290,11 @@ function render(s){
   $('k-wan').textContent = wan;
   const m = wan.match(/sandbox_blocked=(\d+)/); $('k-blocked').textContent = m ? `${m[1]} 次被擋（成功 0）` : (online ? '—' : '?');
   $('k-channel').textContent = offline ? 'Jetson 本機（外網不可用）' : 'Jetson 本機';
-  $('k-mode').textContent = s.approval_mode; $('k-watchdog').textContent = s.watchdog ? '規則巡檢中（不推論）' : '未啟動';
+  $('k-mode').textContent = ({manual: '風險動作需人工核准', auto: '自動（演練）', off: '關閉'}[s.approval_mode] || s.approval_mode);
+  $('k-watchdog').textContent = s.watchdog ? '巡檢中（每 2 s 探測兩個 URL，不推論；異常連兩次即開事故）' : (s.drill_running ? '演練模式：由演練腳本代為注入與派工，結束後自動恢復巡檢' : '未啟動');
   pending = s.approval;
   $('approval').style.display = pending ? 'block' : 'none';
-  if (pending){ $('a-action').textContent = `${pending.action} ${JSON.stringify(pending.args || {})}`; $('a-reason').textContent = pending.reason || ''; }
+  if (pending){ $('a-action').textContent = (ZH[pending.action] || (() => pending.action))(pending.args || {}); $('a-reason').textContent = (pending.reason || '') + `　（${pending.action} ${JSON.stringify(pending.args || {})}）`; }
   document.querySelectorAll('.act').forEach(b => b.disabled = !s.actions || s.drill_running);
 }
 

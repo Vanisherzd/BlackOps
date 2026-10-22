@@ -65,3 +65,10 @@ class MemoryPushTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StatePathMemoryTest(MemoryPushTest):
+    def test_container_state_line_recalls_with_two_shared_terms(self):
+        incident_memory.record_drill("upstream-down", self.tmp / "ops-api.log", "", 21.0, self.tmp / "agent.out")
+        note = agent.memory_note("edge-victim\tUp 3 seconds\nedge-victim-app\tExited (0) 5 seconds ago", min_shared=2)
+        self.assertIn("own verified recovery", note)

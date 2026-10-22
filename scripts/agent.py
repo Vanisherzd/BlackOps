@@ -180,7 +180,8 @@ def attach_named(result, name):
     if not body:
         return result
     _incident["runbook_seen"] = True
-    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}"
+    # a container state is a short line ("edge-victim-app  Exited (0)"): two shared terms with a recorded recovery is a match
+    return f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}" + memory_note(result[:300], min_shared=2)
 
 
 def attach_runbook(result, query, *, container=None):
@@ -204,17 +205,20 @@ def attach_runbook(result, query, *, container=None):
             + memory_note(query) + community_push(query))
 
 
-def memory_note(query):
+def memory_note(query, min_shared=3):
     """This stack's own verified recovery for the same symptom (scripts/incident_memory.py), pushed with the runbook the
-    way the runbook itself is pushed. Only a close match (three shared symptom terms), one line, never raising. It is
-    a record of what worked here last time, not a licence: the cause has to match again before the action is repeated."""
+    way the runbook itself is pushed. Only a close match (three shared terms for a log line, two for a container-state
+    line, which has fewer words), one line, never raising, logged as a tool-layer row. It is a record of what worked
+    here last time, not a licence: the cause has to match again before the action is repeated."""
     if os.environ.get("INCIDENT_MEMORY", "1") == "0" or not query:
         return ""
+    t0 = time.time()
     try:
         import incident_memory
-        hits = incident_memory.recall(query, k=1, min_shared=3)
+        hits = incident_memory.recall(query, k=1, min_shared=min_shared)
     except Exception:
         return ""
+    _oplog("memory_push", {"query": query[:120]}, f"{len(hits)} hit", t0)
     if not hits:
         return ""
     return ("\n\n--- this stack's own verified recovery for this symptom (incident memory: confirm the cause still matches "

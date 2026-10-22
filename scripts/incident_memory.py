@@ -4,6 +4,7 @@ import os
 import pathlib
 import re
 import socket
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MEMORY_FILE = ROOT / "logs" / "incident-memory.jsonl"
@@ -97,17 +98,57 @@ def _index():
     return _cache_index
 
 
-def recall(query, k=2):
+def record_drill(case, log_path, alert, seconds, report_path=None):
+    """A drill that ended with both URLs healthy is a verified recovery of this stack, the same as a stage incident the
+    watchdog records: the ops-api rows of that drill (tool-layer rows excluded), the agent's report for the cause.
+    The drill prompt is not passed as a symptom: it is the same text for every drill and would make every record
+    share words with every query. DRILL_MEMORY=0 in nemoclaw-drill.sh keeps drills out of the memory."""
+    rows = []
+    for line in pathlib.Path(log_path).read_text(errors="replace").splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("from") != "tool-layer":
+            rows.append(row)
+    report = pathlib.Path(report_path).read_text(errors="replace") if report_path and pathlib.Path(report_path).exists() else ""
+    now = time.time()
+    memory = memory_from_archive({"id": f"drill-{case}-{int(now)}", "ts": now - float(seconds), "seconds": round(float(seconds), 1),
+                                  "alert": "", "final_health": {"front": 200, "api": 200}, "ops_api": rows, "reviews": [],
+                                  "agent_output": report})
+    memory["source"] = "drill"
+    memory["case"] = case
+    return record(memory)
+
+
+def recall(query, k=2, min_shared=1):
+    """Verified recoveries whose symptoms share at least min_shared terms with the query. The pull path keeps 1; the
+    push next to the runbook asks for 3, so a different fault that merely mentions nginx twice is not offered."""
     if os.environ.get("INCIDENT_MEMORY", "1") == "0":
         return []
     index = _index()
     if index is None:
         return []
     out = []
-    for _, _, incident in index.search(query, k=k, min_shared=1):
+    for _, _, incident in index.search(query, k=k, min_shared=min_shared):
         date = datetime.datetime.fromtimestamp(float(incident["ts"])).date().isoformat()
         actions = "; ".join(f"{action['tool']} {json.dumps(action['args'], ensure_ascii=False, sort_keys=True)}"
                             for action in incident.get("actions", [])) or "no state-changing action recorded"
         out.append(f"this stack recovered from the same symptom on {date} in {incident['seconds']} s: {actions}; "
                    f"cause: {incident.get('root_cause', '')}; verified {incident['verification']['health']}")
     return out
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="incident memory: record a verified drill recovery")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    rd = sub.add_parser("record-drill")
+    rd.add_argument("--case", required=True)
+    rd.add_argument("--log", required=True)
+    rd.add_argument("--alert", default="")
+    rd.add_argument("--seconds", type=float, required=True)
+    rd.add_argument("--report", default=None)
+    a = ap.parse_args()
+    ok = record_drill(a.case, a.log, a.alert, a.seconds, a.report)
+    print(f"incident memory: {'recorded' if ok else 'not recorded'} {a.case}")

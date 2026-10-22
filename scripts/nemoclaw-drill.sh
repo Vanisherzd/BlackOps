@@ -22,8 +22,14 @@ $TRI"
 fi
 : > logs/ops-api.log
 echo "=== $(date +%T) NemoClaw agent turn"
-timeout 900 nemoclaw edge-agent agent --agent main --session-id "drill-$(date +%s)" -m "$PROMPT" 2>&1 | grep -vE "UNDICI|trace-warnings|^\s*$|Active gateway|^\[gateway\]" | cut -c1-500
-echo "=== $(date +%T) verify"; python scripts/faults.py verify
+T0=$(date +%s)
+timeout 900 nemoclaw edge-agent agent --agent main --session-id "drill-$(date +%s)" -m "$PROMPT" 2>&1 | grep -vE "UNDICI|trace-warnings|^\s*$|Active gateway|^\[gateway\]" | cut -c1-500 | tee logs/drill-agent.out
+echo "=== $(date +%T) verify"; python scripts/faults.py verify; VERIFY_RC=$?
+# a verified recovery becomes this stack's incident memory (scripts/incident_memory.py), as the watchdog does on the
+# stage; the next incident with the same symptom gets it next to the runbook. DRILL_MEMORY=0 keeps drills out of it.
+if [ "$VERIFY_RC" = 0 ] && [ "${DRILL_MEMORY:-1}" = 1 ]; then
+  python scripts/incident_memory.py record-drill --case "$CASE" --log logs/ops-api.log --seconds $(( $(date +%s) - T0 )) --report logs/drill-agent.out | tail -1
+fi
 echo "=== ops-api.log (what the sandbox agent called)"
 python3 - <<'PY'
 import json

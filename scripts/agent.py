@@ -192,7 +192,24 @@ def attach_runbook(result, query, *, container=None):
     # Keep the existing runbook ranking, but preserve log ownership for the repair-knowledge lookup.
     knowledge_query = f"{container} {query}" if container else query
     return (f"{result}\n\n--- matching runbook, read it before you act ---\n## {name}\n{body[:1500]}" + knowledge_note(knowledge_query)
-            + community_push(query))
+            + memory_note(query) + community_push(query))
+
+
+def memory_note(query):
+    """This stack's own verified recovery for the same symptom (scripts/incident_memory.py), pushed with the runbook the
+    way the runbook itself is pushed. Only a close match (three shared symptom terms), one line, never raising. It is
+    a record of what worked here last time, not a licence: the cause has to match again before the action is repeated."""
+    if os.environ.get("INCIDENT_MEMORY", "1") == "0" or not query:
+        return ""
+    try:
+        import incident_memory
+        hits = incident_memory.recall(query, k=1, min_shared=3)
+    except Exception:
+        return ""
+    if not hits:
+        return ""
+    return ("\n\n--- this stack's own verified recovery for this symptom (incident memory: confirm the cause still matches "
+            "before repeating it) ---\n" + hits[0][:600])
 
 
 def earlier_errors(name, shown, window=300, k=4):
@@ -540,7 +557,7 @@ def http_status(url):
 def search_runbooks(query):
     """Retrieval lives in scripts/rag.py: hybrid keyword + dense, with its own fallback when the index is absent."""
     import rag
-    return rag.search(query) + knowledge_note(query) + community_push(query)
+    return rag.search(query) + knowledge_note(query) + memory_note(query) + community_push(query)
 
 
 KB_DB = ROOT / "kb" / "artifacts" / "blackout_ops_kb.sqlite"

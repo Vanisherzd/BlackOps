@@ -406,3 +406,19 @@ P3 過（A−B 中位在 4/5 案 ≤ 0）；P4 無（沒有任何參考被用上
 - 通過＝made-worse 0 ∧ 謊報 0 ∧ 先前跑過的 36 案自主修復 ≥ 30（昨夜基線 30/32 有效場）→ `COMMUNITY_PUSH` 預設維持 1；否則預設改 0。
 - 描述性：proxy-buffer 與 rlimit 兩案裡，推送帶 ≥1 筆參考的次數；rlimit 是否因 earlier-errors 行而修好。
 - 空值檢查：若 36 案達標但推送仍 0 次有效，結論只是「無害」，RAG 對 drill 的幫助仍未證實，要寫明。
+
+## Phase 4c（10:30，Thor）— RAG 上關鍵路徑第二條：這台自己驗證過的修復記憶
+
+**問題。** 社群層推了也沒被用上（4b）；而真正最可靠的知識是**這台自己修過、驗證過的事故**（`scripts/incident_memory.py`），
+但它只在 `search_incident_knowledge` 裡被拉（一夜 1 次），而且 drill 不會寫入記憶（只有舞台 watchdog 會），所以 regression 裡它永遠是空的。
+
+**改法（commit 見 git log「incident memory on the critical path」）。** (1) drill 結案且 verify PASS 就寫入記憶（`nemoclaw-drill.sh` → `incident_memory.py record-drill`，
+排除 tool-layer 列、不把 drill 提示當症狀；`DRILL_MEMORY=0` 關）。(2) `attach_runbook`／`search_runbooks` 在 runbook 後面附上**一筆**
+「這台自己驗證過的修復」，條件是症狀與記憶至少共享 3 個詞（`recall(min_shared=3)`）；文字明說「先確認病因仍相同再重複動作」。
+reviewer 的 trace 看不到（在 runbook 分隔線之後）。
+
+**預測（Thor round 2 之前登記；round 1 ×1 先把記憶寫進去，round 2 同 12 案 ×2）。**
+- M1 命中：round 2 每案第 1 場（記憶裡已有 round 1 的同案）≥ 9/12 出現「own verified recovery」行；不同案之間誤推 0（推出的記憶 case 與當前 case 不同＝誤推）。
+- M2 無害：round 2 自主修復 ≥ round 1；made-worse 0、謊報 0。
+- M3 變快：有記憶命中的場次，牆鐘中位 ≤ 同案 round 1 的 0.8 倍（描述性，Thor 基本配方速度本來就比 Spark 慢）。
+- 空值檢查：min_shared=3 太嚴 → M1 幾乎 0，結論是「門檻要調」不是「記憶沒用」；誤推 > 0 → 門檻升到 4 或加 case 名比對。

@@ -27,16 +27,20 @@ flowchart TB
     watchdog["watchdog.py<br/>2 s 巡檢・triage・派工"] --> sandbox
     watchdog --> docker
     dash["dashboard :8097<br/>看板・軌跡・功耗・審批"] --- watchdog
-    subgraph kb["知識層（由近到遠）"]
+    subgraph kb["知識層（由近到遠；證據工具自動附上，不等模型來拉）"]
       direction LR
-      rb["runbooks/<br/>本 stack 的 SOP（dense bge-small）"] --> cards["修復卡 v4 + 本機驗證過的修法<br/>（phrase gate）"]
+      mem["事故記憶<br/>這台自己驗證過的修復（incident_memory）"] --> rb["runbooks/<br/>本 stack 的 SOP（dense bge-small）"]
+      rb --> cards["修復卡 v4 + 本機驗證過的修法<br/>（phrase gate）"]
       cards --> comm["社群層 158,881 筆<br/>SQLite FTS5 / BM25"]
       comm --> rr["Nemotron rerank 1B sidecar :8020<br/>（RERANK_URL 選配，只重排）"]
+      rr --> judge["判官閘門<br/>本機模型一字判對題才給（COMMUNITY_JUDGE）"]
     end
-    agent --> kb
+    agent -- "docker_logs / search_runbooks 的結果後面<br/>附 runbook・記憶・社群參考（push）" --> kb
+    kb -. "結案驗證通過 → 寫回記憶" .-> mem
+    signals["watch_signals.py<br/>容器狀態・log 錯誤・磁碟・docker events<br/>（WATCH_SIGNALS 選配）"] -.-> watchdog
   end
   classDef opt stroke-dasharray: 5 5;
-  class rr,approval opt;
+  class rr,approval,signals opt;
 ```
 
 舊路徑：TensorRT-LLM + Nemotron-3-Nano-30B-A3B-NVFP4（`scripts/serve-trt.sh`，:8000）、vLLM 0.29 + Qwen3.6-35B（`scripts/serve.sh`，:8100）；量測留在 docs 裡，程式保留但不是舞台路徑。

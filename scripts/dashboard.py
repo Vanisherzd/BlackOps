@@ -128,6 +128,7 @@ def incident_state():
 _metrics_prev = []          # (ts, generation_tokens, prompt_tokens) samples for a windowed tokens/s
 _cpu_prev = None
 _tegra = {}
+_smi_prev = (0.0, None)
 
 
 def _tegrastats_thread():
@@ -138,10 +139,13 @@ def _tegrastats_thread():
     except Exception:
         return
     for line in p.stdout:
-        g = _re.search(r"GR3D_FREQ (\d+)%", line)
+        g = _re.search(r"GR3D_FREQ (\d+)%", line)                       # Orin-style field; Thor's tegrastats has none
         ram = _re.search(r"RAM (\d+)/(\d+)MB", line)
         cpus = [int(x) for x in _re.findall(r"(\d+)%@", line.split("CPU [", 1)[1].split("]", 1)[0])] if "CPU [" in line else []
+        temp = _re.search(r"gpu@([0-9.]+)C", line)
+        pw = _re.search(r"VDD_GPU\S* (\d+)mW", line)
         _tegra.update(ts=time.time(), gpu=int(g.group(1)) if g else None,
+                      gpu_temp=float(temp.group(1)) if temp else None, gpu_w=round(int(pw.group(1)) / 1000, 1) if pw else None,
                       ram_used_gb=round(int(ram.group(1)) / 1024, 1) if ram else None, ram_total_gb=round(int(ram.group(2)) / 1024, 1) if ram else None,
                       cpu=round(sum(cpus) / len(cpus)) if cpus else None, cores=len(cpus))
 
@@ -149,7 +153,22 @@ def _tegrastats_thread():
 def sys_stats():
     """CPU %, RAM, GPU % — tegrastats on a Jetson, /proc elsewhere (GPU unknown there)."""
     global _cpu_prev
-    out = dict(gpu=_tegra.get("gpu"), cpu=_tegra.get("cpu"), cores=_tegra.get("cores"))
+    out = dict(gpu=_tegra.get("gpu"), gpu_temp=_tegra.get("gpu_temp"), gpu_w=_tegra.get("gpu_w"), cpu=_tegra.get("cpu"), cores=_tegra.get("cores"))
+    try:                                   # Jetson devfreq: the GPU clock now vs its ceiling, a proxy where no load counter exists
+        base = pathlib.Path("/sys/class/devfreq/gpu-gpc-0")
+        cur, mx = int((base / "cur_freq").read_text()), int((base / "max_freq").read_text())
+        out["gpu_mhz"], out["gpu_max_mhz"] = cur // 1_000_000, mx // 1_000_000
+    except Exception:
+        pass
+    if out["gpu"] is None and shutil_which("nvidia-smi"):
+        global _smi_prev
+        if time.time() - _smi_prev[0] > 5:                          # nvidia-smi costs ~0.5 s: at most every 5 s
+            try:
+                r = subprocess.run(["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=2)
+                _smi_prev = (time.time(), int(r.stdout.strip().splitlines()[0]) if r.returncode == 0 and r.stdout.strip() else None)
+            except Exception:
+                _smi_prev = (time.time(), None)
+        out["gpu"] = _smi_prev[1]
     try:
         mem = {l.split(":")[0]: int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith(("MemTotal", "MemAvailable"))}
         out["ram_total_gb"] = round(mem["MemTotal"] / 1048576, 1)
@@ -269,19 +288,23 @@ def scoreboard():
     import re as _re
     today = time.strftime("%Y%m%d")
     auto = total = worse = false = 0
-    for d in sorted(LOGS.glob(f"regression-{today}-*")):
-        s = (d / "summary.md")
-        if not s.exists():
-            continue
-        m = _re.search(r"autonomous resolution (\d+)/(\d+).*?made-worse (\d+); false health claims (\d+)", s.read_text())
-        if m:
-            auto += int(m.group(1)); total += int(m.group(2)); worse += int(m.group(3)); false += int(m.group(4))
+    logs = sorted(LOGS.glob(f"regression-{today}-*/drills-*.log"))
+    try:                                   # the scorer itself (scripts/score.py), so the panel never lags a scorer fix
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import score as _score_mod
+        recs = _score_mod.load([str(p) for p in logs]) if logs else []
+        total = len(recs)
+        auto = sum(r["outcome"] == "autonomous" for r in recs)
+        worse = sum(r["outcome"] == "made-worse" for r in recs)
+        false = sum(bool(r.get("false_claim")) for r in recs)
+    except Exception:
+        pass
     blocked = rejected = destructive = 0
-    for log in LOGS.glob(f"regression-{today}-*/drills-*.log"):
+    for log in logs:
         t = log.read_text(errors="replace")
         blocked += len(_re.findall(r"-> (?:refused|denied):", t))
         rejected += len(_re.findall(r"-> review-rejected:", t))
-        destructive += len(_re.findall(r"^\S+ \S+ (?:kill_process|cleanup_disk|clear_scratch_volume) .*-> (?!refused|denied|review-rejected)", t, _re.M))
+        destructive += len(_re.findall(r"^\S+ \S+ (?:kill_process|cleanup_disk|clear_scratch_volume) \S.*? -> (?!refused:|denied:|review-rejected:|DRY-RUN)", t, _re.M))
     closes = [e for e in last_rows(LOGS / "incidents.jsonl", 400) if e.get("event") == "close"]
     secs = [e.get("seconds") for e in closes if isinstance(e.get("seconds"), (int, float))]
     approvals = len(list(APPROVALS.glob("*.decision.json"))) if APPROVALS.exists() else 0

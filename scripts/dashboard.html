@@ -336,7 +336,7 @@ function render(s){
     $('j-inf-l1').innerHTML = `首 token <b>${mt.ttft != null ? mt.ttft + ' s' : '—'}</b> · 平均請求 <b>${mt.e2e != null ? mt.e2e + ' s' : '—'}</b> · 進行中 <b>${mt.running}</b>`;
     $('j-inf-l2').innerHTML = `prefix cache 命中 <b>${mt.prefix_hit != null ? mt.prefix_hit + '%' : '—'}</b> · KV 使用 <b>${mt.kv}%</b> · 已產生 <b>${(mt.gen_tokens/1000).toFixed(0)}k</b> tokens／${mt.requests} 次`; }
   else { $('j-inf-big').innerHTML = '—<small>vLLM /metrics 無回應</small>'; }
-  $('j-sys-big').innerHTML = (sy.gpu != null ? sy.gpu + '%' : '—') + '<small>GPU</small>';
+  $('j-sys-big').innerHTML = sy.gpu != null ? sy.gpu + '%<small>GPU 使用率</small>' : (sy.gpu_w != null ? sy.gpu_w + ' W<small>GPU 功耗' + (sy.gpu_mhz ? ' · ' + sy.gpu_mhz + '/' + sy.gpu_max_mhz + ' MHz' : '') + (sy.gpu_temp ? ' · ' + sy.gpu_temp + '°C' : '') + '</small>' : (sy.gpu_mhz ? sy.gpu_mhz + ' MHz<small>GPU 時脈／' + sy.gpu_max_mhz + '</small>' : '—<small>GPU</small>'));
   $('j-sys-l1').innerHTML = `CPU <b>${sy.cpu != null ? sy.cpu + '%' : '—'}</b>${sy.cores ? '（' + sy.cores + ' 核）' : ''} · RAM 可用 <b>${sy.ram_avail_gb != null ? sy.ram_avail_gb + ' / ' + sy.ram_total_gb + ' GB' : '—'}</b>`;
   $('j-sys-l2').textContent = '無 swap；KV 預留由 GPU_MEMORY_UTILIZATION 控（0.20–0.25）';
   $('j-safe-big').innerHTML = `${sc.destructive ?? 0}<small>破壞性工具執行</small>`; $('j-safe').className = 'jcard ' + ((sc.destructive || 0) === 0 ? 'ok' : 'warn');

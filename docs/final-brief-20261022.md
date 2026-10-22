@@ -109,3 +109,31 @@ cd ~/BlackOps && scripts/thor-start.sh --demo     # 等 PREFLIGHT GREEN（冷啟
 - 社群 RAG 對 drill 的幫助未證實；事故記憶推送在 Thor 有命中（3/3 查到）但效益未單獨量。
 - VM 靶機：程式與腳本就緒，Thor 缺 qemu 未開機；ITBench 未跑。
 - 文件：`docs/pitch-notes-20261022.md`、`docs/results-summary-20261022.md`、`docs/benchmark.json`、`docs/handoff-thor-20261022.md`、`docs/kb-community-20261022.md`、`docs/optimizations-20261022.md`、`docs/itbench-alignment-20261022.md`。
+
+## 10. 記憶體、Prefill／推論加速、資源配置（簡報用摘要；Thor＝比賽機、Spark＝開發機）
+
+**記憶體（整套 ≈46 GB／123 GB，無 swap）**
+- 權重 NVFP4：30B MoE 只有 3B 活躍，4-bit 權重 17.8 GiB（BF16 約 60 GiB）。
+- KV cache 預算：`GPU_MEMORY_UTILIZATION` 0.30 → **0.25**（Spark 0.20）；0.20＝53k tokens／3.9 GiB、0.25≈10 GiB（41 條 32k 序列）、地板 0.18；KV 用 fp8；`max-model-len 32768`、`max-num-seqs 2`（一次一個 agent，少預留激活記憶體）。
+- 知識索引：Python 倒排表 2.5 GiB、載入 6 s → **SQLite FTS5 幾 MB、開 25 ms、44 ms/查詢**（158,881 筆）。
+- Reranker sidecar（1B）：GPU 預留 0.04 → **0.03**，選配、失效就退回 BM25＋判官。
+- 嵌入模型 bge-small（33M）跑 CPU，不佔 GPU。
+- 資源治理（`RESOURCE_GOVERNOR`）：可用記憶體 ≥20 GB 全開、≥8 GB 縮減（specialist 數、reranker、語料大小）、更低只留主 agent。
+- 量測：`mem-profile.sh` 1 Hz；vLLM 容器 RSS 3.6 GiB、ops_api 1.2–1.5 GiB、sandbox 0.3–0.9 GiB。
+
+**Prefill 加速**
+- 自動 prefix caching：system prompt＋工具表＋skill 固定在前綴、工具輸出壓短 → Thor **77%** prefix-cache 命中、2k prompt 的 TTFT **0.53 s**；chunked prefill 開。
+- 推測解碼會破壞 prefix cache：DSpark k=3 命中 0%，k=2 才保住（Spark 31.9%）。
+- 每輪 prompt 預算：`docker_logs` 只取 tail＋distinct 錯誤行、`evidence_bundle` 有上限、trace 給 reviewer 只留頭尾 → tool turn 約 2.4k tokens。
+
+**Decode 加速**
+- Spark：DSpark 推測解碼 51／67／68 → **65／100／91 tok/s**（+27–49%），採用；MTP 同速或略慢、NGram 曾打壞輸出，淘汰。
+- Thor：DSpark 無增益（50／69 vs 51／70），**不用**；基本配方 51／70／44 tok/s、TPOT 17.7 ms。
+- 審核代理不思考：15.3 s → **1.0–1.5 s**（判決一致 5/5）；判官一字回答、6 s 逾時不重試；社群推送 4 s 上限、逾時留到下一次讀取。
+
+**資源配置與時間預算**
+- 一顆 GPU：vLLM 0.25＋reranker 0.03，其餘給系統；CPU：嵌入、FTS5、watchdog、dashboard。
+- 一次一個 agent（`max-num-seqs 2`）：多代理模式量過是排隊不是並行（2.4× 慢）→ 預設關。
+- 巡檢 2 s、健康探測 3 s、triage 1.2 s 取代 2–3 輪模型（省 5–7 s）、偵測→派工 ≈4 s。
+- 功耗：模組 ≈74 W（負載）、GPU 25 W；每場事故的 Wh 與 tokens 顯示在結案橫幅。
+- 磁碟（Spark）：1.4 GB → 253 GB 可用（刪退役模型與映像）；Thor 511 GB 可用。

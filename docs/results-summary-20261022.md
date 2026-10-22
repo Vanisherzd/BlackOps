@@ -50,6 +50,10 @@
 | sigstop／hosts | 1/1／1/1 | sigstop 462 s（24 次呼叫） |
 | 牆鐘 | 中位 seen 107 s、ops 305 s | 比 Spark 慢：無 DSpark（decode 約 50 tok/s）＋ **修好之後 OpenClaw 的 runtime-event continuation 讓 agent 多跑幾輪**（after-green 欄 0–6 次呼叫） |
 
+**修復優先於替換（12:24–12:35，Thor，`logs/regression-20261022-122354`）**：新規則下 upstream-500／upstream-wrong-content／upstream-index-deleted
+**3/3 自主修復、0 次替換容器**——agent `cat` 出錯的設定 → `write_container_file` 寫回修正檔（nginx -t 把關；內容感知健康檢查抓到一次「200 但不是部署頁」的錯誤修法，它再改一次才過）；
+141／86／158 s。舊規則同 upstream-500 是重啟後 replace 容器（103 s）。
+
 計分修正（commit `8a051bc`）：Thor 原始計分 5/12 是因為修好之後的 continuation 讓模型呼叫 `self_heal`（空操作），舊計分把任何 self_heal 都當兜底。
 現在只有「在修好之前」的 self_heal 算兜底，修好之後的呼叫另列 after-green 欄；同時 `self_heal` 不再提供給 sandbox agent（旁門）。
 

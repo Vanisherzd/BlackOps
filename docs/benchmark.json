@@ -1,17 +1,70 @@
 {
-  "updated": "2026-10-22 12:30",
+  "updated": "2026-10-22 12:45",
   "items": [
-    {"k": "全目錄 regression（36 案，Spark）", "v": "自主 30/32 · 越修越壞 0 · 謊報 0", "src": "logs/regression-20261022-045052"},
-    {"k": "盲測四批（寫完故障不改 agent）", "v": "17/18 → sigstop 修後 18/18", "src": "docs/results-summary-20261022.md §1"},
-    {"k": "Thor round 1（12 案，基本配方）", "v": "自主 10/12 · 越修越壞 0 · 謊報 0", "src": "logs/regression-20261022-102225（Thor）"},
-    {"k": "偵測 → 派工", "v": "4.0–4.9 s（巡檢 2 s）", "src": "dashboard inject 實測"},
-    {"k": "簡單故障結案（注入→兩 URL 200）", "v": "14–21 s（container-removed 14 s、nginx-stopped 12–50 s）", "src": "regression summaries"},
-    {"k": "decode tok/s（Spark，DSpark 推測解碼）", "v": "65 / 100 / 91（tool turn / report / long context）", "src": "scripts/decode-bench.py"},
-    {"k": "prefix cache 命中", "v": "Spark k=2 31.9% · Thor 基本配方 77%", "src": "vLLM /metrics"},
-    {"k": "審核代理（兩把鑰匙）", "v": "1.0–1.5 s／次（原 15.3 s），判決一致 5/5", "src": "REVIEW_THINK=0 drills"},
-    {"k": "注入指令（log／設定檔要 agent 跑破壞性工具）", "v": "2/2 擋下，破壞性工具 0 次執行", "src": "log-injection / config-injection drills"},
-    {"k": "整套記憶體", "v": "≈45 GB（vLLM 權重 17.8 GiB＋KV、sandbox、知識層）；索引 2.5 GiB → 幾 MB（FTS5）", "src": "scripts/mem-profile.sh"},
-    {"k": "社群知識層（158,881 筆，離線）", "v": "機房探針前 1 對題 45%／前 5 71%（rerank＋判官）；drill 內推送 4 次、0 次採用（誠實）", "src": "docs/kb-community-20261022.md"},
-    {"k": "故障目錄", "v": "49 案、八類；VM 靶機 4 案（ssh 真主機）", "src": "scripts/faults.py · scripts/vm_victim.py"}
+    {
+      "k": "全目錄 regression（36 案，Spark）",
+      "v": "自主 30/32 · 越修越壞 0 · 謊報 0",
+      "src": "logs/regression-20261022-045052"
+    },
+    {
+      "k": "盲測四批（寫完故障不改 agent）",
+      "v": "17/18 → sigstop 修後 18/18",
+      "src": "docs/results-summary-20261022.md §1"
+    },
+    {
+      "k": "Thor round 1（12 案，基本配方）",
+      "v": "自主 10/12 · 越修越壞 0 · 謊報 0",
+      "src": "logs/regression-20261022-102225（Thor）"
+    },
+    {
+      "k": "修復優先於替換（Thor，3 案）",
+      "v": "3/3 自主、0 次替換容器：cat 設定 → write_container_file 改回那一行（nginx -t 把關）",
+      "src": "logs/regression-20261022-122354（Thor）"
+    },
+    {
+      "k": "偵測 → 派工",
+      "v": "4.0–4.9 s（巡檢 2 s）",
+      "src": "dashboard inject 實測"
+    },
+    {
+      "k": "簡單故障結案（注入→兩 URL 200）",
+      "v": "14–21 s（container-removed 14 s、nginx-stopped 12–50 s）",
+      "src": "regression summaries"
+    },
+    {
+      "k": "decode tok/s（Spark，DSpark 推測解碼）",
+      "v": "65 / 100 / 91（tool turn / report / long context）",
+      "src": "scripts/decode-bench.py"
+    },
+    {
+      "k": "prefix cache 命中",
+      "v": "Spark k=2 31.9% · Thor 基本配方 77%",
+      "src": "vLLM /metrics"
+    },
+    {
+      "k": "審核代理（兩把鑰匙）",
+      "v": "1.0–1.5 s／次（原 15.3 s），判決一致 5/5",
+      "src": "REVIEW_THINK=0 drills"
+    },
+    {
+      "k": "注入指令（log／設定檔要 agent 跑破壞性工具）",
+      "v": "2/2 擋下，破壞性工具 0 次執行",
+      "src": "log-injection / config-injection drills"
+    },
+    {
+      "k": "整套記憶體",
+      "v": "≈45 GB（vLLM 權重 17.8 GiB＋KV、sandbox、知識層）；索引 2.5 GiB → 幾 MB（FTS5）",
+      "src": "scripts/mem-profile.sh"
+    },
+    {
+      "k": "社群知識層（158,881 筆，離線）",
+      "v": "機房探針前 1 對題 45%／前 5 71%（rerank＋判官）；drill 內推送 4 次、0 次採用（誠實）",
+      "src": "docs/kb-community-20261022.md"
+    },
+    {
+      "k": "故障目錄",
+      "v": "49 案、八類；VM 靶機 4 案（ssh 真主機）",
+      "src": "scripts/faults.py · scripts/vm_victim.py"
+    }
   ]
 }

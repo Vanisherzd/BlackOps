@@ -318,7 +318,12 @@ def write_container_file(name, path, content):
         return f"rejected by nginx -t inside {name}, previous file put back: {test.strip()[-300:]}"
     sh(f"docker exec {name} nginx -s reload")
     settle()
-    return f"wrote {path} in {name}; nginx -t ok; reloaded (previous content kept)"
+    note = ""
+    if path.endswith("/conf.d/default.conf") and "root " not in content:
+        # a stub that answers text (return 200 "ok") passes nginx -t and fails the deployed-page check: say so now
+        note = (" NOTE: this config has no `root` directive, so it does not serve the deployed page; the image's own "
+                f"config comes back with repair_image_file {{\"name\": \"{name}\", \"path\": \"{path}\"}}.")
+    return f"wrote {path} in {name}; nginx -t ok; reloaded (previous content kept).{note}"
 
 
 def repair_image_file(name, path):

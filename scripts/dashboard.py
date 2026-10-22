@@ -369,13 +369,16 @@ def dc_status(health, api_ms):
     Each is cheap (docker ps, df, /proc/meminfo, the health probe already made) and degrades to '—' on any error."""
     tiles = []
     try:
-        r = subprocess.run(["docker", "ps", "-a", "--filter", "name=^edge-victim", "--format", "{{.Names}}\t{{.Status}}"],
-                           capture_output=True, text=True, timeout=5)
-        rows = [l.split("\t") for l in r.stdout.strip().splitlines() if l and not l.startswith("edge-victim-cache")]
+        r = subprocess.run(["docker", "ps", "-a", "--format", "{{.Names}}\t{{.Status}}"], capture_output=True, text=True, timeout=5)
+        rows = [l.split("\t") for l in r.stdout.strip().splitlines() if l]
+        role = lambda n: ("推論" if n == "vllm-edge" else "重排" if n == "vllm-rerank" else "agent sandbox" if n.startswith("openshell") else
+                          "前端" if n == "edge-victim" else "MES API" if n == "edge-victim-app" else "暫存卷" if n == "edge-victim-cache" else n)
         up = [n for n, st in rows if st.startswith("Up") and "Paused" not in st]
-        bad = [f"{n} {st.split(' (')[0][:14]}" for n, st in rows if n not in up]
-        tiles.append(dict(k="containers", label="容器 / 服務", value=f"{len(up)}/2 Up" + (" · " + ", ".join(bad) if bad else ""),
-                          cls="ok" if len(up) == 2 and len(rows) == 2 else "bad"))
+        bad = [f"{role(n)} {st.split(' (')[0][:12]}" for n, st in rows if n not in up]
+        expected = {"edge-victim", "edge-victim-app"}
+        tiles.append(dict(k="containers", label="節點容器（推論 · 重排 · sandbox · 前端 · API · 暫存）",
+                          value=f"{len(up)}/{len(rows)} Up" + (" · " + ", ".join(bad[:3]) if bad else ""),
+                          cls="ok" if expected <= set(up) and not bad else ("warn" if expected <= set(up) else "bad")))
     except Exception:
         tiles.append(dict(k="containers", label="容器 / 服務", value="—", cls=""))
     try:

@@ -49,6 +49,8 @@ kill <pids>; nemoclaw edge-agent gateway restart; .venv/bin/python scripts/fault
 ## 5. 已知狀態（別被數字嚇到，也別過度宣稱）
 
 - 全目錄 regression（昨夜 36 案）：自主 30/32、made-worse 0、謊報 0；sigstop 工具層修後 2/2。45 案版本等 Spark 跑完。
+- **Thor 本機 round 1（10:22–11:18，基本配方）：10/12、made-worse 0、謊報 0**；rlimit 與 webroot-wiped 沒過。修好後 OpenClaw 會 continuation 多跑幾輪（after-green），`self_heal` 已從 agent 工具清單拿掉（commit `8a051bc`）。
+- VM 靶機：`scripts/vm-victim.sh`＋`VM_VICTIM=1` 工具組＋`scripts/vm-drill.sh`（需 Thor 裝 `qemu-system-arm qemu-utils`）。
 - `front-rlimit-nofile`（worker fd 上限）目前 0/4：agent 一直改前端 default.conf、從不重建；已知難案，誠實列。
 - RAG A/B：推送開 7/10 對關 8/10、兩臂 made-worse 0；10 場只推 4 次、0 次被用上 → **RAG 對 drill 的幫助還沒證實**，閘門已修、全目錄重測中（`docs/kb-community-20261022.md` Phase 4b）。
 - 所有數字與定義：`docs/results-summary-20261022.md`；決策紀錄：`docs/optimizations-20261022.md`。

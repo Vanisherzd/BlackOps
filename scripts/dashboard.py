@@ -27,6 +27,7 @@ The approval contract: this server answers a pending request by writing logs/app
 """
 import datetime
 import json
+from shutil import which as shutil_which
 import os
 import pathlib
 import subprocess
@@ -41,6 +42,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOGS = pathlib.Path(os.environ.get("DASH_LOGS", ROOT / "logs"))   # override only to test the page on a copy
 PAGE = pathlib.Path(__file__).resolve().parent / "dashboard.html"
+VLLM_METRICS = os.environ.get("VLLM_METRICS_URL", "http://127.0.0.1:8000/metrics")
 HEALTH = [u.strip() for u in os.environ.get(
     "DASH_HEALTH", "http://127.0.0.1:8880/,http://127.0.0.1:8880/api/").split(",") if u.strip()]
 BOARD = os.environ.get("DASH_BOARD_URL", "http://127.0.0.1:8880/board/")
@@ -122,6 +124,175 @@ def incident_state():
     return open_inc
 
 
+# --- judge-facing metrics: inference efficiency (vLLM /metrics), system load (tegrastats / /proc), today's scoreboard -------
+_metrics_prev = []          # (ts, generation_tokens, prompt_tokens) samples for a windowed tokens/s
+_cpu_prev = None
+_tegra = {}
+
+
+def _tegrastats_thread():
+    """One long-running tegrastats (Jetson): GPU %, RAM, CPU per core, parsed into _tegra every 2 s."""
+    import re as _re
+    try:
+        p = subprocess.Popen(["tegrastats", "--interval", "2000"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except Exception:
+        return
+    for line in p.stdout:
+        g = _re.search(r"GR3D_FREQ (\d+)%", line)
+        ram = _re.search(r"RAM (\d+)/(\d+)MB", line)
+        cpus = [int(x) for x in _re.findall(r"(\d+)%@", line.split("CPU [", 1)[1].split("]", 1)[0])] if "CPU [" in line else []
+        _tegra.update(ts=time.time(), gpu=int(g.group(1)) if g else None,
+                      ram_used_gb=round(int(ram.group(1)) / 1024, 1) if ram else None, ram_total_gb=round(int(ram.group(2)) / 1024, 1) if ram else None,
+                      cpu=round(sum(cpus) / len(cpus)) if cpus else None, cores=len(cpus))
+
+
+def sys_stats():
+    """CPU %, RAM, GPU % — tegrastats on a Jetson, /proc elsewhere (GPU unknown there)."""
+    global _cpu_prev
+    out = dict(gpu=_tegra.get("gpu"), cpu=_tegra.get("cpu"), cores=_tegra.get("cores"))
+    try:
+        mem = {l.split(":")[0]: int(l.split()[1]) for l in open("/proc/meminfo") if l.startswith(("MemTotal", "MemAvailable"))}
+        out["ram_total_gb"] = round(mem["MemTotal"] / 1048576, 1)
+        out["ram_avail_gb"] = round(mem["MemAvailable"] / 1048576, 1)
+    except Exception:
+        pass
+    if out["cpu"] is None:
+        try:
+            parts = [int(x) for x in open("/proc/stat").readline().split()[1:8]]
+            idle, total = parts[3] + parts[4], sum(parts)
+            if _cpu_prev:
+                di, dt = idle - _cpu_prev[0], total - _cpu_prev[1]
+                out["cpu"] = round(100 * (1 - di / dt)) if dt > 0 else None
+            _cpu_prev = (idle, total)
+        except Exception:
+            pass
+    return out
+
+
+def vllm_metrics():
+    """Decode tokens/s over the last ~10 s, TTFT and end-to-end latency since start, prefix-cache hit rate, KV use."""
+    try:
+        with urllib.request.urlopen(VLLM_METRICS, timeout=1.5) as r:
+            text = r.read().decode(errors="replace")
+    except Exception:
+        return None
+    vals = {}
+    for line in text.splitlines():
+        if not line.startswith("vllm:"):
+            continue
+        name, _, rest = line.partition("{") if "{" in line else (line.split(" ")[0], "", "")
+        try:
+            v = float(line.rsplit(" ", 1)[1])
+        except ValueError:
+            continue
+        key = name.strip()
+        vals[key] = vals.get(key, 0.0) + v          # sums over label sets (finished_reason, ...)
+    now = time.time()
+    gen, prompt = vals.get("vllm:generation_tokens_total"), vals.get("vllm:prompt_tokens_total")
+    if gen is not None:
+        _metrics_prev.append((now, gen, prompt or 0.0))
+        del _metrics_prev[:-20]
+    tps = None
+    old = next((s for s in _metrics_prev if now - s[0] >= 8), None) or (_metrics_prev[0] if len(_metrics_prev) > 1 else None)
+    if old and gen is not None and now - old[0] > 0:
+        tps = round((gen - old[1]) / (now - old[0]), 1)
+    def avg(sum_k, cnt_k):
+        c = vals.get(cnt_k) or 0
+        return round(vals.get(sum_k, 0.0) / c, 2) if c else None
+    q, h = vals.get("vllm:prefix_cache_queries_total") or 0, vals.get("vllm:prefix_cache_hits_total") or 0
+    return dict(tps=tps, ttft=avg("vllm:time_to_first_token_seconds_sum", "vllm:time_to_first_token_seconds_count"),
+                e2e=avg("vllm:e2e_request_latency_seconds_sum", "vllm:e2e_request_latency_seconds_count"),
+                prefix_hit=round(100 * h / q) if q else None, kv=round(100 * (vals.get("vllm:kv_cache_usage_perc") or vals.get("vllm:gpu_cache_usage_perc") or 0), 1),
+                running=int(vals.get("vllm:num_requests_running") or 0), requests=int(vals.get("vllm:request_success_total") or 0),
+                gen_tokens=int(gen or 0))
+
+
+BENCH = ROOT / "docs" / "benchmark.json"
+TOOL_PHASE = {
+    "observe": {"check_health", "docker_ps", "docker_logs", "docker_exec", "read_config", "port_check", "http_check", "disk_usage",
+                "service_status", "journal_tail", "top_processes", "evidence_bundle", "parallel_diagnosis", "vm_exec", "vm_logs"},
+    "knowledge": {"search_runbooks", "search_incident_knowledge"},
+    "repair": {"docker_start", "docker_restart", "write_config", "restore_config", "recreate_stack", "network_repair",
+               "repair_image_file", "write_container_file", "vm_service", "vm_write_config", "vm_restore_config"},
+    "destructive": {"kill_process", "cleanup_disk", "clear_scratch_volume"},
+}
+GUARDRAILS = [
+    "agent 只拿得到白名單工具（HTTP/MCP），沒有 shell；docker_exec 只放行唯讀指令表（cat/ls/ps/df/ss/ip … show/nginx -t），無管線、無替換",
+    "runbook gate：改變狀態的工具在這場事故看過 runbook 前一律拒絕（最多兩次）",
+    "每個修復動作自動附健康檢查；健康時拒絕再改（HEALTHY_GUARD）；內容也要對（200 但不是部署頁＝紅）",
+    "NeMo Guardrails rail：log／設定檔裡的指令注入被標記並從工具輸出移除；要求跑破壞性工具的句子不會到模型",
+    "兩把鑰匙審核：code 先算充分條件、模型只判相關與矛盾且必須引用一行；風險動作再加人工審批（dashboard）",
+    "修復優先於替換：容器裡的檔案先修（write_container_file / repair_image_file），replace 要等修檔失敗；重建前必先 restart",
+    "破壞性工具（kill_process / cleanup_disk / clear_scratch_volume）每次都過審核＋審批；self_heal 不提供給 agent",
+    "全離線、無開機自啟（--restart no）、事故記憶只收 200/200 驗證過的修復",
+]
+
+
+def tool_stats():
+    """Today's tool calls by phase and the top tools, from today's drill logs and the live ops-api log."""
+    import re as _re
+    counts, blocked = {}, 0
+    today = time.strftime("%Y%m%d")
+    texts = [p.read_text(errors="replace") for p in LOGS.glob(f"regression-{today}-*/drills-*.log")]
+    try:
+        texts.append((LOGS / "ops-api.log").read_text(errors="replace"))
+    except OSError:
+        pass
+    for t in texts:
+        for m in _re.finditer(r"^\d\d:\d\d:\d\d \S+ ([a-z_]+) .*?-> (\S*)", t, _re.M):
+            counts[m.group(1)] = counts.get(m.group(1), 0) + 1
+            if m.group(2).startswith(("refused:", "denied:", "review-rejected:")):
+                blocked += 1
+        for m in _re.finditer(r'"tool": "([a-z_]+)"', t):          # live ops-api.log rows are JSON
+            if '"from": "tool-layer"' in t:
+                pass
+    phases = {ph: sum(c for n, c in counts.items() if n in names) for ph, names in TOOL_PHASE.items()}
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:8]
+    return dict(phases=phases, top=top, total=sum(counts.values()), blocked=blocked)
+
+
+def benchmark():
+    try:
+        return json.loads(BENCH.read_text())
+    except Exception:
+        return None
+
+
+_score, _score_t = None, 0.0
+
+
+def scoreboard():
+    """Today's drills and incidents, from the regression summaries and incident log: completion and safety counts."""
+    global _score, _score_t
+    if _score is not None and time.time() - _score_t < 30:
+        return _score
+    import re as _re
+    today = time.strftime("%Y%m%d")
+    auto = total = worse = false = 0
+    for d in sorted(LOGS.glob(f"regression-{today}-*")):
+        s = (d / "summary.md")
+        if not s.exists():
+            continue
+        m = _re.search(r"autonomous resolution (\d+)/(\d+).*?made-worse (\d+); false health claims (\d+)", s.read_text())
+        if m:
+            auto += int(m.group(1)); total += int(m.group(2)); worse += int(m.group(3)); false += int(m.group(4))
+    blocked = rejected = destructive = 0
+    for log in LOGS.glob(f"regression-{today}-*/drills-*.log"):
+        t = log.read_text(errors="replace")
+        blocked += len(_re.findall(r"-> (?:refused|denied):", t))
+        rejected += len(_re.findall(r"-> review-rejected:", t))
+        destructive += len(_re.findall(r"^\S+ \S+ (?:kill_process|cleanup_disk|clear_scratch_volume) .*-> (?!refused|denied|review-rejected)", t, _re.M))
+    closes = [e for e in last_rows(LOGS / "incidents.jsonl", 400) if e.get("event") == "close"]
+    secs = [e.get("seconds") for e in closes if isinstance(e.get("seconds"), (int, float))]
+    approvals = len(list(APPROVALS.glob("*.decision.json"))) if APPROVALS.exists() else 0
+    _score = dict(auto=auto, total=total, worse=worse, false=false, blocked=blocked, rejected=rejected, destructive=destructive,
+                  incidents_closed=len(closes), last_close_s=secs[-1] if secs else None,
+                  median_close_s=(sorted(secs)[len(secs) // 2] if secs else None), approvals=approvals,
+                  tools=tool_stats(), benchmark=benchmark(), guardrails=GUARDRAILS)
+    _score_t = time.time()
+    return _score
+
+
 def dc_status(health, api_ms):
     """Four data-centre views of the same stack, next to the two factory lights: containers, network, resources, SLA.
     Each is cheap (docker ps, df, /proc/meminfo, the health probe already made) and degrades to '—' on any error."""
@@ -185,7 +356,7 @@ def state():
             wan=wan_status(), tier=read_json(LOGS / "tier-state.json"), incident=incident_state(),
             approval=pending, approval_mode=os.environ.get("APPROVAL", "unset"),
             drill_running=pgrep("nemoclaw-drill.sh"), watchdog=wd_alive, actions=ACTIONS, report=latest_report(),
-            dc=dc_status(health, api_ms))
+            dc=dc_status(health, api_ms), metrics=vllm_metrics(), sys=sys_stats(), score=scoreboard())
         _state_t = time.time()
         return _state
 
@@ -441,6 +612,8 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     APPROVALS.mkdir(parents=True, exist_ok=True)
+    if shutil_which("tegrastats"):
+        threading.Thread(target=_tegrastats_thread, daemon=True).start()
     host, port = os.environ.get("DASH_HOST", "0.0.0.0"), int(os.environ.get("DASH_PORT", "8097"))
     print(f"dashboard on http://{host}:{port}/  actions={'on' if ACTIONS else 'off'}  health={HEALTH}", flush=True)
     ThreadingHTTPServer((host, port), H).serve_forever()

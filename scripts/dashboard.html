@@ -17,7 +17,17 @@ h1{font-size:18px;margin:0 12px 0 0}
 main{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:12px 16px}
 section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;min-width:0}
 section h2{font-size:13px;color:var(--dim);margin:0 0 8px;font-weight:600;letter-spacing:.04em}
-#trace-panel{grid-row:span 2}
+#trace-panel{grid-row:span 4}
+.judge{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.jcard{background:#1f2430;border:1px solid var(--line);border-radius:8px;padding:9px 10px;min-width:0}
+.jcard h3{margin:0 0 6px;font-size:12px;color:var(--dim);font-weight:600;letter-spacing:.04em}
+.jcard .big{font-size:20px;font-weight:700;line-height:1.1}.jcard .big small{font-size:12px;color:var(--dim);font-weight:400;margin-left:4px}
+.jcard .line{font-size:12.5px;color:#c7ccd6;margin-top:3px}.jcard .line b{color:var(--text);font-weight:600}
+.jcard.ok .big{color:var(--ok)}.jcard.warn .big{color:var(--warn)}
+.bench{font-size:12px;color:#c7ccd6}.bench div{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #22262f}.bench div span:first-child{color:var(--dim);flex:0 0 46%}
+.bench div span:last-child{font-weight:600;color:var(--text)}
+.rails{font-size:12px;color:#c7ccd6;padding-left:16px;margin:4px 0 0}.rails li{margin:2px 0}
+details.more summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:4px}
 .lights{display:flex;gap:16px}
 .light{flex:1;padding:14px;border-radius:8px;text-align:center;font-size:16px;font-weight:600;background:#222}
 .light.ok{background:rgba(47,191,113,.15);color:var(--ok)}.light.bad{background:rgba(229,72,77,.18);color:var(--bad)}
@@ -85,6 +95,18 @@ select{background:#232833;color:var(--text);border:1px solid var(--line);border-
     <div class="lights"><div id="l-front" class="light">產線看板前端 —</div><div id="l-api" class="light">MES API —</div></div>
     <div class="dc" id="dc"></div>
     <iframe id="board" title="廠務看板"></iframe>
+  </section>
+  <section>
+    <h2>評審看的四件事（即時）— 場景價值 · 任務完成度 · 推論效率 · 穩定安全</h2>
+    <div class="judge">
+      <div class="jcard" id="j-task"><h3>任務完成度（今日）</h3><div class="big" id="j-task-big">—</div><div class="line" id="j-task-l1"></div><div class="line" id="j-task-l2"></div></div>
+      <div class="jcard" id="j-inf"><h3>推論效率（vLLM 即時）</h3><div class="big" id="j-inf-big">—</div><div class="line" id="j-inf-l1"></div><div class="line" id="j-inf-l2"></div></div>
+      <div class="jcard" id="j-sys"><h3>資源（Thor）</h3><div class="big" id="j-sys-big">—</div><div class="line" id="j-sys-l1"></div><div class="line" id="j-sys-l2"></div></div>
+      <div class="jcard" id="j-safe"><h3>穩定安全（今日）</h3><div class="big" id="j-safe-big">—</div><div class="line" id="j-safe-l1"></div><div class="line" id="j-safe-l2"></div></div>
+    </div>
+    <div class="jcard" style="margin-top:8px"><h3>工具呼叫（今日，依階段）</h3><div class="line" id="j-tools"></div><div class="line" id="j-tools-top" style="color:var(--dim)"></div></div>
+    <details class="more"><summary>Benchmark（全部是量到的，來源在右）</summary><div class="bench" id="j-bench"></div></details>
+    <details class="more"><summary>安全護欄（agent 被限制在哪裡）</summary><ul class="rails" id="j-rails"></ul></details>
   </section>
   <section id="trace-panel">
     <h2>Agent 軌跡 — 它看到什麼、怎麼判斷、做了什麼、有沒有驗證</h2>
@@ -305,6 +327,25 @@ function render(s){
   $('k-channel').textContent = offline ? 'Jetson 本機（外網不可用）' : 'Jetson 本機';
   $('k-mode').textContent = ({manual: '風險動作需人工核准', auto: '自動（演練）', off: '關閉'}[s.approval_mode] || s.approval_mode);
   $('k-watchdog').textContent = s.watchdog ? '巡檢中（每 2 s 探測兩個 URL，不推論；異常連兩次即開事故）' : (s.drill_running ? '演練模式：由演練腳本代為注入與派工，結束後自動恢復巡檢' : '未啟動');
+  const sc = s.score || {}, mt = s.metrics, sy = s.sys || {};
+  if (sc.total){ $('j-task-big').innerHTML = `${sc.auto}/${sc.total}<small>自主修復（drill）</small>`; $('j-task').className = 'jcard ' + (sc.worse === 0 && sc.false === 0 ? 'ok' : 'warn'); }
+  else $('j-task-big').innerHTML = `${sc.incidents_closed || 0}<small>事故結案</small>`;
+  $('j-task-l1').innerHTML = `越修越壞 <b>${sc.worse ?? '—'}</b> · 謊報健康 <b>${sc.false ?? '—'}</b> · 事故結案 <b>${sc.incidents_closed ?? 0}</b>`;
+  $('j-task-l2').innerHTML = sc.last_close_s != null ? `最近一場結案 <b>${sc.last_close_s} s</b>${sc.median_close_s != null ? ' · 中位 <b>' + sc.median_close_s + ' s</b>' : ''}` : '巡檢事故：尚無結案紀錄（drill 不經巡檢）';
+  if (mt){ $('j-inf-big').innerHTML = (mt.tps != null && mt.tps > 0 ? mt.tps : '—') + '<small>tok/s decode（近 10 s）</small>'; $('j-inf').className = 'jcard ' + (mt.running ? 'ok' : '');
+    $('j-inf-l1').innerHTML = `首 token <b>${mt.ttft != null ? mt.ttft + ' s' : '—'}</b> · 平均請求 <b>${mt.e2e != null ? mt.e2e + ' s' : '—'}</b> · 進行中 <b>${mt.running}</b>`;
+    $('j-inf-l2').innerHTML = `prefix cache 命中 <b>${mt.prefix_hit != null ? mt.prefix_hit + '%' : '—'}</b> · KV 使用 <b>${mt.kv}%</b> · 已產生 <b>${(mt.gen_tokens/1000).toFixed(0)}k</b> tokens／${mt.requests} 次`; }
+  else { $('j-inf-big').innerHTML = '—<small>vLLM /metrics 無回應</small>'; }
+  $('j-sys-big').innerHTML = (sy.gpu != null ? sy.gpu + '%' : '—') + '<small>GPU</small>';
+  $('j-sys-l1').innerHTML = `CPU <b>${sy.cpu != null ? sy.cpu + '%' : '—'}</b>${sy.cores ? '（' + sy.cores + ' 核）' : ''} · RAM 可用 <b>${sy.ram_avail_gb != null ? sy.ram_avail_gb + ' / ' + sy.ram_total_gb + ' GB' : '—'}</b>`;
+  $('j-sys-l2').textContent = '無 swap；KV 預留由 GPU_MEMORY_UTILIZATION 控（0.20–0.25）';
+  $('j-safe-big').innerHTML = `${sc.destructive ?? 0}<small>破壞性工具執行</small>`; $('j-safe').className = 'jcard ' + ((sc.destructive || 0) === 0 ? 'ok' : 'warn');
+  $('j-safe-l1').innerHTML = `規則擋下 <b>${sc.blocked ?? 0}</b> · 審核否決 <b>${sc.rejected ?? 0}</b> · 人工審批 <b>${sc.approvals ?? 0}</b>`;
+  $('j-safe-l2').innerHTML = `巡檢 <b>${s.watchdog ? '開' : (s.drill_running ? '演練中暫停' : '關')}</b> · Guardrails <b>開</b> · 審批 <b>${s.approval_mode}</b>`;
+  if (sc.tools){ const ph = sc.tools.phases || {}; $('j-tools').innerHTML = `共 <b>${sc.tools.total}</b> 次：觀察 <b>${ph.observe || 0}</b> · 知識 <b>${ph.knowledge || 0}</b> · 修復 <b>${ph.repair || 0}</b> · 破壞性 <b>${ph.destructive || 0}</b> · 被擋 <b>${sc.tools.blocked || 0}</b>`;
+    $('j-tools-top').textContent = '最常用：' + (sc.tools.top || []).map(([n, c]) => `${n} ×${c}`).join('、'); }
+  if (sc.benchmark && !$('j-bench').dataset.done){ $('j-bench').innerHTML = (sc.benchmark.items || []).map(i => `<div><span>${esc(i.k)}</span><span>${esc(i.v)}</span></div>`).join('') + `<div><span>更新</span><span>${esc(sc.benchmark.updated || '')}</span></div>`; $('j-bench').dataset.done = '1'; }
+  if (sc.guardrails && !$('j-rails').dataset.done){ $('j-rails').innerHTML = sc.guardrails.map(g => `<li>${esc(g)}</li>`).join(''); $('j-rails').dataset.done = '1'; }
   const rp = s.report;
   $('report').style.display = rp ? 'block' : 'none';
   if (rp){ $('rp-cause').textContent = rp.root_cause || '—'; $('rp-actions').textContent = rp.actions || '—'; $('rp-health').textContent = rp.final_health || '—';

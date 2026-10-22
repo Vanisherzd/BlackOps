@@ -718,7 +718,10 @@ def http_status(url):
                     body = r.read(4096).decode("utf-8", "replace")
                     if expect not in body:
                         head = " ".join(body.split())[:60]
-                        return f"200 but not the deployed page (body starts {head!r}; expected it to contain {expect!r})"
+                        return (f"200 but not the deployed page (body starts {head!r}; expected it to contain {expect!r}). "
+                                "Do not invent page content: a container's own page or config goes back from the image with "
+                                "repair_image_file (e.g. edge-victim-app /etc/nginx/conf.d/default.conf serves the deployed page); "
+                                "the front end's site config is restore_config.")
             return r.status
     except urllib.error.HTTPError as e:
         if 300 <= e.code < 400:

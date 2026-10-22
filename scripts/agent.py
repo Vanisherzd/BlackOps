@@ -1003,13 +1003,11 @@ def _run_tool(name, args, dry_run):
             # The site config is a host file a rebuild keeps; a file of the image (nginx.conf includes mime.types) is
             # restored by one. Denying every rebuild of the front end left front-mime-missing unfixable (0/6, 2026-10-18).
             import reviewer
-            if not (reviewer.front_image_file(_incident["trace"]) or reviewer.front_layer_changes() or faults.hostconfig_drift(faults.FRONT)):
+            if not (reviewer.front_image_file(_incident["trace"]) or reviewer.front_layer_changes()):
                 return ("denied: edge-victim's site config is a host file mounted into the container; rebuilding the "
                         "container keeps the same file and the same fault. Fix the file with write_config or "
                         "restore_config, then docker_restart edge-victim. (A rebuild is allowed only when a file of its "
-                        "image, outside /etc/nginx/conf.d, is missing or changed: docker_logs edge-victim lists them; or "
-                        "when the container runs with a resource limit its definition never sets, e.g. a file-descriptor "
-                        "ulimit: docker_exec cat /proc/1/limits shows it.)")
+                        "image, outside /etc/nginx/conf.d, is missing or changed: docker_logs edge-victim lists them.)")
         if dry_run:
             return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
         if args.get("replace"):

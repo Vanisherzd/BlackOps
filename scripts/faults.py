@@ -48,7 +48,7 @@ GOOD_CONF = """server {
 SMALL_BUFFER_CONF = GOOD_CONF.replace("proxy_read_timeout 5s; }",
                                       "proxy_read_timeout 5s; proxy_buffer_size 128; proxy_buffers 8 128; proxy_busy_buffers_size 256; }")
 IPV6_ONLY_CONF = GOOD_CONF.replace("listen 80;", "listen [::]:80 ipv6only=on;")
-NOFILE_LIMIT = 12
+NOFILE_LIMIT = 8      # worker_rlimit_nofile: below what a worker needs to open epoll and accept
 FRONT, APP, NET = "edge-victim", "edge-victim-app", "edge-net"
 # The front end's /var/cache/nginx (temp files, created at start) is a small tmpfs volume with few inodes, so inode
 # exhaustion can be injected without touching the host's own filesystems. A tmpfs volume empties when no container
@@ -181,7 +181,7 @@ CASES = {
     "front-listen-ipv6-only":       dict(min_actions=1, fix_tools={"write_config", "restore_config", "docker_restart"},
                                          cause=r"ipv6|\[::\]|ipv4|listen|bind|config", tier="ops", diag_tools={"read_config", "docker_exec", "port_check"}),
     "front-rlimit-nofile":          dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"},
-                                         cause=r"open files|nofile|ulimit|file descriptor|descriptor|limit|24:", tier="ops",
+                                         cause=r"open files|nofile|rlimit|ulimit|file descriptor|descriptor|nginx\.conf", tier="ops",
                                          diag_tools={"docker_logs", "docker_exec"}),
     "upstream-webroot-wiped":       dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"},
                                          cause=r"wiped|deleted|missing|empty|html|index|backup|403|forbidden|webroot|document root", tier="ops",
@@ -240,12 +240,6 @@ SPECS = {
 
 def exists(name):
     return bool(sh(f"docker ps -aq --filter name=^{name}$").stdout.strip())
-
-
-def hostconfig_drift(name):
-    """True when the container runs with a resource limit its SPECS line never sets (today: ulimits, front-rlimit-nofile).
-    A restart keeps it; only a rebuild clears it, which is why the rebuild rule in agent.py asks."""
-    return sh(f"docker inspect -f '{{{{.HostConfig.Ulimits}}}}' {name}").stdout.strip() not in ("", "[]", "<nil>", "<no value>")
 
 
 def ensure(name):
@@ -367,8 +361,6 @@ def reset():
         sh(f"docker rm -f {APP} >/dev/null 2>&1")    # upstream-pids-limit: same
     if exists(APP) and sh(f"docker inspect -f '{{{{.HostConfig.NanoCpus}}}}' {APP}").stdout.strip() not in ("", "0", "<nil>", "<no value>"):
         sh(f"docker rm -f {APP} >/dev/null 2>&1")    # upstream-cpu-throttled: a CPU quota is only undone by a rebuild
-    if exists(FRONT) and hostconfig_drift(FRONT):
-        sh(f"docker rm -f {FRONT} >/dev/null 2>&1")  # front-rlimit-nofile: a ulimit is only undone by a rebuild
     if exists(FRONT) and "10.255.255.1" in sh(f"docker exec {FRONT} cat /etc/resolv.conf").stdout:
         sh(f"docker exec {FRONT} sh -c 'echo \"nameserver 127.0.0.11\" > /etc/resolv.conf' >/dev/null 2>&1")   # front-resolver-broken
     if exists(FRONT) and "10.255.255.1" in sh(f"docker exec {FRONT} cat /etc/hosts").stdout:
@@ -549,20 +541,22 @@ def inject(case):
         sh(f"docker restart -t 1 {FRONT}")
     elif case == "upstream-listen-localhost":
         # the classic bind mistake: the upstream listens on 127.0.0.1 only; healthy from inside, refused from the front.
-        # The IPv6 listen line goes away rather than moving to [::1]: a netns without IPv6 would refuse that bind and
-        # nginx -s reload would keep the old config, leaving the injection vacuous.
+        # A restart, not a reload: reloading cannot bind 127.0.0.1:80 while the old wildcard socket is held ("still
+        # could not bind()") and keeps the old config, which left the injection vacuous. The IPv6 line goes away.
         sh(f"docker exec {APP} sh -c \"sed -i -E 's/listen( +)80;/listen\\1127.0.0.1:80;/; /listen( +)\\[::\\]:80;/d' "
-           f"/etc/nginx/conf.d/default.conf && nginx -s reload\"", check=True)
+           f"/etc/nginx/conf.d/default.conf\"", check=True)
+        sh(f"docker restart -t 1 {APP}")
     elif case == "front-listen-ipv6-only":
         # the front end listens on IPv6 only; the published port forwards IPv4, so the host sees a refused connection
         # from a container that is Up with a clean log
         (CONF_DIR / "default.conf").write_text(IPV6_ONLY_CONF)
         sh(f"docker restart -t 1 {FRONT}")
     elif case == "front-rlimit-nofile":
-        # an OS limit: the front end runs with NOFILE_LIMIT file descriptors and nginx logs "24: Too many open files";
-        # a restart keeps the limit, only a rebuild clears it
-        sh(f"docker rm -f {FRONT}", check=True)
-        sh(SPECS[FRONT].replace("docker run -d", f"docker run -d --ulimit nofile={NOFILE_LIMIT}:{NOFILE_LIMIT}", 1), check=True)
+        # an OS limit: the front end's workers run with NOFILE_LIMIT file descriptors (worker_rlimit_nofile in the
+        # image's nginx.conf, as front-worker-connections edits it) and die with "24: Too many open files"; the master
+        # respawns them, the container stays Up, nothing accepts. (A docker --ulimit this low stops runc itself.)
+        sh(f"docker exec {FRONT} sed -i 's/^events {{/worker_rlimit_nofile {NOFILE_LIMIT};\\nevents {{/' /etc/nginx/nginx.conf", check=True)
+        sh(f"docker restart -t 1 {FRONT}")
     elif case == "upstream-webroot-wiped":
         # a bad deploy emptied the document root; the backup it made first is still there. 403 on /api/, both Up.
         sh(f"docker exec {APP} sh -c 'mkdir -p /var/backups && tar -czf /var/backups/html-$(date +%Y%m%d).tgz -C /usr/share/nginx html "

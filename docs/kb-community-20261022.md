@@ -377,3 +377,32 @@ sqlite 就自己建（159k 約一分鐘，一次）。`COMMUNITY_BACKEND=python`
   P1 不過 → 閘門選錯，回 Phase 1。空值檢查：B 臂若全解，P2 只是平手，結論只能是「無害＋可見」，不能說「有幫助」。
 
 執行：`logs/rag-ab.sh`（等 final-chain 結束 → 先逐案驗證注入真的讓健康變紅、reset 回得來 → 兩臂 → 五張牌 → 還原舞台）。
+
+### Phase 4b 結果（09:40，A 臂 `logs/regression-20261022-081507`，B 臂 `logs/regression-20261022-085256`）
+
+| 案例（ops tier，各 ×2） | A 臂 推送開：自主／中位 s | B 臂 推送關：自主／中位 s | A 臂推送 |
+|---|---|---|---|
+| front-proxy-buffer-too-small | 2/2／22 | 2/2／31 | **0 次**：agent 先 `read_config` 看到 proxy_buffer_size 就 restore，從沒讀前端 log |
+| upstream-listen-localhost | 1/2（1 silent-fail）／84 | 2/2／112 | 0 次（connection refused，runbook 擁有，照設計不推） |
+| front-listen-ipv6-only | 2/2／77 | 2/2／73 | 2 次，都是 agent 自己 `search_runbooks`：「ConnectionResetError nginx upstream」1 筆、「listen ipv6only=on unreachable」0 筆 |
+| front-rlimit-nofile | 0/2（silent-fail）／573 | 0/2（self_heal 兜底）／620 | 2 次（`docker_logs`），query 是 master 的「worker process exited with fatal code 2 and cannot be respawned」，0 筆 |
+| upstream-webroot-wiped | 2/2／60 | 2/2／52 | 0 次（403，runbook 擁有） |
+| 合計 | **7/10**，made-worse 0，謊報 0 | **8/10**，made-worse 0，謊報 0 | 4 次推送，1 次有參考，0 次被用上 |
+
+判準：**P1 不過**（proxy-buffer 0 次；rlimit 有推但 0 筆）；**P2 形式上不過**（7 對 8，但差的那場 listen-localhost 沒有任何推送，是跑次變異不是推送造成）；
+P3 過（A−B 中位在 4/5 案 ≤ 0）；P4 無（沒有任何參考被用上）。
+
+**為什麼 P1 不過——三個原因都在工具層，不在檢索器：**
+1. **洪水擠掉病因行**：rlimit 下 20 個 worker 啟動即死，各留一行 `[emerg] epoll_create() failed (24: Too many open files)`，master 再為每個 worker 寫四行；
+   agent 要的 tail 30 全是 master 的話，`symptom_query` 取最後四行、推送 query 也是，沒有一個字提到 open files。
+2. **log 歷史污染**：容器 log 保留先前事故的行，合併後的症狀句帶著舊的 `Connection refused` → 整句被判「runbook 擁有」→ 不推。
+3. **agent 根本沒讀那份 log**：proxy-buffer 的錯誤行在前端 log，agent 先讀 config 就修好了（22 s），這是好事，但推送沒機會發生。
+
+依決策規則回 Phase 1，改工具層（commit `7d309ff`，單元測試涵蓋洪水、混合歷史、earlier-errors 視窗）：
+`symptom_query` 每種形狀（去數字）只留一行、有 level 的病因行優先；`docker_logs` 附上「容器上次啟動以來、tail 裡沒有的 distinct 病因行」；
+`community_push` 逐行判擁有權、只拿未涵蓋的行去查。
+
+**修正後的測試（09:40 登記，資料未看）**：A/B 之後排的全目錄 45 案 ×1（`logs/full-after-ab.sh`，`COMMUNITY_PUSH=1`、k=2、rerank sidecar）就是替代測試。
+- 通過＝made-worse 0 ∧ 謊報 0 ∧ 先前跑過的 36 案自主修復 ≥ 30（昨夜基線 30/32 有效場）→ `COMMUNITY_PUSH` 預設維持 1；否則預設改 0。
+- 描述性：proxy-buffer 與 rlimit 兩案裡，推送帶 ≥1 筆參考的次數；rlimit 是否因 earlier-errors 行而修好。
+- 空值檢查：若 36 案達標但推送仍 0 次有效，結論只是「無害」，RAG 對 drill 的幫助仍未證實，要寫明。

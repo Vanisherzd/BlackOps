@@ -5,7 +5,7 @@
 
 ## 0. 一句話
 
-> 一台離線邊緣裝置上的自主維運 agent：**40 種故障、36 案例全目錄 regression 自主修復 30/32、越修越壞 0、謊報健康 0**；
+> 一台離線邊緣裝置上的自主維運 agent：**45 種故障（八類）、36 案例全目錄 regression 自主修復 30/32、越修越壞 0、謊報健康 0**；
 > 偵測到派工 4 s、簡單故障 15 s 結案；Nemotron 3.5 Lightning 在 vLLM 上 **65–100 tok/s**（DSpark），整套含 RAG 與審核在 45 GB 內；
 > 知識庫 158,881 筆離線語料經 rerank＋本機判官過濾後，機房症狀 **74%** 能給出對題的參考。
 
@@ -22,6 +22,21 @@
 | 機房形狀故障（表面健康、log 乾淨） | 8/8 | 依賴逾時、hosts 被毒、resolver 壞、前端脫網、log 洪水、設定檔注入、三因、200 但內容錯 |
 | 安全：注入指令（log 裡、設定檔裡要 agent 跑破壞性工具） | 2/2 擋下，破壞性工具 0 次執行 | log-injection 23 s、config-injection 27 s；Guardrails 把那行從工具輸出拿掉 |
 | 舞台五張牌 | 5/5（今晚 4 輪）；Thor 5/5（隊友 10/21） | `logs/drills-*.log` |
+
+### 1.1 故障目錄分類（45 案，`scripts/faults.py`）
+
+不只容器開關：八類，每類都有 reset 能回到綠的注入與 verify 能判紅的健康定義。
+
+| 類別 | 數 | 案例 |
+|---|---|---|
+| 容器生命週期（停、殺、暫停、移除、重啟迴圈、改名） | 9 | nginx-stopped, upstream-down, container-removed, crashloop, upstream-paused, front-paused, upstream-sigkill, upstream-sigstop, upstream-renamed |
+| 設定與部署（語法、路徑、include、mime、worker、port、proxy 緩衝、301） | 11 | bad-config, bad-upstream-name, api-path-404, config-empty, front-include-missing, front-mime-missing, front-worker-connections, upstream-config-crash, upstream-redirect, upstream-wrong-port, front-proxy-buffer-too-small |
+| 網路與 DNS（脫網、網路消失、hosts 被毒、resolver、依賴逾時、綁 localhost、只聽 IPv6） | 8 | upstream-detached, network-removed, front-detached, front-hosts-poisoned, front-resolver-broken, upstream-dependency-timeout, upstream-listen-localhost, front-listen-ipv6-only |
+| 資源與 OS 上限（OOM、pids、inode、fd） | 4 | upstream-oom, upstream-pids-limit, inode-exhausted, front-rlimit-nofile |
+| 資料與內容（index 刪除、權限、200 但內容錯、webroot 清空＋備份） | 4 | upstream-index-deleted, upstream-perm-denied, upstream-wrong-content, upstream-webroot-wiped |
+| 服務行為（500、429、log 洪水） | 3 | upstream-500, upstream-429, upstream-log-flood-500 |
+| 安全（log／設定檔注入指令） | 2 | log-injection, config-injection |
+| 複合（兩到三個獨立原因） | 4 | compound-config-upstream-down, compound-detached-paused, compound-front-stopped-upstream-port, compound-triple |
 
 ## 2. 速度（事故層級）
 
@@ -81,6 +96,7 @@
 | 上線規則 | **159k 語料（FTS5）top-50 → rerank（讀問題＋答案）→ 判官閘門**（只給判官說 yes 的）；FTS5 後端探針 45%／71% | 預設；沒對題就不給 |
 | 檢索延遲 | BM25 5.5 ms（6k）／FTS5 44 ms（159k）；rerank 145 ms（安靜）～1.2 s（滿載） | 只在明確呼叫知識工具時付 |
 | **drill 裡 RAG 真的跑了幾次** | runbook 稠密檢索（bge-small）：每次 `docker_logs` 自動附 runbook 14 次＋agent 主動 `search_runbooks` 17 次（兩輪 regression log 合計）；社群層 `search_incident_knowledge`：**今晚全部 drill 只 1 次**（upstream-perm-denied，05:28） | 所以 drill 的秒數**幾乎不含社群層**；上面的 RAG 數字全部來自離線評測（`logs/kb-community-eval-*.json`、`logs/kb-judge*.json`、`logs/rerank-grid/`），不是從 drill 推的 |
+| 社群層改為工具層推送後（A/B，ops tier 5 案 ×2，`docs/kb-community-20261022.md` Phase 4b） | 推送開 7/10、關 8/10；made-worse 0／謊報 0 兩臂皆然；10 場事故 4 次推送、1 次有參考、0 次被用上 | 第一版閘門被洪水與 log 歷史擋住（已修，commit `7d309ff`）；**RAG 對 drill 的幫助目前仍未證實**，全目錄 45 案重測中 |
 | runbook 檢索延遲 | 首查 4.0 s（bge-small 載入，ops_api 啟動時預熱）；之後 80–90 ms | `scripts/rag.py`，3 句實測 |
 | 修復卡 phrase gate | 漏推 0/8 → 6/8；誤推 3 → 0 | `scripts/kb-gate-probe.py` |
 | 一次性診斷 benchmark（63 題、封閉標籤） | Lightning strict 6%，RAG 無幫助 | 這題不是 KB 的用途，誠實列出 |

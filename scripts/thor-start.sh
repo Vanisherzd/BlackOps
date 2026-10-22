@@ -13,7 +13,7 @@ MODE="${1:-start}"
 log() { echo "=== $(date +%H:%M:%S) $*"; }
 up() { curl -sf -m 3 "$1" >/dev/null 2>&1; }
 
-log "repo: $(git log --oneline -1 | cut -c1-60) ($(git status --short | wc -l | tr -d ' ') local changes)"
+log "repo: $(git log --oneline -1 | cut -c1-60) ($(git status --short | wc -l | tr -d ' ') local changes); fully offline: nothing here needs the network"
 if [ "$MODE" = "--check" ]; then
   for u in "vLLM http://127.0.0.1:8000/health" "shim http://127.0.0.1:8001/health" "guard http://127.0.0.1:8792/health" "ops_api http://127.0.0.1:8790/tools" "dashboard http://127.0.0.1:8097/" "rerank http://127.0.0.1:8020/health"; do
     set -- $u; printf "%-10s %s\n" "$1" "$(up "$2" && echo up || echo DOWN)"
@@ -43,18 +43,26 @@ if echo "$S" | grep -qi "Inference: healthy"; then echo "  sandbox healthy"
 else
   timeout 240 nemoclaw edge-agent start </dev/null 2>&1 | grep -v -E "ExperimentalWarning|trace-warnings|^\s*$" | tail -2
   sleep 5; S=$(timeout 60 nemoclaw edge-agent status 2>/dev/null); echo "$S" | grep -i -E "Inference:|Failure layer" | head -2
-  if echo "$S" | grep -qi "Error state\|Failure layer"; then
-    cat <<'MSG'
-  sandbox still not healthy. If `openshell sandbox list` shows phase Error, rebuild it (3 min, as on 2026-10-22):
-    openshell sandbox delete edge-agent --yes
+  if echo "$S" | grep -qi "Error state\|Failure layer" || timeout 30 openshell sandbox list 2>/dev/null | grep -q "edge-agent.*Error"; then
+    # a hard power-off leaves the sandbox in OpenShell phase Error (exit 141 on 2026-10-22): start/stop are refused and
+    # only a rebuild helps. Everything it needs is local (sandbox image, model endpoint, policies, skill files).
+    log "sandbox in Error: rebuilding (about 3 minutes, all local)"
+    timeout 120 openshell sandbox delete edge-agent --yes 2>&1 | tail -1
     python3 - <<'PY'
-import json,os; p=os.path.expanduser("~/.nemoclaw/sandboxes.json"); d=json.load(open(p)); d["sandboxes"].pop("edge-agent",None); d["defaultSandbox"]=None; json.dump(d,open(p,"w"),indent=2)
+import json, os
+p = os.path.expanduser("~/.nemoclaw/sandboxes.json")
+try:
+    d = json.load(open(p)); d.get("sandboxes", {}).pop("edge-agent", None); d["defaultSandbox"] = None; json.dump(d, open(p, "w"), indent=2)
+except Exception as e:
+    print("registry:", e)
 PY
+    rm -rf ~/.nemoclaw/state/*edge-agent* 2>/dev/null
     NEMOCLAW_PROVIDER=custom NEMOCLAW_ENDPOINT_URL=http://127.0.0.1:8001/v1 NEMOCLAW_MODEL=edge-agent NEMOCLAW_PROVIDER_KEY=none \
       NEMOCLAW_COMPATIBLE_AUTH_MODE=none NEMOCLAW_REASONING=true NEMOCLAW_SANDBOX_NAME=edge-agent NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-      NEMOCLAW_SANDBOX_GPU=0 COMPATIBLE_API_KEY=none nemoclaw onboard --non-interactive --fresh --yes-i-accept-third-party-software
-    NEMOCLAW_SANDBOX_GPU=0 COMPATIBLE_API_KEY=none scripts/bootstrap-spark.sh nemoclaw
-MSG
+      NEMOCLAW_SANDBOX_GPU=0 COMPATIBLE_API_KEY=none timeout 600 nemoclaw onboard --non-interactive --fresh --yes-i-accept-third-party-software \
+      </dev/null 2>&1 | grep -v -E "ExperimentalWarning|trace-warnings|^\s*$" | tail -3
+    NEMOCLAW_SANDBOX_GPU=0 COMPATIBLE_API_KEY=none timeout 900 scripts/bootstrap-spark.sh nemoclaw </dev/null 2>&1 | grep -E "Inference|Policies|Policy version|Applied" | tail -4
+    timeout 60 nemoclaw edge-agent status 2>/dev/null | grep -i -E "Inference:|Failure layer" | head -2
   fi
 fi
 

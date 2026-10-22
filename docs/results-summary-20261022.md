@@ -67,6 +67,13 @@ listen-localhost silent-fail 605 s（90 次呼叫）成為目前唯一未解案�
 
 **Thor 舞台 demo 迴圈（13:30 起，巡檢路徑：偵測→開事故→派工→修復→結案）**：compound-triple 88 s、compound-detached-paused 65 s（巡檢 4 s 開事故）。
 
+**vLLM 官方 serving benchmark（Thor，14:20，`vllm bench serve`，random 2048 入／256 出，24 題）**：併發 1 → 輸出 **49.6 tok/s**、TTFT 中位 **0.53 s**（P99 1.03 s）、TPOT 17.7 ms；
+併發 4 → 合計 69.4 tok/s、TPOT 20.6 ms、TTFT 8.5 s（舞台 `max-num-seqs 2`：一次一個 agent，多的排隊，是設計取捨）。量測期間 demo 迴圈的 agent 同時在修一場事故（該場 168 s，平時 32–42 s）。
+
+**舞台 demo 迴圈最終版（Thor，巡檢路徑）**：壞部署連環 33／52／85 s、後端 500 32／37／42 s、log 注入 33／37／49 s（三輪）。
+
+**Code freeze 14:30**：main `63fd7aa`；一鍵啟動 `scripts/thor-start.sh --demo`（端到端實測 14:20 全綠，含 demo 迴圈起跑）。
+
 計分修正（commit `8a051bc`）：Thor 原始計分 5/12 是因為修好之後的 continuation 讓模型呼叫 `self_heal`（空操作），舊計分把任何 self_heal 都當兜底。
 現在只有「在修好之前」的 self_heal 算兜底，修好之後的呼叫另列 after-green 欄；同時 `self_heal` 不再提供給 sandbox agent（旁門）。
 

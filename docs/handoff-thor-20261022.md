@@ -1,4 +1,6 @@
-# Thor 接手清單（2026-10-22 09:45，Spark 這邊暫停）
+# Thor 接手清單（2026-10-22；14:30 code freeze，main `63fd7aa`）
+
+**斷電斷網後**：登入 → 終端機 → `cd ~/BlackOps && scripts/thor-start.sh --demo` → 等 `PREFLIGHT GREEN`（冷啟動 3–4 分鐘）→ Thor 螢幕開 `http://127.0.0.1:8097/`（F11）。停迴圈 `touch logs/demo-loop.stop`；只看狀態 `scripts/thor-start.sh --check`。全程不需要網路。
 
 ## 1. 拉程式
 

@@ -3,6 +3,7 @@
 **目標**：在一台與被監控系統分離的邊緣裝置上，完全本地跑大模型推論與小型 RAG，做一個「網路斷了也能自己診斷、自己修好」的 IT 維運 Agent。部署目標是 Jetson AGX Thor，開發與驗證機是 NVIDIA DGX Spark（GB10，128 GB unified memory）。NVIDIA 堆疊：**Nemotron**（模型）、**NemoClaw／OpenShell**（Agent 執行環境）、**NeMo Guardrails**（工具層的安全 rail）、**NeMo Agent Toolkit**（事故 profiling），見 `docs/nemo-integration.md`。推論引擎是 **vLLM**；2026-10-20 團隊決定由 vLLM 取代 TensorRT-LLM，TRT-LLM 保留為早期量測的基準，見 `docs/integration-vllm.md`。
 
 **現況（2026-10-22 清晨）**：
+- **14:30 code freeze**（main `63fd7aa`）：之後只改文件、`docs/benchmark.json` 與儀表板文字。斷電後一鍵：`scripts/thor-start.sh --demo`。
 - 14:10 一鍵起 Thor 舞台：`scripts/thor-start.sh`（`--demo` 連 demo 迴圈、`--check` 只看）；demo 迴圈 `scripts/demo-loop.sh`（壞部署連環／後端 500／log 注入）。
 - 13:10 公開 benchmark 對照：`docs/itbench-alignment-20261022.md`（ITBench 指標定義 → 我們的量法與數字；真跑 ITBench 要 k8s，列為賽後路徑）。
 - 11:00 上台用：`docs/pitch-notes-20261022.md`（完成度三級、十個特點各配證據、設計決策對照表、Q&A 預演）。

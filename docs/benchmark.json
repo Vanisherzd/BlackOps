@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-22 14:12",
+  "updated": "2026-10-22 14:30（code freeze）",
   "items": [
     {
       "k": "全目錄 regression（36 案，Spark）",
@@ -30,6 +30,11 @@
       "k": "舞台巡檢全路徑（偵測→派工→修復→結案）",
       "v": "三因複合 88 s、脫網＋pause 65 s；巡檢 4 s 開事故",
       "src": "logs/incidents.jsonl（Thor 13:30）"
+    },
+    {
+      "k": "vLLM 官方 serving benchmark（Thor，2k 入／256 出，24 題）",
+      "v": "併發 1：49.6 tok/s、TTFT 中位 0.53 s、TPOT 17.7 ms；併發 4：合計 69.4 tok/s、TPOT 20.6 ms（舞台 max-num-seqs=2，第 3、4 條排隊，TTFT 8.5 s 是設計取捨）；量測時 agent 同時在修一場事故",
+      "src": "logs/bench-after-loop.out · ~/.cache/huggingface/bench/serve-c{1,4}.json（Thor）"
     },
     {
       "k": "偵測 → 派工",

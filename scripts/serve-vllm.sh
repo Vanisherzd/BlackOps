@@ -60,7 +60,7 @@ fi
 # 8/8 drills (docs/optimizations-20261022.md). The Thor keeps the plain recipe unless SPEC is set there.
 if [ "${SPEC:-}" = dspark ]; then
   EXTRA_ARGS="${EXTRA_ARGS:-} --speculative_config.model ${DSPARK_MODEL_ID:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark}"
-  EXTRA_ARGS="$EXTRA_ARGS --speculative_config.num_speculative_tokens ${SPEC_TOKENS:-3} --mamba-backend ${MAMBA_BACKEND:-flashinfer}"
+  EXTRA_ARGS="$EXTRA_ARGS --speculative_config.num_speculative_tokens ${SPEC_TOKENS:-2} --mamba-backend ${MAMBA_BACKEND:-flashinfer}"
   export EXTRA_ARGS
 elif [ "${SPEC:-}" = mtp ]; then
   # SPEC=mtp: Lightning's built-in multi-token-prediction heads (no draft weights). Measured on the Spark 2026-10-22: it

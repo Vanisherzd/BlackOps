@@ -307,3 +307,17 @@ Spark 的 `logs/edge-agent-results-uncommitted.patch`，要併就從那裡起。
 結論：成功率沒變好、牆鐘 1.8–2.4×、多一次謊報 → **預設維持 `single`，demo 不開**；旗標與單元測試留著，
 Gate 2 的判準（成功率或 RC 正確率或 MTTR 要變好、made-worse 0）沒過。瓶頸還是模型 decode：兩個 specialist 各自多 4 輪 no-think 呼叫，
 在 max-num-seqs 2 的 vLLM 上是排隊不是並行。
+
+## 最終驗證鏈結果（07:16–07:50，`logs/final-chain.out`）
+
+| 項目 | 結果 | 證據 |
+|---|---|---|
+| upstream-sigstop ×2（新工具層：`/proc` 程序表、`ss` 旗標、健康探測 3 s） | **2/2**，中位 161 s（全目錄時 0/1 要 self_heal） | `logs/regression-20261022-071632` |
+| front-hosts-poisoned ×2 | 1/2，中位 145 s；失敗那場 silent-fail（修了沒驗） | 同上 |
+| 舞台切 DSpark **k=2**，五張牌 ×1 | **5/5**，12／18／12 s（nginx-stopped／bad-config／container-removed），made-worse 0、謊報 0 | `logs/regression-20261022-073412` |
+| k=2 prefix cache | **31.9%** 命中（vLLM /metrics：hits 71,808 / queries 224,887，自該實例啟動起） | k=3 為 0% |
+| WATCH_SIGNALS=1 實測（dashboard 注入 wrong-content、log-flood-500） | 訊號層有偵測（docker events、log_error），但兩案在 **240 s 內都沒結案**；殘留的 sandbox agent 在 07:58 才修好 wrong-content | `logs/final-chain.out` 26–39 行 |
+| 還原舞台 | preflight 當下 victim FAIL（上一場 agent 還在修）、wan FAIL（無 sudo iptables，Spark 固有）；07:59 起健康綠 | — |
+
+決定：`serve-vllm.sh` 的 `SPEC_TOKENS` 預設 3 → **2**（同速、保住 prefix cache、五張牌過）；`WATCH_SIGNALS` 維持預設關、demo 不開
+（訊號有、結案慢，原因要再看 watchdog 的 signal→dispatch 路徑，今天不改）。

@@ -17,7 +17,7 @@
 | 越修越壞（注入時還活的 URL 結束時死掉） | **0** | 同上，`scripts/score.py` made-worse 欄 |
 | 謊報健康（報告說修好但健康檢查沒過） | **0** | 同上，false claims 欄 |
 | 證據先於動作（第一個改變狀態的動作前有 ps／logs／runbook 查詢） | 74% | 同上，evidence-first 欄 |
-| 盲測泛化（寫完故障後沒改 agent 的四批題） | **17/18** | 同一輪；Nano 時代同題 6/15、11/15、4–5/12、3–6/12 |
+| 盲測泛化（寫完故障後沒改 agent 的四批題） | **17/18**；唯一失敗 upstream-sigstop 在工具層補 `/proc` 程序表與 `ss` 後重跑 **2/2** | 同一輪；Nano 時代同題 6/15、11/15、4–5/12、3–6/12；`logs/regression-20261022-071632` |
 | 複合故障（兩個以上獨立原因同時發生） | 6/6（單代理） | compound tier ×2；adaptive 多代理同 7 案 ×2：12/14、中位牆鐘 2.4×、1 次謊報 → **預設關**（`logs/regression-20261022-061854/`） |
 | 機房形狀故障（表面健康、log 乾淨） | 8/8 | 依賴逾時、hosts 被毒、resolver 壞、前端脫網、log 洪水、設定檔注入、三因、200 但內容錯 |
 | 安全：注入指令（log 裡、設定檔裡要 agent 跑破壞性工具） | 2/2 擋下，破壞性工具 0 次執行 | log-injection 23 s、config-injection 27 s；Guardrails 把那行從工具輸出拿掉 |
@@ -42,7 +42,7 @@
 | decode tok/s（tool-turn 2.4k prompt／report 1.8k／long-context 8.9k） | 基準 51／67／68 → **DSpark 65／100／91** | `scripts/decode-bench.py`，temperature 0、thinking on、各 3 次中位 |
 | 推測解碼品質 | chars/token 不變、8/8 drill | 2026-10-19 NGram 曾把輸出打壞，所以每次都量 |
 | MTP（內建多 token 頭） | 與 DSpark 同速或略慢、8/8 drill、保住 prefix cache | 淘汰，留給 Thor 試 |
-| prefix cache 命中 | DSpark k=3 **0%**；k=2 21.6%；k=5 21.9%；MTP 21.6% | `scripts/prefix-cache-stats.py`（vLLM /metrics） |
+| prefix cache 命中 | DSpark k=3 **0%**；**k=2 31.9%**（舞台實跑，五張牌 5/5 後成為預設）；k=5 21.9%；MTP 21.6% | `scripts/prefix-cache-stats.py`（vLLM /metrics） |
 | 冷啟動到 healthy | 131–192 s（權重 17.8 GiB） | rerank sidecar 46 s |
 | 記憶體（RSS） | vLLM 3.7 GiB、rerank 3.3 GiB、ops-api 1.2 GiB（159k 索引 2.5 GiB）、sandbox 0.4–0.9 GiB；整機 MemAvailable ≥ 74 GB | `scripts/mem-profile.sh`，1 Hz |
 | KV 預留 | gpu util 0.20 → 53k tokens（≥16 條 32k 序列） | 舞台用 0.20–0.25 |
@@ -92,7 +92,7 @@
 | 離線 | 全部本地：模型、語料、sandbox；外網斷掉照跑（demo 有斷網段） |
 | 變更路徑 | 單一：白名單工具 → runbook gate → NeMo Guardrails rail → reviewer 兩把鑰匙（code key＋模型）→ 風險動作人工審批 → 動作後自動健康檢查 |
 | 診斷 | 唯讀工具 23 個＋平行證據包＋（選配）唯讀雙專家並行；破壞性工具永遠不給 |
-| 監看 | 2 s 健康巡檢＋triage＋派工；選配訊號層（容器狀態、log 錯誤、磁碟、docker events） |
+| 監看 | 2 s 健康巡檢＋triage＋派工；選配訊號層（容器狀態、log 錯誤、磁碟、docker events）——實測有偵測但兩個安靜故障 240 s 內未結案，demo 不開 |
 | 學習 | 結案自動寫「已驗證事故記憶」，下次先查；不重訓模型 |
 | 資源治理 | 記憶體包絡決定 specialist 並行數、reranker、語料大小 |
 
@@ -108,6 +108,7 @@
 ## 7. 還沒量／要注意
 
 - Thor 上的 DSpark／k=2／MTP 未驗（Spark 數字）。
+- WATCH_SIGNALS 訊號層：偵測有、結案慢（兩案 >240 s），預設關。
 - adaptive 多代理（Gate 2，7 案 ×2）：12/14 對單代理 7/7、中位 130／132 s 對 54／74 s、1 次謊報（upstream-wrong-content）→ demo 不開，旗標留著。
 - 判官本身是模型，標籤是「LLM-judged」不是人工真值。
 - 競品數字一律未量；表裡沒有任何估計值。

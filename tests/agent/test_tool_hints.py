@@ -57,3 +57,24 @@ class HealthTimeoutWordingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RepairImageFileTest(unittest.TestCase):
+    def test_repairable_paths(self):
+        self.assertTrue(agent.repairable_path("edge-victim-app", "/etc/nginx/conf.d/default.conf"))
+        self.assertTrue(agent.repairable_path("edge-victim-app", "/usr/share/nginx/html/index.html"))
+        self.assertTrue(agent.repairable_path("edge-victim", "/etc/nginx/nginx.conf"))
+        self.assertFalse(agent.repairable_path("edge-victim", "/etc/nginx/conf.d/default.conf"))   # the front end's mounted host file
+        self.assertFalse(agent.repairable_path("edge-victim-app", "/etc/passwd"))
+        self.assertFalse(agent.repairable_path("edge-victim-app", "/etc/nginx/../passwd"))
+
+    def test_rebuild_waits_for_the_in_place_repair(self):
+        import faults
+        from unittest import mock
+        import json
+        agent._incident.update(trace=[{"tool": "docker_restart", "args": json.dumps({"name": "edge-victim-app"}), "result": "edge-victim-app restarted"}], runbook_seen=True, injected=[])
+        with mock.patch.object(faults, "layer_changes", return_value=[("/etc/nginx/conf.d/default.conf", "changed")]), \
+             mock.patch.object(agent, "sh", return_value=""), mock.patch.dict(os.environ, {"HEALTHY_GUARD": "0", "GUARDRAILS": "0"}):
+            out = agent._run_tool("recreate_stack", {"name": "edge-victim-app", "replace": True}, False)
+        self.assertTrue(out.startswith("denied:"), out)
+        self.assertIn("repair_image_file", out)

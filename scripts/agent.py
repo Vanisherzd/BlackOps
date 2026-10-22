@@ -58,7 +58,7 @@ UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / jour
 # retrieval whenever it believed it already knew the answer, and one bad-config run wandered for six minutes because
 # of it. So the rule lives in the tool layer. Evidence tools push the matching runbook into the answer, and an action
 # refuses once until a runbook has been seen for this incident. An incident ends when health comes back green.
-MUTATING = {"vm_service", "vm_write_config", "vm_restore_config",
+MUTATING = {"repair_image_file", "vm_service", "vm_write_config", "vm_restore_config",
             "docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
             "clear_scratch_volume", "restore_config",
             "kill_process"}
@@ -245,6 +245,71 @@ def earlier_errors(name, shown, window=300, k=4):
             seen.add(_shape(l))
             out.append(l.strip()[:300])
     return out[-k:]
+
+
+IMAGE_FILE_PREFIXES = ("/etc/nginx/", "/usr/share/nginx/html/")
+PRISTINE_DIR = ROOT / "victim" / "known-good" / "image"
+
+
+def _trace_arg(t, key):
+    """One argument of a trace entry; the trace keeps args as the JSON text the reviewer greps."""
+    a = t.get("args")
+    if isinstance(a, str):
+        try:
+            a = json.loads(a)
+        except ValueError:
+            return None
+    return a.get(key) if isinstance(a, dict) else None
+
+
+def repairable_path(name, path):
+    """A file of the nginx image the in-place repair may restore: under /etc/nginx/ or the html root, a plain path (no
+    '..'), and on the front end not the mounted conf.d (a host file, write_config's business)."""
+    if not path.startswith(IMAGE_FILE_PREFIXES) or ".." in path or path.endswith("/"):
+        return False
+    if name == "edge-victim" and path.startswith("/etc/nginx/conf.d/"):
+        return False
+    return True
+
+
+def pristine_copy(path):
+    """The image's own copy of a file, extracted once from a throwaway container of the same image and cached."""
+    import faults
+    dst = PRISTINE_DIR / path.lstrip("/")
+    if dst.exists():
+        return dst
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    cid = sh("docker create nginx:latest").strip().splitlines()[-1]
+    try:
+        r = subprocess.run(["docker", "cp", f"{cid}:{path}", str(dst)], capture_output=True, text=True, timeout=60)
+    finally:
+        sh(f"docker rm -f {cid}")
+    if r.returncode or not dst.exists():
+        raise FileNotFoundError(f"the image has no {path}: {(r.stderr or r.stdout).strip()[:160]}")
+    return dst
+
+
+def repair_image_file(name, path):
+    """docker cp the pristine file over the container's copy (mode comes with it, so a chmod 000 is undone too), then
+    nginx -t and reload inside; a container that is not running gets the file and a start."""
+    try:
+        src = pristine_copy(path)
+    except Exception as e:
+        return f"error: {e}"
+    r = subprocess.run(["docker", "cp", str(src), f"{name}:{path}"], capture_output=True, text=True, timeout=60)
+    if r.returncode:
+        return f"error: docker cp failed: {(r.stderr or r.stdout).strip()[:200]}"
+    running = sh(f"docker inspect -f '{{{{.State.Running}}}}' {name}").strip() == "true"
+    if not running:
+        sh(f"docker start {name}")
+        settle()
+        return f"restored {path} in {name} from the image and started the container"
+    test = sh(f"docker exec {name} nginx -t 2>&1")
+    if "syntax is ok" not in test and "test is successful" not in test:
+        return f"restored {path} in {name} from the image, but nginx -t still fails: {test.strip()[-300:]}. Another file of its layer is still wrong: docker_logs / docker_exec cat it."
+    sh(f"docker exec {name} nginx -s reload")
+    settle()
+    return f"restored {path} in {name} from the image; nginx -t ok; reloaded"
 
 
 def _oplog(tool, args, result, t0):
@@ -451,7 +516,8 @@ TOOLS = [
     {"name": "port_check", "description": "Whether a TCP port accepts connections", "parameters": {"type": "object", "properties": {"host": {"type": "string", "default": "127.0.0.1"}, "port": {"type": "integer"}}, "required": ["port"]}},
     {"name": "http_check", "description": "GET an http(s) URL on this host or the private network and return the status code and the first bytes of the body", "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
     {"name": "top_processes", "description": "Top host processes by CPU with memory usage", "parameters": {"type": "object", "properties": {}}},
-    {"name": "recreate_stack", "description": "Recreate a container of this stack from its definition: one that no longer exists at all, or with replace=true one whose own state is corrupt and survives a restart (e.g. a broken config inside the upstream). Start/restart first if it merely exited", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "replace": {"type": "boolean", "default": False}}}},
+    {"name": "repair_image_file", "description": "Put back one file of a container's image in place (the pristine copy from the image, same mode) and reload nginx there, without rebuilding the container: the upstream's own config (/etc/nginx/conf.d/default.conf), its nginx.conf, its pages under /usr/share/nginx/html/. For a file the container changed, deleted or chmodded inside its own layer; the front end's site config is a host file (write_config / restore_config instead)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "path": {"type": "string"}}, "required": ["name", "path"]}},
+    {"name": "recreate_stack", "description": "Recreate a container of this stack from its definition: one that no longer exists at all, or with replace=true one whose own state is corrupt and survives a restart AND cannot be repaired in place (repair_image_file first for a changed image file; replace is for resource limits, a read-only root, a container that will not start). Start/restart first if it merely exited", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "replace": {"type": "boolean", "default": False}}}},
     {"name": "network_repair", "description": "Make sure the stack network exists and both containers are attached to it; use when the front end cannot resolve or reach the upstream", "parameters": {"type": "object", "properties": {}}},
     {"name": "cleanup_disk", "description": "Free space by deleting this project's own old service output (*.out, the inference server's startup log); never images, volumes, records, or anyone else's data", "parameters": {"type": "object", "properties": {}}},
     {"name": "clear_scratch_volume", "description": "Delete every file in this stack's scratch volume edge-cache (mounted as /var/cache/nginx in edge-victim: nginx's temp files). Its contents are disposable; nginx recreates its temp directories when it starts", "parameters": {"type": "object", "properties": {}}},
@@ -1179,6 +1245,16 @@ def _run_tool(name, args, dry_run):
                 return (f"denied: recreate_stack replace=true on {args['name']} before it was started or restarted in this "
                         f'incident. Next: docker_restart {{"name": "{args["name"]}"}}; if it still fails, call '
                         f'recreate_stack {{"name": "{args["name"]}", "replace": true}} again.')
+            # Replacing a container is the heavy hand: when what changed in its layer is a file the image has, that
+            # file is put back in place first (repair_image_file); the rebuild is for what a file repair cannot undo.
+            repairable = [p for p, _ in faults.layer_changes(args["name"]) if repairable_path(args["name"], p)]
+            tried = {_trace_arg(t, "path") for t in _incident["trace"] if t["tool"] == "repair_image_file"
+                     and reviewer.named(t, args["name"]) and not t["result"].startswith(("refused:", "denied:", "error:", "DRY-RUN"))}
+            untried = [p for p in repairable if p not in tried]
+            if untried and os.environ.get("REPAIR_FIRST", "1") == "1":
+                return (f"denied: {args['name']}'s own layer changed these image files: {', '.join(untried[:4])}. Put them back in "
+                        f"place first, that keeps the container: repair_image_file {{\"name\": \"{args['name']}\", \"path\": \"{untried[0]}\"}} "
+                        "(one call per file). Replace the container only if the service is still failing after that.")
             refusal = reviewed(name, {"name": args["name"], "replace": True})
             if refusal:
                 return refusal
@@ -1187,6 +1263,18 @@ def _run_tool(name, args, dry_run):
         out = [faults.ensure(t) for t in targets]
         settle()
         return with_health("\n".join(out) + "\n" + docker_ps())
+    if name == "repair_image_file":
+        import faults
+        denied = guard(args["name"])
+        if denied:
+            return denied
+        path = str(args.get("path") or "")
+        if not repairable_path(args["name"], path):
+            return (f"denied: {path!r} is not a file this tool restores on {args['name']}. Allowed: files of the image under "
+                    "/etc/nginx/ (not the front end's mounted conf.d: that is write_config / restore_config) and /usr/share/nginx/html/.")
+        if dry_run:
+            return f"DRY-RUN: would restore {path} in {args['name']} from the image and reload nginx"
+        return with_health(repair_image_file(args["name"], path))
     if name == "network_repair":
         import faults
         if dry_run:

@@ -24,6 +24,8 @@ section h2{font-size:15px;color:var(--dim);margin:0 0 8px;font-weight:600;letter
 .jcard .big{font-size:30px;font-weight:700;line-height:1.1}.jcard .big small{font-size:14px;color:var(--dim);font-weight:400;margin-left:4px}
 .jcard .line{font-size:15px;color:#c7ccd6;margin-top:3px}.jcard .line b{color:var(--text);font-weight:600}
 .jcard.ok .big{color:var(--ok)}.jcard.warn .big{color:var(--warn)}
+.bar{height:10px;border-radius:5px;background:#12151b;border:1px solid var(--line);margin:6px 0 4px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--ok),#4c8dff);width:0}
+#j-sys .big{font-size:34px}
 .bench{font-size:14px;color:#c7ccd6}.bench div{display:flex;gap:8px;padding:3px 0;border-bottom:1px solid #22262f}.bench div span:first-child{color:var(--dim);flex:0 0 46%}
 .bench div span:last-child{font-weight:600;color:var(--text)}
 .rails{font-size:14px;color:#c7ccd6;padding-left:16px;margin:4px 0 0}.rails li{margin:2px 0}
@@ -101,7 +103,7 @@ select{background:#232833;color:var(--text);border:1px solid var(--line);border-
     <div class="judge">
       <div class="jcard" id="j-task"><h3>事故處理（今日）</h3><div class="big" id="j-task-big">—</div><div class="line" id="j-task-l1"></div><div class="line" id="j-task-l2"></div></div>
       <div class="jcard" id="j-inf"><h3>推論效率（vLLM 即時）</h3><div class="big" id="j-inf-big">—</div><div class="line" id="j-inf-l1"></div><div class="line" id="j-inf-l2"></div></div>
-      <div class="jcard" id="j-sys"><h3>資源（Thor）</h3><div class="big" id="j-sys-big">—</div><div class="line" id="j-sys-l1"></div><div class="line" id="j-sys-l2"></div></div>
+      <div class="jcard" id="j-sys"><h3>記憶體 / 資源（Thor 128 GB 統一記憶體，無 swap）</h3><div class="big" id="j-sys-big">—</div><div class="bar"><i id="j-sys-bar"></i></div><div class="line" id="j-sys-l1"></div><div class="line" id="j-sys-l2"></div></div>
       <div class="jcard" id="j-safe"><h3>穩定安全（今日）</h3><div class="big" id="j-safe-big">—</div><div class="line" id="j-safe-l1"></div><div class="line" id="j-safe-l2"></div></div>
     </div>
     <div class="jcard" style="margin-top:8px"><h3>工具呼叫（今日，依階段）</h3><div class="line" id="j-tools"></div><div class="line" id="j-tools-top" style="color:var(--dim)"></div></div>
@@ -348,9 +350,10 @@ function render(s){
     $('j-inf-l1').innerHTML = `首 token <b>${mt.ttft != null ? mt.ttft + ' s' : '—'}</b> · 平均請求 <b>${mt.e2e != null ? mt.e2e + ' s' : '—'}</b> · 進行中 <b>${mt.running}</b>`;
     $('j-inf-l2').innerHTML = `prefix cache 命中 <b>${mt.prefix_hit != null ? mt.prefix_hit + '%' : '—'}</b> · KV 使用 <b>${mt.kv}%</b> · 已產生 <b>${(mt.gen_tokens/1000).toFixed(0)}k</b> tokens／${mt.requests} 次`; }
   else { $('j-inf-big').innerHTML = '—<small>vLLM /metrics 無回應</small>'; }
-  $('j-sys-big').innerHTML = sy.gpu != null ? sy.gpu + '%<small>GPU 使用率</small>' : (sy.gpu_w != null ? sy.gpu_w + ' W<small>GPU 功耗' + (sy.gpu_mhz ? ' · ' + sy.gpu_mhz + '/' + sy.gpu_max_mhz + ' MHz' : '') + (sy.gpu_temp ? ' · ' + sy.gpu_temp + '°C' : '') + '</small>' : (sy.gpu_mhz ? sy.gpu_mhz + ' MHz<small>GPU 時脈／' + sy.gpu_max_mhz + '</small>' : '—<small>GPU</small>'));
-  $('j-sys-l1').innerHTML = `CPU <b>${sy.cpu != null ? sy.cpu + '%' : '—'}</b>${sy.cores ? '（' + sy.cores + ' 核）' : ''} · RAM 可用 <b>${sy.ram_avail_gb != null ? sy.ram_avail_gb + ' / ' + sy.ram_total_gb + ' GB' : '—'}</b>`;
-  $('j-sys-l2').textContent = '無 swap；KV 預留由 GPU_MEMORY_UTILIZATION 控（0.20–0.25）';
+  if (sy.ram_total_gb){ const used = (sy.ram_total_gb - sy.ram_avail_gb); $('j-sys-big').innerHTML = `${used.toFixed(1)} GB<small>整套在用（模型 + KV + 知識層 + sandbox + 靶機）／${sy.ram_total_gb} GB</small>`; $('j-sys-bar').style.width = Math.min(100, 100 * used / sy.ram_total_gb).toFixed(0) + '%'; $('j-sys').className = 'jcard ' + (sy.ram_avail_gb > 16 ? 'ok' : 'warn'); }
+  else $('j-sys-big').innerHTML = '—<small>RAM</small>';
+  $('j-sys-l1').innerHTML = `可用 <b>${sy.ram_avail_gb != null ? sy.ram_avail_gb + ' GB' : '—'}</b> · 權重 NVFP4 17.8 GiB · KV 預留可調（0.20–0.25）· 知識索引 2.5 GiB → <b>幾 MB</b>（FTS5）`;
+  $('j-sys-l2').innerHTML = `GPU <b>${sy.gpu != null ? sy.gpu + '%' : '—'}</b>${sy.gpu_w != null ? ' · ' + sy.gpu_w + ' W' : ''}${sy.gpu_temp != null ? ' · ' + sy.gpu_temp.toFixed(0) + '°C' : ''} · CPU <b>${sy.cpu != null ? sy.cpu + '%' : '—'}</b>${sy.cores ? '／' + sy.cores + ' 核' : ''}`;
   $('j-safe-big').innerHTML = `${sc.destructive ?? 0}<small>破壞性工具執行</small>`; $('j-safe').className = 'jcard ' + ((sc.destructive || 0) === 0 ? 'ok' : 'warn');
   $('j-safe-l1').innerHTML = `規則擋下 <b>${sc.blocked ?? 0}</b> · 審核否決 <b>${sc.rejected ?? 0}</b> · 人工審批 <b>${sc.approvals ?? 0}</b>`;
   $('j-safe-l2').innerHTML = `巡檢 <b>${s.watchdog ? '開' : (s.drill_running ? '錯誤注入中（直接派工）' : '關')}</b> · Guardrails <b>開</b> · 審批 <b>${s.approval_mode}</b>`;

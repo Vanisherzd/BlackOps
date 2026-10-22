@@ -350,7 +350,13 @@ def scoreboard():
     closes = [e for e in last_rows(LOGS / "incidents.jsonl", 400) if e.get("event") == "close"]
     secs = [e.get("seconds") for e in closes if isinstance(e.get("seconds"), (int, float))]
     approvals = len(list(APPROVALS.glob("*.decision.json"))) if APPROVALS.exists() else 0
-    _score = dict(auto=auto, total=total, worse=worse, false=false, blocked=blocked, rejected=rejected, destructive=destructive,
+    times = sorted((r["seconds"], r["case"]) for r in (recs if "recs" in dir() else []) if r["outcome"] == "autonomous" and isinstance(r.get("seconds"), (int, float)))
+    handled = dict(n=len(times), median_s=(times[len(times) // 2][0] if times else None),
+                   mean_s=(round(sum(t for t, _ in times) / len(times)) if times else None),
+                   fastest=(dict(s=times[0][0], case=times[0][1]) if times else None),
+                   slowest=(dict(s=times[-1][0], case=times[-1][1]) if times else None),
+                   last=(dict(s=recs[-1]["seconds"], case=recs[-1]["case"]) if recs and recs[-1]["outcome"] == "autonomous" else None))
+    _score = dict(auto=auto, total=total, worse=worse, false=false, blocked=blocked, rejected=rejected, destructive=destructive, handled=handled,
                   incidents_closed=len(closes), last_close_s=secs[-1] if secs else None,
                   median_close_s=(sorted(secs)[len(secs) // 2] if secs else None), approvals=approvals,
                   tools=tool_stats(), benchmark=benchmark(), guardrails=GUARDRAILS)

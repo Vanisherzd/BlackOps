@@ -99,7 +99,7 @@ select{background:#232833;color:var(--text);border:1px solid var(--line);border-
   <section>
     <h2>評審看的四件事（即時）— 場景價值 · 任務完成度 · 推論效率 · 穩定安全</h2>
     <div class="judge">
-      <div class="jcard" id="j-task"><h3>任務完成度（今日）</h3><div class="big" id="j-task-big">—</div><div class="line" id="j-task-l1"></div><div class="line" id="j-task-l2"></div></div>
+      <div class="jcard" id="j-task"><h3>事故處理（今日）</h3><div class="big" id="j-task-big">—</div><div class="line" id="j-task-l1"></div><div class="line" id="j-task-l2"></div></div>
       <div class="jcard" id="j-inf"><h3>推論效率（vLLM 即時）</h3><div class="big" id="j-inf-big">—</div><div class="line" id="j-inf-l1"></div><div class="line" id="j-inf-l2"></div></div>
       <div class="jcard" id="j-sys"><h3>資源（Thor）</h3><div class="big" id="j-sys-big">—</div><div class="line" id="j-sys-l1"></div><div class="line" id="j-sys-l2"></div></div>
       <div class="jcard" id="j-safe"><h3>穩定安全（今日）</h3><div class="big" id="j-safe-big">—</div><div class="line" id="j-safe-l1"></div><div class="line" id="j-safe-l2"></div></div>
@@ -338,10 +338,11 @@ function render(s){
   $('k-mode').textContent = ({manual: '風險動作需人工核准', auto: '自動（演練）', off: '關閉'}[s.approval_mode] || s.approval_mode);
   $('k-watchdog').textContent = s.watchdog ? '巡檢中（每 2 s 探測兩個 URL，不推論；異常連兩次即開事故）' : (s.drill_running ? '演練模式：由演練腳本代為注入與派工，結束後自動恢復巡檢' : '未啟動');
   const sc = s.score || {}, mt = s.metrics, sy = s.sys || {}; if (mt) lastMetrics = mt;
-  if (sc.total){ $('j-task-big').innerHTML = `${sc.auto}/${sc.total}<small>自主修復（drill）</small>`; $('j-task').className = 'jcard ' + (sc.worse === 0 && sc.false === 0 ? 'ok' : 'warn'); }
-  else $('j-task-big').innerHTML = `${sc.incidents_closed || 0}<small>事故結案</small>`;
-  $('j-task-l1').innerHTML = `越修越壞 <b>${sc.worse ?? '—'}</b> · 謊報健康 <b>${sc.false ?? '—'}</b> · 事故結案 <b>${sc.incidents_closed ?? 0}</b>`;
-  $('j-task-l2').innerHTML = sc.last_close_s != null ? `最近一場結案 <b>${sc.last_close_s} s</b>${sc.median_close_s != null ? ' · 中位 <b>' + sc.median_close_s + ' s</b>' : ''}` : '巡檢事故：尚無結案紀錄（drill 不經巡檢）';
+  const hd = sc.handled || {};
+  if (hd.n){ $('j-task-big').innerHTML = `${hd.median_s} s<small>平均處理時間（中位，${hd.n} 場自主修復）</small>`; $('j-task').className = 'jcard ok';
+    $('j-task-l1').innerHTML = `最快 <b>${hd.fastest.s} s</b>（${esc(hd.fastest.case)}）· 最慢 <b>${hd.slowest.s} s</b>（${esc(hd.slowest.case)}）· 平均 <b>${hd.mean_s} s</b>`;
+    $('j-task-l2').innerHTML = `越修越壞 <b>${sc.worse ?? 0}</b> · 謊報健康 <b>${sc.false ?? 0}</b>${hd.last ? ' · 最近一場 <b>' + esc(hd.last.case) + ' ' + hd.last.s + ' s</b>（做了什麼見下方結案報告）' : ''}`; }
+  else { $('j-task-big').innerHTML = `${sc.incidents_closed || 0}<small>事故結案</small>`; $('j-task-l1').innerHTML = `越修越壞 <b>${sc.worse ?? 0}</b> · 謊報健康 <b>${sc.false ?? 0}</b>`; $('j-task-l2').textContent = ''; }
   if (mt){ $('j-inf-big').innerHTML = (mt.tps != null && mt.tps > 0 ? mt.tps : '—') + '<small>tok/s decode（近 10 s）</small>'; $('j-inf').className = 'jcard ' + (mt.running ? 'ok' : '');
     $('j-inf-l1').innerHTML = `首 token <b>${mt.ttft != null ? mt.ttft + ' s' : '—'}</b> · 平均請求 <b>${mt.e2e != null ? mt.e2e + ' s' : '—'}</b> · 進行中 <b>${mt.running}</b>`;
     $('j-inf-l2').innerHTML = `prefix cache 命中 <b>${mt.prefix_hit != null ? mt.prefix_hit + '%' : '—'}</b> · KV 使用 <b>${mt.kv}%</b> · 已產生 <b>${(mt.gen_tokens/1000).toFixed(0)}k</b> tokens／${mt.requests} 次`; }

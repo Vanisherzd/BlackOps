@@ -49,6 +49,16 @@ ACTIONS = os.environ.get("DASH_ACTIONS") == "1"
 CARDS = ("nginx-stopped", "container-removed", "bad-config", "upstream-paused", "upstream-500")   # stage buttons
 # DASH_EXTRA_CARDS=compound-config-upstream-down,compound-detached-paused lets the API inject the compound cases too
 CARDS += tuple(c for c in os.environ.get("DASH_EXTRA_CARDS", "").split(",") if c)
+RANDOM_CARD = "random"      # one case drawn from the whole catalogue (scripts/faults.py CASES): the agent is never told which
+
+
+def draw_case():
+    """A fault the operator did not pick: any of the catalogue's cases, drawn now. The agent gets the same alert it
+    always gets; the drawn name goes back to the dashboard only, so the room can check the diagnosis afterwards."""
+    import random
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import faults
+    return random.choice(sorted(faults.CASES))
 APPROVALS = LOGS / "approvals"
 
 
@@ -248,8 +258,10 @@ def action(body):
     py = str(ROOT / ".venv" / "bin" / "python") if (ROOT / ".venv" / "bin" / "python").exists() else sys.executable
     if a == "inject":
         case = body.get("case")
-        if case not in CARDS:
-            return 400, {"error": f"case must be one of {CARDS}"}
+        if case == RANDOM_CARD:
+            case = draw_case()
+        elif case not in CARDS:
+            return 400, {"error": f"case must be one of {CARDS + (RANDOM_CARD,)}"}
         cmd = [py, "scripts/faults.py", "inject", case]
     elif a == "reset":
         cmd = [py, "scripts/faults.py", "reset"]

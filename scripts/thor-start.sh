@@ -20,7 +20,8 @@ if [ "$MODE" = "--check" ]; then
   done
   pgrep -f "scripts/watchdog.py" >/dev/null && echo "watchdog   up" || echo "watchdog   DOWN"
   printf "victim     / %s /api/ %s\n" "$(curl -s -m 4 -o /dev/null -w %{http_code} http://127.0.0.1:8880/)" "$(curl -s -m 4 -o /dev/null -w %{http_code} http://127.0.0.1:8880/api/)"
-  timeout 60 nemoclaw edge-agent status 2>/dev/null | grep -i -E "Inference:|Failure layer" | head -2
+  S=$(timeout 60 nemoclaw edge-agent status 2>/dev/null | grep -i -E "Inference:|Failure layer" | head -2)
+  echo "sandbox    ${S:-(status unavailable: an agent turn holds the nemoclaw lock, or the CLI is slow; try again when idle)}"
   exit 0
 fi
 

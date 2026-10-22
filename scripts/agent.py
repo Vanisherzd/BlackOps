@@ -53,6 +53,14 @@ UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / jour
 MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
             "clear_scratch_volume", "restore_config",
             "kill_process"}
+LEVEL_RE = re.compile(r"\[(emerg|alert|crit|error)\]")
+
+
+def _shape(line):
+    """A log line with its digits dropped: the shape a flood repeats."""
+    return re.sub(r"\d+", "#", line.strip())
+
+
 SYMPTOM_RE = re.compile(r"emerg|error|fatal|fail|refus|denied|timed out|timeout|cannot|could not|no such|"
                         r"not found|exit(ed)? \(?\d|restarting|paused|oom|killed|no space|\b50[0-9]\b", re.I)
 _incident = {"runbook_seen": False, "refusals": 0, "trace": [], "injected": []}
@@ -110,7 +118,18 @@ def symptom_query(text):
         return None
     codes = sorted({m.group(1) for l in lines for m in [ACCESS_ERR_RE.search(l)] if m})
     plain = [l for l in lines if not ACCESS_ERR_RE.search(l)]
-    query = " ".join(plain[-4:])[:400]
+    # One line per shape (digits dropped), newest kept: twenty workers dying at start give the master eighty lines of
+    # "exited with fatal code 2" and the one [emerg] that names the cause is sixty lines up. Lines that carry a cause
+    # level ([emerg]/[alert]/[crit]/[error]) come first, then the newest of the rest.
+    distinct, shapes = [], set()
+    for l in reversed(plain):
+        if _shape(l) not in shapes:
+            shapes.add(_shape(l))
+            distinct.append(l)
+    distinct.reverse()
+    levelled = [l for l in distinct if LEVEL_RE.search(l)]
+    picked = (levelled[-3:] + [l for l in distinct if not LEVEL_RE.search(l)][-1:]) if levelled else distinct[-4:]
+    query = " ".join(picked)[:400]
     if codes:
         import http
         named = " ".join(f"{c} {http.HTTPStatus(int(c)).phrase}" if int(c) in http.HTTPStatus._value2member_map_ else c
@@ -176,6 +195,28 @@ def attach_runbook(result, query, *, container=None):
             + community_push(query))
 
 
+def earlier_errors(name, shown, window=300, k=4):
+    """Cause-level lines ([emerg]/[alert]/[crit]/[error]) from a wider window of this container's log, since its last
+    start, that the shown tail does not already contain, one per shape. front-rlimit-nofile (2026-10-22): the worker
+    logs one [emerg] "(24: Too many open files)" and the master then logs four lines per worker; with twenty workers
+    the tail the agent asked for was all master chatter, and so was the retrieval query. Since the last start only:
+    the log keeps every earlier incident's lines, and those are not evidence here."""
+    try:
+        since = sh(f"docker inspect -f '{{{{.State.StartedAt}}}}' {name}").strip()
+        if not since or since.startswith("("):
+            return []
+        wide = sh(f"docker logs --since {since} --tail {window} {name} 2>&1", limit=60000)
+    except Exception:
+        return []
+    seen = {_shape(l) for l in shown.splitlines()}
+    out = []
+    for l in wide.splitlines():
+        if LEVEL_RE.search(l) and _shape(l) not in seen:
+            seen.add(_shape(l))
+            out.append(l.strip()[:300])
+    return out[-k:]
+
+
 def _oplog(tool, args, result, t0):
     """A line in logs/ops-api.log in the server's own format, so drill logs show what the tool layer did on its own."""
     try:
@@ -193,9 +234,25 @@ def community_push(query):
     only what the local model accepts as on-topic, so a covered-by-nothing symptom usually comes back empty."""
     if not COMMUNITY_PUSH or not query:
         return ""
-    core = _NGINX_FIELDS.sub("", _NGINX_PREAMBLE.sub("", _SYMPTOM_PREFIX.sub("", query))).strip()
-    if not core:
+    try:
+        import community_knowledge
+    except Exception:
         return ""
+    # Ownership is decided line by line: a log tail mixes an earlier incident's "Connection refused" (the runbook's)
+    # with this one's "too big header" (nobody's), and the joined text would count as owned. One line per shape.
+    raw = _SYMPTOM_PREFIX.sub("", query)
+    parts = [p for p in re.split(r"(?=\d{4}/\d\d/\d\d \d\d:\d\d:\d\d \[)", raw) if p.strip()]
+    unowned, shapes = [], set()
+    for p in parts:
+        line = _NGINX_FIELDS.sub("", _NGINX_PREAMBLE.sub("", p)).strip()
+        shape = re.sub(r"[\d\W]+", " ", line.lower()).strip()
+        if not shape or shape in shapes or community_knowledge.owned_symptom(line):
+            continue
+        shapes.add(shape)
+        unowned.append(line)
+    if not unowned:
+        return ""
+    core = " ".join(unowned[-2:])[:300]
     key = re.sub(r"[\d\W]+", " ", core.lower()).strip()[:160]
     seen = _incident.setdefault("community_seen", set())
     pending = _incident.setdefault("community_pending", {})
@@ -203,12 +260,8 @@ def community_push(query):
         return ""
     t0 = time.time()
     try:
-        import community_knowledge
         fut = pending.get(key)
         if fut is None:
-            if community_knowledge.owned_symptom(core):
-                seen.add(key)
-                return ""
             fut = pending[key] = _KB_POOL.submit(community_knowledge.references, core, 2, community_knowledge.owned_symptom)
         refs = fut.result(timeout=COMMUNITY_PUSH_TIMEOUT)
     except concurrent.futures.TimeoutError:                # still running: the next read of the same symptom collects it
@@ -821,6 +874,9 @@ def _run_tool(name, args, dry_run):
         if denied:
             return denied
         out = collapse(sh(f"docker logs --tail {int(args.get('tail', 40))} {args['name']} 2>&1", limit=6000))
+        earlier = earlier_errors(args["name"], out)
+        if earlier:
+            out += "\n\nearlier distinct error lines since this container last started (not in the tail above):\n" + "\n".join(earlier)
         out = layer_note(args["name"]) + out
         if "read-only file system" in out:
             out += ("\n\nnote: the entrypoint's 'can not modify /etc/nginx/conf.d/default.conf (read-only file "

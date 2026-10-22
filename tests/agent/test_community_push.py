@@ -138,3 +138,38 @@ class ReviewRegressionTest(PushFixture):
         self.assertNotIn("other host", kept)
         self.assertIn("read_config", kept)
         self.assertIn("health now", kept)
+
+
+FLOOD = "\n".join(
+    ['2026/10/22 00:14:05 [emerg] 39#39: epoll_create() failed (24: Too many open files)'] +
+    [f'2026/10/22 00:14:05 [notice] 1#1: signal 17 (SIGCHLD) received from {n}\n'
+     f'2026/10/22 00:14:05 [notice] 1#1: worker process {n} exited with code 2\n'
+     f'2026/10/22 00:14:05 [alert] 1#1: worker process {n} exited with fatal code 2 and cannot be respawned\n'
+     f'2026/10/22 00:14:05 [notice] 1#1: signal 29 (SIGIO) received' for n in range(40, 60)])
+MIXED = ('2026/10/22 00:13:43 [error] 30#30: *14 connect() failed (111: Connection refused) while connecting to upstream, client: 172.23.0.1 '
+         + PREAMBLE)
+
+
+class FloodAndHistoryTest(PushFixture):
+    def test_symptom_query_keeps_the_line_that_names_the_cause_under_a_flood(self):
+        q = agent.symptom_query(FLOOD)
+        self.assertIn("Too many open files", q)
+        self.assertIn("cannot be respawned", q)
+        self.assertEqual(q.count("cannot be respawned"), 1)
+
+    def test_push_decides_ownership_per_line(self):
+        out = agent.community_push(MIXED)               # an earlier incident's refused line plus this one's header line
+        self.assertIn("- A", out)
+        self.assertEqual(self.calls, ["upstream sent too big header while reading response header from upstream"])
+
+    def test_earlier_errors_surfaces_distinct_cause_lines_the_tail_lacks(self):
+        tail = "\n".join(FLOOD.splitlines()[-30:])
+        answers = {"inspect": "2026-10-22T00:14:00.000000000Z\n", "logs": FLOOD}
+        real = agent.sh
+        agent.sh = lambda cmd, **kw: answers["inspect"] if "inspect" in cmd else answers["logs"]
+        try:
+            got = agent.earlier_errors("edge-victim", tail)
+        finally:
+            agent.sh = real
+        self.assertEqual(len(got), 1)
+        self.assertIn("Too many open files", got[0])

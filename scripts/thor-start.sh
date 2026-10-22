@@ -67,8 +67,8 @@ PY
 fi
 
 log "preflight"; timeout 120 scripts/preflight.sh 2>&1 | grep -E "FAIL|PREFLIGHT" | tail -4
-IP=$(ip -4 addr show 2>/dev/null | grep -oE "inet (172\.20\.|192\.168\.)[0-9.]+" | awk '{print $2}' | head -2 | tr '\n' ' ')
-log "dashboard: http://127.0.0.1:8097/   from another machine: ${IP:+http://}${IP% *}${IP:+:8097/}"
+log "dashboard: http://127.0.0.1:8097/ (on this screen)"
+for ip in $(ip -4 addr show 2>/dev/null | grep -oE "inet (172\.20\.|192\.168\.)[0-9.]+" | awk '{print $2}' | grep -v "^192.168.55." | head -3); do echo "           from another machine on that network: http://$ip:8097/"; done
 
 if [ "$MODE" = "--demo" ]; then
   log "demo loop: compound-bad-deploy-cascade / upstream-500 / log-injection (stop with: touch logs/demo-loop.stop)"

@@ -14,6 +14,7 @@ import pathlib
 import glob
 import ipaddress
 import re
+import shlex
 import socket
 import shutil
 import subprocess
@@ -30,6 +31,13 @@ CONF_DIR = (ROOT / "victim" / "conf.d").resolve()
 RUNBOOKS = ROOT / "runbooks"
 NAMES = {"edge-victim", "edge-victim-app"}
 HEALTH = {"front": "http://127.0.0.1:8880/", "api": "http://127.0.0.1:8880/api/"}
+# VM_VICTIM=1: the victim is a real guest (scripts/vm-victim.sh) reached only over ssh; health URLs and the tool list
+# switch to it (scripts/vm_victim.py). The container tools stay out of the list so the model is not offered a second,
+# healthy stack to look at.
+VM_VICTIM = os.environ.get("VM_VICTIM", "0") == "1"
+if VM_VICTIM:
+    import vm_victim
+    HEALTH = dict(vm_victim.HEALTH)
 EVIDENCE_BUNDLE_TIMEOUT = 8
 # Community references ride along with the runbook (COMMUNITY_PUSH=0 turns it off): pulling them was left to the model
 # and measured at one search_incident_knowledge call in a night of 70 drills, so the tool layer pushes them, the way it
@@ -50,7 +58,8 @@ UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / jour
 # retrieval whenever it believed it already knew the answer, and one bad-config run wandered for six minutes because
 # of it. So the rule lives in the tool layer. Evidence tools push the matching runbook into the answer, and an action
 # refuses once until a runbook has been seen for this incident. An incident ends when health comes back green.
-MUTATING = {"docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
+MUTATING = {"vm_service", "vm_write_config", "vm_restore_config",
+            "docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
             "clear_scratch_volume", "restore_config",
             "kill_process"}
 LEVEL_RE = re.compile(r"\[(emerg|alert|crit|error)\]")
@@ -148,7 +157,7 @@ def with_health(result):
         snapshot_known_good()
         tier.set_tier(1, "health green after an action")
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
-    state = docker_ps()
+    state = vm_victim.state() if VM_VICTIM else docker_ps()
     hint = ""
     for line in state.splitlines():
         if "Exited" in line or "MISSING" in line or "Restarting" in line:
@@ -446,6 +455,72 @@ TOOLS = [
     {"name": "finish", "description": "End the run with a verdict", "parameters": {"type": "object", "properties": {"status": {"type": "string", "enum": ["resolved", "unresolved", "escalate"]}, "root_cause": {"type": "string"}, "actions": {"type": "string"}}, "required": ["status", "root_cause", "actions"]}},
 ]
 
+VM_TOOLS = [
+    {"name": "vm_exec", "description": "Read-only diagnostic command on the victim host over ssh: ps, ss, cat, ls, df, du, tail, head, grep, nginx -t, systemctl status|is-active <unit>, journalctl -u <unit> -n N. One command, no shell operators, nothing that changes state", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}},
+    {"name": "vm_logs", "description": "The victim host's nginx journal and error-log tail (attaches the matching runbook); the first look at a degraded web service there", "parameters": {"type": "object", "properties": {"lines": {"type": "integer", "default": 40}}}},
+    {"name": "vm_service", "description": "systemctl start|restart|reload|unmask of an allowed unit (nginx) on the victim host; the health check follows", "parameters": {"type": "object", "properties": {"unit": {"type": "string", "default": "nginx"}, "action": {"type": "string", "enum": ["start", "restart", "reload", "unmask"]}}, "required": ["action"]}},
+    {"name": "vm_write_config", "description": "Replace the victim host's nginx site config (/etc/nginx/sites-available/default) with the full file given; nginx -t decides, a rejected file is put back; then reload", "parameters": {"type": "object", "properties": {"content": {"type": "string"}}, "required": ["content"]}},
+    {"name": "vm_restore_config", "description": "Put back the victim host's known-good nginx site config and reload", "parameters": {"type": "object", "properties": {}}},
+]
+if VM_VICTIM:
+    _KEEP = {"check_health", "search_runbooks", "search_incident_knowledge", "port_check", "http_check", "finish"}
+    TOOLS = [t for t in TOOLS if t["name"] in _KEEP] + VM_TOOLS
+
+
+def vm_argv(cmd):
+    """The read-only allow-list of docker_exec (ops_safety.diagnostic_argv) plus systemd's own read-only verbs."""
+    try:
+        return diagnostic_argv(cmd)
+    except ValueError as error:
+        argv = shlex.split(cmd) if isinstance(cmd, str) else []
+        if argv[:1] == ["systemctl"] and len(argv) >= 2 and argv[1] in ("status", "is-active", "is-failed", "is-enabled", "list-units", "show") \
+                and not any(a.startswith("-") and a not in ("--no-pager", "-l", "--all") for a in argv[2:]):
+            return argv + ([] if "--no-pager" in argv or argv[1] != "status" else ["--no-pager"])
+        if argv[:1] == ["journalctl"] and "-f" not in argv and "--follow" not in argv and all(not a.startswith("--since") or True for a in argv):
+            return argv + ([] if "--no-pager" in argv else ["--no-pager"])
+        raise error
+
+
+def vm_tool(name, args, dry_run):
+    """The vm_* tools: the same shape as the container tools (gate, health after an action, runbook pushed with the
+    log), over ssh to the guest. Nothing here runs on the Thor itself."""
+    if name == "vm_exec":
+        try:
+            argv = vm_argv(str(args.get("cmd", "")))
+        except ValueError as error:
+            return f"denied: {error}"
+        return vm_victim.run(argv)
+    if name == "vm_logs":
+        n = max(1, min(int(args.get("lines", 40)), 200))
+        out = ("[journal of nginx on victim-vm]\n" + vm_victim.run(["journalctl", "-u", "nginx", "-n", str(n), "--no-pager"])
+               + "\n\n[/var/log/nginx/error.log tail]\n" + vm_victim.run(["sudo", "-n", "tail", "-n", str(n), "/var/log/nginx/error.log"]))
+        query = symptom_query(out)
+        if not query:
+            return out + "\n\nno error line in these logs; " + vm_victim.state() + ". vm_exec systemctl status nginx says why a unit is not running."
+        return attach_runbook(out, query, container="victim-vm")
+    if name == "vm_service":
+        unit, action = str(args.get("unit") or "nginx"), str(args.get("action") or "")
+        if unit not in vm_victim.UNITS:
+            return f"denied: unit {unit!r} is outside the allowed set {list(vm_victim.UNITS)}"
+        if action not in ("start", "restart", "reload", "unmask"):
+            return "denied: action must be start, restart, reload or unmask"
+        if dry_run:
+            return f"DRY-RUN: would systemctl {action} {unit} on victim-vm"
+        out = vm_victim.run(["sudo", "-n", "systemctl", action, unit], timeout=40)
+        return with_health(f"systemctl {action} {unit}: {out or 'ok'}; {vm_victim.state()}")
+    if name == "vm_write_config":
+        content = args.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return "error: vm_write_config needs args.content (the full site file)"
+        if dry_run:
+            return "DRY-RUN: would install the site config on victim-vm"
+        return with_health(vm_victim.write_config(content))
+    if name == "vm_restore_config":
+        if dry_run:
+            return "DRY-RUN: would restore the known-good site config on victim-vm"
+        return with_health(vm_victim.restore_config())
+    return f"error: unknown vm tool {name}"
+
 if os.environ.get("AGENT_MODE") == "adaptive":
     TOOLS.append({"name": "parallel_diagnosis", "description": "Gather service, platform and offline knowledge diagnoses concurrently through read-only tools; it never changes anything.", "parameters": {"type": "object", "properties": {"focus": {"type": "string", "description": "optional symptom or exact error line to investigate"}}}})
 
@@ -519,8 +594,10 @@ def expected_body(url):
     """The marker a healthy answer at this URL contains (scripts/faults.py EXPECT_BODY), or "" when the stack definition
     is unavailable, in which case the probe stays status-only."""
     try:
-        import faults
         path = urllib.parse.urlsplit(url).path or "/"
+        if VM_VICTIM:
+            return vm_victim.EXPECT_BODY.get(path, "")
+        import faults
         return faults.EXPECT_BODY.get(path, "")
     except Exception:
         return ""
@@ -880,6 +957,10 @@ def _run_tool(name, args, dry_run):
         return evidence_bundle(args, dry_run)
     if name == "parallel_diagnosis":
         return parallel_diagnosis(args, dry_run)
+    if name.startswith("vm_"):
+        if not VM_VICTIM:
+            return "denied: the VM victim is not enabled on this host (VM_VICTIM=1)"
+        return vm_tool(name, args, dry_run)
     if name == "docker_ps":
         out = docker_ps()
         for marker, runbook in STATE_RUNBOOKS:

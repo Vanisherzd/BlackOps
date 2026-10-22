@@ -3,6 +3,7 @@
 **目標**：在一台與被監控系統分離的邊緣裝置上，完全本地跑大模型推論與小型 RAG，做一個「網路斷了也能自己診斷、自己修好」的 IT 維運 Agent。部署目標是 Jetson AGX Thor，開發與驗證機是 NVIDIA DGX Spark（GB10，128 GB unified memory）。NVIDIA 堆疊：**Nemotron**（模型）、**NemoClaw／OpenShell**（Agent 執行環境）、**NeMo Guardrails**（工具層的安全 rail）、**NeMo Agent Toolkit**（事故 profiling），見 `docs/nemo-integration.md`。推論引擎是 **vLLM**；2026-10-20 團隊決定由 vLLM 取代 TensorRT-LLM，TRT-LLM 保留為早期量測的基準，見 `docs/integration-vllm.md`。
 
 **現況（2026-10-22 清晨）**：
+- 13:10 公開 benchmark 對照：`docs/itbench-alignment-20261022.md`（ITBench 指標定義 → 我們的量法與數字；真跑 ITBench 要 k8s，列為賽後路徑）。
 - 11:00 上台用：`docs/pitch-notes-20261022.md`（完成度三級、十個特點各配證據、設計決策對照表、Q&A 預演）。
 - 09:45 Spark 端暫停，Thor 接手清單：`docs/handoff-thor-20261022.md`（拉程式、起舞台兩種配方、今天的旗標預設、Spark 上還在跑的全目錄 regression、已知難案）。
 - 08:20 更新：故障目錄 **45 案、八類**（容器生命週期／設定部署／網路 DNS／資源 OS 上限／資料內容／服務行為／安全／複合；新 `ops` tier：proxy 緩衝、綁 localhost、只聽 IPv6、fd 上限、webroot 清空＋備份）；dashboard 多一顆「隨機真實故障」（整個目錄抽一個，agent 不知道哪個）；社群知識層改由工具層推送（`COMMUNITY_PUSH`，未被 runbook 涵蓋的症狀才推，A/B 與全目錄 regression 進行中，結果見 `docs/kb-community-20261022.md` Phase 4b）；DSpark `SPEC_TOKENS` 預設 2（prefix cache 31.9%）。

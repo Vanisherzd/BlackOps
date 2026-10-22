@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-22 12:55",
+  "updated": "2026-10-22 13:12",
   "items": [
     {
       "k": "全目錄 regression（36 案，Spark）",
@@ -60,6 +60,11 @@
       "k": "故障目錄",
       "v": "49 案、八類，全部可從儀表板注入；VM 靶機 4 案（ssh 真主機）",
       "src": "scripts/faults.py · scripts/vm_victim.py"
+    },
+    {
+      "k": "公開 benchmark 對照",
+      "v": "ITBench 指標定義（pass@1 / MTTD / MTTR / steps / safety）對照我們的量法；公開 AIOps held-out 63 題一次性診斷也量過",
+      "src": "docs/itbench-alignment-20261022.md · docs/kb-eval.md"
     }
   ]
 }

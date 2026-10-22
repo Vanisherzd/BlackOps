@@ -33,7 +33,7 @@ class OwnedSymptomTest(unittest.TestCase):
             self.assertTrue(community_knowledge.stack_covers(q), q)   # the wider gate says covered: why the push has its own
 
 
-class CommunityPushTest(unittest.TestCase):
+class PushFixture(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.stub = types.SimpleNamespace(owned_symptom=community_knowledge.owned_symptom,
@@ -41,7 +41,7 @@ class CommunityPushTest(unittest.TestCase):
         self.real = sys.modules.get("community_knowledge")
         sys.modules["community_knowledge"] = self.stub
         self.saved = (agent.COMMUNITY_PUSH, agent.COMMUNITY_PUSH_TIMEOUT, agent.ROOT)
-        agent._incident["community_seen"] = set()
+        agent._incident["community_seen"], agent._incident["community_pending"] = set(), {}
         agent.COMMUNITY_PUSH, agent.COMMUNITY_PUSH_TIMEOUT = True, 4.0
         agent.ROOT = pathlib.Path(tempfile.mkdtemp())
         (agent.ROOT / "logs").mkdir()
@@ -50,11 +50,13 @@ class CommunityPushTest(unittest.TestCase):
         sys.modules["community_knowledge"] = self.real
         agent.COMMUNITY_PUSH, agent.COMMUNITY_PUSH_TIMEOUT, agent.ROOT = self.saved
 
+
+class CommunityPushTest(PushFixture):
     def test_pushes_once_per_symptom_and_drops_the_status_prefix(self):
         q = "the service itself answers HTTP 502 Bad Gateway to requests, container is up. " + TOO_BIG
         out = agent.community_push(q)
         self.assertIn("- A", out)
-        self.assertEqual(self.calls, [TOO_BIG])
+        self.assertEqual(self.calls, ["upstream sent too big header while reading response header from upstream"])   # fields stripped
         self.assertEqual(agent.community_push(q), "")          # same symptom, same incident: once
         self.assertEqual(len(self.calls), 1)
         logged = (agent.ROOT / "logs" / "ops-api.log").read_text()
@@ -71,7 +73,7 @@ class CommunityPushTest(unittest.TestCase):
             raise RuntimeError("sidecar down")
         self.stub.references = boom
         self.assertEqual(agent.community_push(NOFILE), "")
-        agent._incident["community_seen"] = set()
+        agent._incident["community_seen"], agent._incident["community_pending"] = set(), {}
 
         def slow(q, k=2, owned=None):
             time.sleep(0.4)
@@ -92,3 +94,47 @@ class CommunityPushTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+OWNED_LINES = [   # error lines of existing faults that the first gate let through (review of 1ac26df)
+    '[emerg] 1#1: invalid number of arguments in "return" directive in /etc/nginx/conf.d/default.conf:3',
+    "upstream timed out (110: Connection timed out) while reading response header from upstream",
+    "connect() failed (113: No route to host) while connecting to upstream",
+    'open() "/etc/nginx/snippets/proxy.conf" failed (2: No such file or directory)',
+    '[emerg] 1#1: invalid parameter "weight=x" in /etc/nginx/conf.d/default.conf:2',
+    'open() "/usr/share/nginx/html/index.html" failed (13: Permission denied)',
+    '[emerg] 1#1: unexpected "}" in /etc/nginx/conf.d/default.conf:5',
+]
+PREAMBLE = ('2026/10/22 07:40:12 [error] 29#29: *503 upstream sent too big header while reading response header from upstream, '
+            'client: 172.24.0.1, server: _, request: "GET /api/ HTTP/1.1", upstream: "http://172.24.0.3:80/", host: "127.0.0.1:8880"')
+
+
+class ReviewRegressionTest(PushFixture):
+    def test_existing_faults_error_lines_are_owned(self):
+        for line in OWNED_LINES:
+            self.assertTrue(community_knowledge.owned_symptom(line), line)
+            self.assertEqual(agent.community_push(line), "")
+        self.assertEqual(self.calls, [])
+
+    def test_nginx_preamble_and_fields_do_not_trip_the_gate_and_are_cleaned_for_retrieval(self):
+        self.assertIn("- A", agent.community_push(PREAMBLE))
+        self.assertEqual(self.calls, ["upstream sent too big header while reading response header from upstream"])
+
+    def test_slow_push_lands_on_the_next_read_instead_of_being_lost(self):
+        def slow(q, k=2, owned=None):
+            time.sleep(0.3)
+            return "\ncommunity references (x):\n- late :: y"
+        self.stub.references = slow
+        agent.COMMUNITY_PUSH_TIMEOUT = 0.05
+        self.assertEqual(agent.community_push(NOFILE), "")
+        time.sleep(0.5)
+        self.assertIn("- late", agent.community_push(NOFILE))
+        self.assertEqual(agent.community_push(NOFILE), "")      # then once, as usual
+
+    def test_trace_cut_is_block_local_for_a_bundle(self):
+        bundle = ("## docker_logs {}\nlog line\n\n--- matching runbook ---\n## x\nsteps\ncommunity references (x):\n- A :: other host\n\n"
+                  "## read_config {}\nserver {}\nhealth now: {\"front\": 200}")
+        kept = agent.trace_summary("evidence_bundle", bundle)
+        self.assertNotIn("other host", kept)
+        self.assertIn("read_config", kept)
+        self.assertIn("health now", kept)

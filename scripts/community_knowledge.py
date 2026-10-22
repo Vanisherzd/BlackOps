@@ -27,7 +27,10 @@ STACK_PHRASES = ("edge-victim", "8880", "/api/", "/board/", "default.conf", "ups
                  "internal server error", "service unavailable", "no such container", "unknown directive", "restart loop",
                  "crashloop", "exit 137", "exited (137)", "out of memory", "oomkilled", "no space left on device",
                  "forbidden", "too many requests", "redirect loop", "mime.types", "worker_connections", "empty mounted",
-                 "name resolution", "could not be resolved", "host not found in upstream")
+                 "name resolution", "could not be resolved", "host not found in upstream",
+                 # error lines of this stack's own faults (review 2026-10-22: these slipped past the push gate)
+                 "timed out", "no route to host", "no such file", "permission denied", "invalid number of arguments",
+                 "invalid parameter", 'unexpected "')
 STACK_CODES = re.compile(r"\b(50[0-4]|40[34]|429|301)\b")
 # this stack's entity names: naming them does not make an error line a runbook's ("upstream sent too big header")
 ENTITY_PHRASES = ("edge-victim", "8880", "/api/", "/board/", "default.conf", "upstream")
@@ -324,31 +327,37 @@ JUDGE_SYSTEM = ("You judge whether a Q&A reference addresses an operator's sympt
                 "only superficially similar words, or no usable fix.")
 
 
-def judge_keep(query, refs, k=2, max_candidates=3):
+JUDGE_TIMEOUT = float(os.environ.get("COMMUNITY_JUDGE_TIMEOUT", "6"))
+
+
+def judge_keep(query, refs, k=2, max_candidates=3, strict=False):
     """Default on (COMMUNITY_JUDGE=0 disables): ask the local model (no thinking, one word) whether each of the top
     candidates addresses the symptom and keep only the ones it accepts. Measured 2026-10-22 (scripts/kb-judge.py): on 240
     held-out questions the reranked top-1 was on-topic 13 %; on the 38 datacenter probes 29 %, some top-5 candidate 45 %.
     Without the gate the agent read an off-topic reference two times out of three; with it nothing is shown unless the
-    model agrees it fits. One call per candidate, about a second each; any failure keeps the unjudged list (fail open)."""
+    model agrees it fits. One call per candidate, about a second each. On a failure the pull path keeps the unjudged
+    list (the model asked for it); the push path (strict=True) shows nothing, because unjudged text injected into an
+    evidence read is worse than no text. No retries, a short timeout: a busy vLLM must not stall the tool layer."""
     if os.environ.get("COMMUNITY_JUDGE", "1") == "0" or not refs:
         return refs[:k]
     try:
         from openai import OpenAI
-        client = OpenAI(base_url=os.environ.get("VLLM_URL", "http://127.0.0.1:8000") + "/v1", api_key="local")
+        client = OpenAI(base_url=os.environ.get("VLLM_URL", "http://127.0.0.1:8000") + "/v1", api_key="local",
+                        timeout=JUDGE_TIMEOUT, max_retries=0)
         kept = []
         for s, shared, d in refs[:max_candidates]:
             user = (f"Symptom:\n{query[:700]}\n\nReference title: {d['title']}\nReference answer excerpt: {d['answer_excerpt'][:500]}\n\n"
                     "Does this reference address the same problem? Answer yes or no.")
             r = client.chat.completions.create(model=os.environ.get("SERVED_NAME", "edge-agent"), temperature=0, max_tokens=3,
                                                messages=[{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}],
-                                               extra_body={"chat_template_kwargs": {"enable_thinking": False}}, timeout=20)
+                                               extra_body={"chat_template_kwargs": {"enable_thinking": False}})
             if (r.choices[0].message.content or "").strip().lower().startswith("yes"):
                 kept.append((s, shared, d))
             if len(kept) >= k:
                 break
         return kept
     except Exception:
-        return refs[:k]
+        return [] if strict else refs[:k]
 
 
 def references(query, k=2, owned=None):
@@ -357,6 +366,6 @@ def references(query, k=2, owned=None):
     try:
         if (owned or stack_covers)(query):
             return ""
-        return render(judge_keep(query, rank(query, k=max(k, 3)), k=k))
+        return render(judge_keep(query, rank(query, k=max(k, 3)), k=k, strict=owned is not None))
     except Exception:            # an extra on an extra: never break the tool
         return ""

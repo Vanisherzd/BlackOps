@@ -2,7 +2,11 @@
 # drill: inject a fault on the victim containers, ask the NemoClaw sandbox agent to fix it through the ops API, verify.
 cd ~/edge-agent; export PATH="$HOME/.npm-global/bin:$HOME/.local/bin:$PATH"; source .venv/bin/activate
 CASE="${1:-bad-config}"
-echo "=== $(date +%T) reset + inject $CASE"; python scripts/faults.py reset | tail -1; python scripts/faults.py inject "$CASE"
+echo "=== $(date +%T) reset + inject $CASE"; python scripts/faults.py reset | tail -1
+# a green check_health through the API ends the previous drill's incident state in ops_api (runbook_seen, community_seen);
+# faults.py reset alone does not reach it, and the log is cleared below, so this call is never scored
+curl -s -m 8 -X POST http://127.0.0.1:8790/call -H 'content-type: application/json' -d '{"name":"check_health","args":{}}' >/dev/null 2>&1
+python scripts/faults.py inject "$CASE"
 # No hand-holding: the agent has every ops tool as a first-class tool, so the prompt is what an on-call human would get.
 PROMPT='Alert: the web stack is degraded. Diagnose it and repair it with your ops tools, then verify both health URLs return 200. Finish with exactly three lines and nothing else, each under 40 words: Root cause: ... / Actions: ... / Final health: ...'
 # TRIAGE=1: the system takes the first look (scripts/triage.py) and the alert carries it; those calls are made before
@@ -25,6 +29,9 @@ python3 - <<'PY'
 import json
 for l in open('logs/ops-api.log'):
     d = json.loads(l)
+    if d.get('from') == 'tool-layer':      # what the tool layer did on its own (community_push): shown, never scored as an agent call
+        print('  [tool-layer]', d['ts'], d['tool'], json.dumps(d['args'])[:90], '->', str(d['result'])[:200].replace('\n', ' '))
+        continue
     print(d['ts'], d['from'], d['tool'], json.dumps(d['args'])[:90], '->', str(d['result'])[:400].replace('\n', ' '))
 PY
 echo "DRILL_DONE $(date +%T)"

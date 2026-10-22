@@ -38,6 +38,10 @@ COMMUNITY_PUSH = os.environ.get("COMMUNITY_PUSH", "1") != "0"
 COMMUNITY_PUSH_TIMEOUT = float(os.environ.get("COMMUNITY_PUSH_TIMEOUT", "4"))
 _KB_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 _SYMPTOM_PREFIX = re.compile(r"^the service itself answers HTTP .*? container is up\.\s*")
+# nginx's error-line preamble ("2026/10/22 07:40:12 [error] 29#29: *503 ") and its trailing fields: the connection
+# serial and pid look like HTTP statuses to the ownership gate, and the fields are noise to retrieval
+_NGINX_PREAMBLE = re.compile(r"\d{4}/\d\d/\d\d \d\d:\d\d:\d\d \[\w+\] \d+#\d+: (?:\*\d+ )?")
+_NGINX_FIELDS = re.compile(r", (?:client|server|request|upstream|host|referrer): [^,]*")
 EVIDENCE_BUNDLE_LIMIT = 6000
 UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / journal identifier
 
@@ -121,7 +125,7 @@ def with_health(result):
     health = {k: http_status(u) for k, u in HEALTH.items()}
     import tier                                            # TIER_MODE=off by default: both calls are no-ops
     if all(v == 200 for v in health.values()):
-        _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[], community_seen=set())
+        _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[], community_seen=set(), community_pending={})
         snapshot_known_good()
         tier.set_tier(1, "health green after an action")
         return f"{result}\nhealth now: {json.dumps(health)} -> both URLs healthy. The incident is resolved: report root cause, actions, final health and stop."
@@ -189,24 +193,33 @@ def community_push(query):
     only what the local model accepts as on-topic, so a covered-by-nothing symptom usually comes back empty."""
     if not COMMUNITY_PUSH or not query:
         return ""
-    core = _SYMPTOM_PREFIX.sub("", query).strip()
+    core = _NGINX_FIELDS.sub("", _NGINX_PREAMBLE.sub("", _SYMPTOM_PREFIX.sub("", query))).strip()
     if not core:
         return ""
     key = re.sub(r"[\d\W]+", " ", core.lower()).strip()[:160]
     seen = _incident.setdefault("community_seen", set())
+    pending = _incident.setdefault("community_pending", {})
     if key in seen:
         return ""
-    seen.add(key)
     t0 = time.time()
     try:
         import community_knowledge
-        if community_knowledge.owned_symptom(core):
-            return ""
-        refs = _KB_POOL.submit(community_knowledge.references, core, 2, community_knowledge.owned_symptom).result(timeout=COMMUNITY_PUSH_TIMEOUT)
+        fut = pending.get(key)
+        if fut is None:
+            if community_knowledge.owned_symptom(core):
+                seen.add(key)
+                return ""
+            fut = pending[key] = _KB_POOL.submit(community_knowledge.references, core, 2, community_knowledge.owned_symptom)
+        refs = fut.result(timeout=COMMUNITY_PUSH_TIMEOUT)
+    except concurrent.futures.TimeoutError:                # still running: the next read of the same symptom collects it
+        _oplog("community_push", {"query": core[:120]}, "pending (timeout)", t0)
+        return ""
     except Exception as e:                                 # the push is an extra on an evidence read; it must never break it
         refs, note = "", f"skipped ({type(e).__name__})"
     else:
         note = f"{refs.count(chr(10) + '- ')} references"
+    seen.add(key)
+    pending.pop(key, None)
     _oplog("community_push", {"query": core[:120]}, note, t0)
     return refs
 
@@ -630,7 +643,9 @@ def trace_summary(name, result):
     startup notices and dropped the one [emerg] line at the end of a log, and the reviewer then judged an inode
     exhaustion "a connectivity issue": logs keep their end (without the attached runbook), other results their head
     and, when long, their tail, where the appended health check is."""
-    text = str(result).split("\ncommunity references")[0]    # other hosts' text is not evidence from this incident
+    # other hosts' text is not evidence from this incident: drop the block, keep what follows it (a bundle's next
+    # section, the health line)
+    text = re.sub(r"\ncommunity references.*?(?=\n\n|\nhealth now:|$)", "", str(result), flags=re.S)
     if name == "docker_logs":
         # the read-only note appended to front-end logs pushed the [emerg] line out of the kept tail, and the rebuild
         # rule, which reads the trace, never saw the missing image file it was waiting for (front-mime-missing, 0/6)
@@ -786,7 +801,7 @@ def _run_tool(name, args, dry_run):
     if name == "check_health":
         health = {k: http_status(u) for k, u in HEALTH.items()}
         if all(v == 200 for v in health.values()):
-            _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[], community_seen=set())   # incident over; the next one starts clean
+            _incident.update(runbook_seen=False, refusals=0, trace=[], injected=[], community_seen=set(), community_pending={})   # incident over; the next one starts clean
             snapshot_known_good()
             import tier
             tier.set_tier(1, "health green")
@@ -988,11 +1003,13 @@ def _run_tool(name, args, dry_run):
             # The site config is a host file a rebuild keeps; a file of the image (nginx.conf includes mime.types) is
             # restored by one. Denying every rebuild of the front end left front-mime-missing unfixable (0/6, 2026-10-18).
             import reviewer
-            if not (reviewer.front_image_file(_incident["trace"]) or reviewer.front_layer_changes()):
+            if not (reviewer.front_image_file(_incident["trace"]) or reviewer.front_layer_changes() or faults.hostconfig_drift(faults.FRONT)):
                 return ("denied: edge-victim's site config is a host file mounted into the container; rebuilding the "
                         "container keeps the same file and the same fault. Fix the file with write_config or "
                         "restore_config, then docker_restart edge-victim. (A rebuild is allowed only when a file of its "
-                        "image, outside /etc/nginx/conf.d, is missing or changed: docker_logs edge-victim lists them.)")
+                        "image, outside /etc/nginx/conf.d, is missing or changed: docker_logs edge-victim lists them; or "
+                        "when the container runs with a resource limit its definition never sets, e.g. a file-descriptor "
+                        "ulimit: docker_exec cat /proc/1/limits shows it.)")
         if dry_run:
             return f"DRY-RUN: would recreate {targets}" + (" (replacing)" if args.get("replace") else "")
         if args.get("replace"):

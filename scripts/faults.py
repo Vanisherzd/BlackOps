@@ -175,15 +175,15 @@ CASES = {
     # ops tier: everyday tickets outside the container lifecycle; no runbook names their error line
     "front-proxy-buffer-too-small": dict(min_actions=1, fix_tools={"write_config", "restore_config", "docker_restart"},
                                          cause=r"proxy_buffer|too big header|buffer|config", tier="ops", diag_tools={"docker_logs", "read_config"}),
-    "upstream-listen-localhost":    dict(min_actions=1, fix_tools={"recreate_stack"},
+    "upstream-listen-localhost":    dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"},
                                          cause=r"127\.0\.0\.1|localhost|loopback|bind|listen|refused|upstream.*(config|layer)", tier="ops",
                                          diag_tools={"docker_logs", "docker_exec"}),
     "front-listen-ipv6-only":       dict(min_actions=1, fix_tools={"write_config", "restore_config", "docker_restart"},
                                          cause=r"ipv6|\[::\]|ipv4|listen|bind|config", tier="ops", diag_tools={"read_config", "docker_exec", "port_check"}),
-    "front-rlimit-nofile":          dict(min_actions=1, fix_tools={"recreate_stack"},
+    "front-rlimit-nofile":          dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"},
                                          cause=r"open files|nofile|ulimit|file descriptor|descriptor|limit|24:", tier="ops",
                                          diag_tools={"docker_logs", "docker_exec"}),
-    "upstream-webroot-wiped":       dict(min_actions=1, fix_tools={"recreate_stack", "docker_exec"},
+    "upstream-webroot-wiped":       dict(min_actions=2, fix_tools={"docker_restart", "recreate_stack"},
                                          cause=r"wiped|deleted|missing|empty|html|index|backup|403|forbidden|webroot|document root", tier="ops",
                                          diag_tools={"docker_logs", "docker_exec"}),
 }
@@ -240,6 +240,12 @@ SPECS = {
 
 def exists(name):
     return bool(sh(f"docker ps -aq --filter name=^{name}$").stdout.strip())
+
+
+def hostconfig_drift(name):
+    """True when the container runs with a resource limit its SPECS line never sets (today: ulimits, front-rlimit-nofile).
+    A restart keeps it; only a rebuild clears it, which is why the rebuild rule in agent.py asks."""
+    return sh(f"docker inspect -f '{{{{.HostConfig.Ulimits}}}}' {name}").stdout.strip() not in ("", "[]", "<nil>", "<no value>")
 
 
 def ensure(name):
@@ -361,7 +367,7 @@ def reset():
         sh(f"docker rm -f {APP} >/dev/null 2>&1")    # upstream-pids-limit: same
     if exists(APP) and sh(f"docker inspect -f '{{{{.HostConfig.NanoCpus}}}}' {APP}").stdout.strip() not in ("", "0", "<nil>", "<no value>"):
         sh(f"docker rm -f {APP} >/dev/null 2>&1")    # upstream-cpu-throttled: a CPU quota is only undone by a rebuild
-    if exists(FRONT) and sh(f"docker inspect -f '{{{{.HostConfig.Ulimits}}}}' {FRONT}").stdout.strip() not in ("", "[]", "<nil>", "<no value>"):
+    if exists(FRONT) and hostconfig_drift(FRONT):
         sh(f"docker rm -f {FRONT} >/dev/null 2>&1")  # front-rlimit-nofile: a ulimit is only undone by a rebuild
     if exists(FRONT) and "10.255.255.1" in sh(f"docker exec {FRONT} cat /etc/resolv.conf").stdout:
         sh(f"docker exec {FRONT} sh -c 'echo \"nameserver 127.0.0.11\" > /etc/resolv.conf' >/dev/null 2>&1")   # front-resolver-broken
@@ -542,8 +548,10 @@ def inject(case):
         (CONF_DIR / "default.conf").write_text(SMALL_BUFFER_CONF)
         sh(f"docker restart -t 1 {FRONT}")
     elif case == "upstream-listen-localhost":
-        # the classic bind mistake: the upstream listens on 127.0.0.1 only; healthy from inside, refused from the front
-        sh(f"docker exec {APP} sh -c \"sed -i -E 's/listen( +)80;/listen\\1127.0.0.1:80;/; s/listen( +)\\[::\\]:80;/listen\\1[::1]:80;/' "
+        # the classic bind mistake: the upstream listens on 127.0.0.1 only; healthy from inside, refused from the front.
+        # The IPv6 listen line goes away rather than moving to [::1]: a netns without IPv6 would refuse that bind and
+        # nginx -s reload would keep the old config, leaving the injection vacuous.
+        sh(f"docker exec {APP} sh -c \"sed -i -E 's/listen( +)80;/listen\\1127.0.0.1:80;/; /listen( +)\\[::\\]:80;/d' "
            f"/etc/nginx/conf.d/default.conf && nginx -s reload\"", check=True)
     elif case == "front-listen-ipv6-only":
         # the front end listens on IPv6 only; the published port forwards IPv4, so the host sees a refused connection

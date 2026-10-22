@@ -156,7 +156,7 @@ def classify(result):
 
 def call_row(d):
     return dict(src="call", t=d.get("ts"), tool=d.get("tool"), args=d.get("args"), cls=classify(d.get("result")),
-                text=str(d.get("result", ""))[:600], error=bool(d.get("is_error")))
+                text=str(d.get("result", ""))[:600], error=bool(d.get("is_error")), ms=d.get("ms"), origin=d.get("from"))
 
 
 def review_row(d):

@@ -22,12 +22,32 @@ section h2{font-size:13px;color:var(--dim);margin:0 0 8px;font-weight:600;letter
 .light{flex:1;padding:14px;border-radius:8px;text-align:center;font-size:16px;font-weight:600;background:#222}
 .light.ok{background:rgba(47,191,113,.15);color:var(--ok)}.light.bad{background:rgba(229,72,77,.18);color:var(--bad)}
 iframe{width:100%;height:220px;border:1px solid var(--line);border-radius:6px;margin-top:10px;background:#fff;display:none}
-#trace{height:62vh;overflow-y:auto;font:12.5px/1.4 ui-monospace,Menlo,monospace}
-.row{padding:5px 6px;border-left:3px solid var(--line);margin-bottom:4px;word-break:break-word}
-.row .t{color:var(--dim);margin-right:6px}.row .tool{font-weight:700;margin-right:6px}
-.row.ok{border-color:var(--ok)}.row.refused{border-color:var(--warn);background:rgba(245,165,36,.08)}
-.row.denied{border-color:var(--bad);background:rgba(229,72,77,.08)}.row.review-rejected{border-color:var(--rej);background:rgba(195,107,255,.1)}
-.row.info{border-color:var(--info)}.row.review{font-style:italic}
+#trace{height:62vh;overflow-y:auto;font:13px/1.45 system-ui,-apple-system,"Noto Sans TC",sans-serif}
+.legend{display:flex;flex-wrap:wrap;gap:6px 12px;margin:-2px 0 8px;font-size:12px;color:var(--dim)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+#counters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+#counters span{background:#1f2430;border:1px solid var(--line);border-radius:6px;padding:3px 9px;font-size:12px;color:#c7ccd6}
+#counters span b{color:var(--text);font-weight:600}
+.step{display:grid;grid-template-columns:62px 58px 1fr;gap:6px 8px;align-items:start;padding:7px 8px;border-left:3px solid var(--line);margin-bottom:5px;border-radius:0 6px 6px 0;background:rgba(255,255,255,.015)}
+.step .t{color:var(--dim);font:12px ui-monospace,Menlo,monospace;padding-top:2px}
+.phase{font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 0;border-radius:4px;text-align:center;color:#0f1115}
+.phase.obs{background:#7fb0ff}.phase.know{background:#c9a0ff}.phase.act{background:#5fd39a}.phase.verify{background:#ffd166}
+.phase.review{background:#e0b3ff}.phase.sys{background:#9aa3b2}.phase.block{background:#ff9a9e}.phase.vm{background:#8fe3cf}
+.step .what{font-weight:600;color:#eef1f5}
+.step .sub{color:#aeb6c4;margin-top:2px;font-size:12.5px}
+.step .meta{color:var(--dim);font:11.5px ui-monospace,Menlo,monospace;margin-top:3px}
+.step .meta .ms{margin-left:8px}
+.step details{margin-top:3px}.step summary{cursor:pointer;color:var(--dim);font-size:11.5px}
+.step pre{margin:4px 0 0;white-space:pre-wrap;word-break:break-word;font:11.5px ui-monospace,Menlo,monospace;color:#b8c0cc;max-height:220px;overflow:auto;background:#12151b;padding:6px;border-radius:4px}
+.step.ok{border-color:var(--ok)}.step.refused{border-color:var(--warn);background:rgba(245,165,36,.07)}
+.step.denied{border-color:var(--bad);background:rgba(229,72,77,.07)}.step.review-rejected{border-color:var(--rej);background:rgba(195,107,255,.09)}
+.step.info{border-color:var(--info)}
+.step .good{color:var(--ok);font-weight:600;margin-top:3px}.step .badline{color:var(--warn);font-weight:600;margin-top:3px}
+.inc{margin:10px 0 6px;padding:7px 10px;border-radius:6px;background:linear-gradient(90deg,rgba(76,141,255,.18),rgba(76,141,255,0));border-left:3px solid var(--info);font-weight:700}
+.inc.done{background:linear-gradient(90deg,rgba(47,191,113,.18),rgba(47,191,113,0));border-left-color:var(--ok)}
+.inc small{color:var(--dim);font-weight:400;margin-left:8px}
+.row{padding:5px 6px;border-left:3px solid var(--line);margin-bottom:4px;word-break:break-word;font:12.5px ui-monospace,Menlo,monospace}
+.row .t{color:var(--dim);margin-right:6px}.row .tool{font-weight:700;margin-right:6px}.row.info{border-color:var(--info)}
 .row .txt{color:#c7ccd6;display:block;margin-top:2px}
 canvas{width:100%;height:170px;display:block}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px}.kv b{color:var(--dim);font-weight:500}
@@ -45,7 +65,7 @@ select{background:#232833;color:var(--text);border:1px solid var(--line);border-
 </head>
 <body>
 <header>
-  <h1>Blackout Ops</h1>
+  <h1>Blackout Ops <small style="color:var(--dim);font-weight:400;font-size:12px;margin-left:6px">離線自主維運代理 · Jetson AGX Thor</small></h1>
   <span id="replay-badge">REPLAY</span>
   <span id="p-health" class="pill">服務 —</span>
   <span id="p-incident" class="pill">事故 —</span>
@@ -60,7 +80,9 @@ select{background:#232833;color:var(--text);border:1px solid var(--line);border-
     <iframe id="board" title="廠務看板"></iframe>
   </section>
   <section id="trace-panel">
-    <h2>Agent 軌跡（工具呼叫 · 審核 · 事故）</h2>
+    <h2>Agent 軌跡 — 它看到什麼、怎麼判斷、做了什麼、有沒有驗證</h2>
+    <div class="legend"><span><i style="background:#7fb0ff"></i>觀察（唯讀）</span><span><i style="background:#c9a0ff"></i>知識（runbook／記憶／社群）</span><span><i style="background:#5fd39a"></i>修復動作</span><span><i style="background:#ffd166"></i>驗證</span><span><i style="background:#e0b3ff"></i>審核</span><span><i style="background:#ff9a9e"></i>被規則擋下</span><span><i style="background:#9aa3b2"></i>系統</span></div>
+    <div id="counters"><span>步驟 <b id="c-steps">0</b></span><span>修復動作 <b id="c-acts">0</b></span><span>被擋 <b id="c-blocked">0</b></span><span>知識查詢 <b id="c-know">0</b></span><span>經過 <b id="c-secs">—</b></span></div>
     <div id="trace"></div>
   </section>
   <section>
@@ -110,13 +132,115 @@ function pill(el, text, cls){ el.textContent = text; el.className = 'pill ' + (c
 function hms(t){ if (typeof t === 'string') return t; const d = new Date(t * 1000); return d.toTimeString().slice(0, 8); }
 function esc(s){ return String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
+const OBS = new Set(['check_health','docker_ps','docker_logs','docker_exec','read_config','port_check','http_check','disk_usage','service_status','journal_tail','top_processes','evidence_bundle','parallel_diagnosis']);
+const KNOW = new Set(['search_runbooks','search_incident_knowledge','community_push']);
+const ACT = new Set(['docker_start','docker_restart','write_config','restore_config','recreate_stack','network_repair','clear_scratch_volume','cleanup_disk','kill_process','vm_service','vm_write_config','vm_restore_config','self_heal']);
+const VM = new Set(['vm_exec','vm_logs','vm_service','vm_write_config','vm_restore_config']);
+const ZH = {
+  check_health: () => '檢查兩個健康 URL',
+  evidence_bundle: () => '一次收集第一手證據：健康、容器狀態、兩邊日誌、設定、port、磁碟',
+  parallel_diagnosis: () => '平行開兩個唯讀專家各看一遍（服務面／平台面）',
+  docker_ps: () => '看容器狀態',
+  docker_logs: a => `讀 ${a.name || '容器'} 的日誌（最後 ${a.tail || 40} 行）`,
+  docker_exec: a => `在 ${a.name || '容器'} 裡執行唯讀指令 \u300c${short(a.cmd, 60)}\u300d`,
+  read_config: () => '讀前端 nginx 設定檔',
+  port_check: a => `測 ${a.host || '127.0.0.1'}:${a.port} 有沒有在聽`,
+  http_check: a => `對 ${short(a.url, 50)} 發 GET`,
+  disk_usage: () => '看磁碟與 inode 用量',
+  service_status: a => `看主機服務 ${a.unit} 狀態`,
+  journal_tail: a => `讀主機服務 ${a.unit} 的 journal`,
+  top_processes: () => '看主機前幾名程序',
+  search_runbooks: a => `查 runbook：\u300c${short(a.query, 70)}\u300d`,
+  search_incident_knowledge: a => `查知識庫（修復卡／自己的事故記憶／社群）：\u300c${short(a.query, 60)}\u300d`,
+  community_push: a => `系統自動附上社群參考（症狀：\u300c${short(a.query, 50)}\u300d）`,
+  docker_start: a => `啟動容器 ${a.name}`,
+  docker_restart: a => `重啟容器 ${a.name}`,
+  write_config: () => '改寫前端 nginx 設定（nginx -t 先驗，壞的會被退回）',
+  restore_config: a => a.source === 'previous' ? '還原上一版設定檔' : '還原已知良好的設定檔',
+  recreate_stack: a => `重建容器 ${a.name || '整組'}${a.replace ? '（替換掉壞的那個）' : ''}`,
+  network_repair: () => '修復 docker 網路（確保兩個容器都在 edge-net）',
+  clear_scratch_volume: () => '清空暫存卷（inode 用光）',
+  cleanup_disk: () => '清理磁碟',
+  kill_process: a => `終止程序 pid ${a.pid}`,
+  self_heal: () => '呼叫腳本化修復迴圈（旁門，已不再提供）',
+  vm_exec: a => `（VM）ssh 唯讀指令 \u300c${short(a.cmd, 60)}\u300d`,
+  vm_logs: () => '（VM）讀 nginx journal 與 error.log',
+  vm_service: a => `（VM）systemctl ${a.action} ${a.unit || 'nginx'}`,
+  vm_write_config: () => '（VM）改寫 nginx 站台設定（nginx -t 先驗）',
+  vm_restore_config: () => '（VM）還原已知良好的站台設定',
+  finish: () => '結案報告',
+};
+function short(x, n){ x = String(x == null ? '' : x); return x.length > n ? x.slice(0, n - 1) + '…' : x; }
+function phaseOf(r){
+  if (r.src === 'review') return ['審核', 'review'];
+  if (r.src === 'incident' || r.src === 'tier' || r.cls === 'info') return ['系統', 'sys'];
+  if (r.cls && r.cls !== 'ok') return ['被擋', 'block'];
+  if (ACT.has(r.tool)) return ['修復', 'act'];
+  if (KNOW.has(r.tool)) return ['知識', 'know'];
+  if (VM.has(r.tool)) return ['觀察', 'obs'];
+  if (r.tool === 'check_health') return ['驗證', 'verify'];
+  return ['觀察', 'obs'];
+}
+function firstLine(txt, re){ const m = String(txt || '').split('\n').find(l => re.test(l)); return m ? m.trim() : ''; }
+function explain(r){
+  const a = r.args || {}, txt = String(r.text || '');
+  let what = (ZH[r.tool] || (() => r.tool))(a), sub = '', good = '', bad = '';
+  if (r.cls === 'refused') bad = '被規則擋下：' + short(txt.replace(/^refused:\s*/, ''), 160);
+  else if (r.cls === 'denied') bad = '被拒絕：' + short(txt.replace(/^denied:\s*/, ''), 160);
+  else if (r.cls === 'review-rejected') bad = '審核代理否決：' + short(txt.replace(/^review-rejected:\s*/, ''), 160);
+  else if (r.src === 'review') { what = (txt.startsWith('APPROVE') ? '審核通過：' : '審核否決：') + r.tool; sub = short(txt.replace(/^(APPROVE|REJECT):\s*/, ''), 160); }
+  else if (r.src === 'incident') { what = '事故 ' + r.tool; sub = short(txt, 140); }
+  else if (r.src === 'tier') { what = '推論模式 ' + r.tool; sub = short(txt, 120); }
+  else {
+    if (r.tool === 'check_health') { const m = txt.match(/\{[^}]*\}/); if (m) sub = '結果：' + m[0].replace(/"front":\s*/, '前端 ').replace(/"api":\s*/, 'API ').replace(/[{}"]/g, ''); }
+    else if (r.tool === 'docker_ps') sub = short(txt.split('\n').filter(Boolean).slice(0, 3).join(' · ').replace(/\t/g, ' '), 140);
+    else if (r.tool === 'docker_logs' || r.tool === 'vm_logs' || r.tool === 'journal_tail') {
+      const err = firstLine(txt, /\[(emerg|error|alert|crit)\]|failed|refused|denied|timed out|No such|Permission|Exited/i);
+      sub = err ? '找到：' + short(err.replace(/^\d{4}\/\d\d\/\d\d \d\d:\d\d:\d\d /, ''), 150) : (/no error/i.test(txt) ? '日誌裡沒有錯誤行' : '');
+      if (/--- matching runbook/.test(txt)) { const rb = txt.match(/## ([\w.-]+\.md)/); if (rb) sub += (sub ? '；' : '') + '系統附上 runbook ' + rb[1]; }
+      if (/own verified recovery/.test(txt)) sub += (sub ? '；' : '') + '附上這台自己驗證過的修復記憶';
+      if (/community references/.test(txt)) sub += (sub ? '；' : '') + '附上社群參考';
+      if (/earlier distinct error lines/.test(txt)) sub += (sub ? '；' : '') + '附上更早的錯誤行';
+    }
+    else if (r.tool === 'search_runbooks') { const rb = txt.match(/## ([\w.-]+\.md)/) || txt.match(/^# ?(.+)$/m); sub = rb ? '命中：' + short(rb[1], 80) : short(txt, 120); }
+    else if (r.tool === 'search_incident_knowledge') sub = /own verified recoveries/.test(txt) ? '有這台自己的修復記憶' : short(firstLine(txt, /knowledge base|matched|insufficient/) || txt, 120);
+    else if (r.tool === 'community_push') sub = short(txt, 80);
+    else if (r.tool === 'evidence_bundle') { const h = txt.match(/check_health[^\n]*\n(\{[^}]*\})/); sub = h ? '健康：' + h[1].replace(/[{}"]/g, '').replace('front:', '前端 ').replace('api:', 'API ') : ''; }
+    else if (r.tool === 'read_config' || r.tool === 'docker_exec' || r.tool === 'vm_exec') sub = short(txt.split('\n').filter(Boolean)[0] || '', 120);
+    else if (ACT.has(r.tool)) sub = short(txt.split('\n').filter(l => l && !/^health now|^containers now|^still failing|^\s*edge-victim/.test(l))[0] || '', 120);
+    else sub = short(txt.split('\n')[0] || '', 120);
+    if (/both URLs healthy/.test(txt)) good = '→ 修好了：兩個健康 URL 都 200，事故結案';
+    else if (/still failing/.test(txt)) bad = '→ 還沒好（動作後的健康檢查仍紅），繼續查';
+    else if (r.tool === 'check_health' && /"front": 200, "api": 200/.test(txt)) good = '兩個 URL 都 200';
+  }
+  return {what, sub, good, bad};
+}
+const counters = {steps: 0, acts: 0, blocked: 0, know: 0, t0: null};
+function resetCounters(){ Object.assign(counters, {steps: 0, acts: 0, blocked: 0, know: 0, t0: null}); paintCounters(); }
+function paintCounters(){
+  $('c-steps').textContent = counters.steps; $('c-acts').textContent = counters.acts; $('c-blocked').textContent = counters.blocked; $('c-know').textContent = counters.know;
+  $('c-secs').textContent = counters.t0 == null ? '—' : Math.round((counters.last - counters.t0)) + ' s';
+}
+function secs(t){ if (typeof t === 'number') return t; const m = String(t || '').match(/^(\d\d):(\d\d):(\d\d)/); return m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) : null; }
 function addRow(r){
-  const div = document.createElement('div');
-  div.className = 'row ' + (r.cls || 'ok') + (r.src === 'review' ? ' review' : '');
-  const args = r.args && Object.keys(r.args).length ? ' ' + esc(JSON.stringify(r.args)) : '';
-  const tag = r.src === 'review' ? '審核 ' : r.src === 'incident' ? '事故 ' : r.src === 'tier' ? '' : '';
-  div.innerHTML = `<span class="t">${hms(r.t)}</span><span class="tool">${tag}${esc(r.tool || '')}</span>${args}<span class="txt">${esc(r.text || '')}</span>`;
   const box = $('trace'), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  const div = document.createElement('div');
+  if (r.tool === '— 新一場 —' || (r.tool && String(r.tool).startsWith('REPLAY'))){
+    resetCounters();
+    div.className = 'inc'; div.innerHTML = `${esc(r.tool === '— 新一場 —' ? '新的一場開始' : r.tool)}<small>${hms(r.t)} ${esc(r.text || '')}</small>`;
+  } else {
+    const [label, cls] = phaseOf(r), e = explain(r);
+    const s = secs(r.t); if (s != null){ if (counters.t0 == null) counters.t0 = s; counters.last = s; }
+    if (r.src === 'call' || r.src == null){ counters.steps++; if (ACT.has(r.tool) && r.cls === 'ok') counters.acts++; if (r.cls && r.cls !== 'ok') counters.blocked++; if (KNOW.has(r.tool)) counters.know++; }
+    paintCounters();
+    div.className = 'step ' + (r.cls || 'ok');
+    const raw = (r.args && Object.keys(r.args).length ? JSON.stringify(r.args) + '\n' : '') + String(r.text || '');
+    const ms = r.ms != null ? `<span class="ms">${r.ms} ms</span>` : '';
+    div.innerHTML = `<span class="t">${hms(r.t)}</span><span class="phase ${cls}">${label}</span><div><div class="what">${esc(e.what)}</div>` +
+      (e.sub ? `<div class="sub">${esc(e.sub)}</div>` : '') + (e.good ? `<div class="good">${esc(e.good)}</div>` : '') + (e.bad ? `<div class="badline">${esc(e.bad)}</div>` : '') +
+      `<div class="meta">${esc(r.tool || '')}${ms}</div>` + (raw.trim() ? `<details><summary>原始內容</summary><pre>${esc(short(raw, 1800))}</pre></details>` : '') + `</div>`;
+    if (e.good) { const h = document.createElement('div'); h.className = 'inc done'; h.innerHTML = `事故結案<small>${hms(r.t)} · 本場 ${counters.steps} 步、${counters.acts} 個修復動作、${counters.blocked} 次被擋${counters.t0 != null ? '、' + Math.round(counters.last - counters.t0) + ' s' : ''}</small>`; box.appendChild(div); box.appendChild(h); while (box.children.length > 400) box.removeChild(box.firstChild); if (atEnd) box.scrollTop = box.scrollHeight; return; }
+  }
   box.appendChild(div);
   while (box.children.length > 400) box.removeChild(box.firstChild);
   if (atEnd) box.scrollTop = box.scrollHeight;

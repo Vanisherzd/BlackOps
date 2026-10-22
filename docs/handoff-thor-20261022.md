@@ -11,10 +11,9 @@ git pull --ff-only origin main               # 目前 main = dfa2f1b 之後
 ## 2. 起舞台（兩種配方，先試第一種）
 
 ```bash
-# A. 今晚 Spark 驗過的配方：DSpark 推測解碼（k=2 已是預設）、KV 0.25
-SPEC=dspark GPU_MEMORY_UTILIZATION=0.25 scripts/stage-up.sh
-# B. Thor 快取裡沒有 drafter（nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark）就退回基本配方
-scripts/stage-up.sh
+# Thor 定案（13:07 量過：DSpark 在 Thor 無增益，不用）：基本配方 + reranker sidecar + 審核不思考
+scripts/serve-rerank.sh   # GPU_MEMORY_UTILIZATION=0.03 預設可用
+RERANK_URL=http://127.0.0.1:8020/rerank REVIEW_THINK=0 GPU_MEMORY_UTILIZATION=0.25 scripts/stage-up.sh
 ```
 
 - 起來後跑 `scripts/preflight.sh`（stage-up 結尾會印 PREFLIGHT）；`wan` 一項在沒 passwordless sudo 的機器上本來就 FAIL。

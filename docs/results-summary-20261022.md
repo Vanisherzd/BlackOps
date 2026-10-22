@@ -54,6 +54,11 @@
 **3/3 自主修復、0 次替換容器**——agent `cat` 出錯的設定 → `write_container_file` 寫回修正檔（nginx -t 把關；內容感知健康檢查抓到一次「200 但不是部署頁」的錯誤修法，它再改一次才過）；
 141／86／158 s。舊規則同 upstream-500 是重啟後 replace 容器（103 s）。
 
+**Thor 推論／記憶體 perf 步驟（13:01–13:07，`logs/thor-final.out`）**：decode-bench 基本配方 tool-turn／report／long-context = **50.7／69.8／44.2 tok/s**；
+DSpark 推測解碼在 Thor 上 **50.3／69.4／55.0**——tool-turn 與 report 無差、long-context 的輸出品質旗標為 broken（基本配方該題也有一次 broken），MemAvailable 78.4 → 78.6 GB 無差
+→ **Thor 維持基本配方（無 DSpark）**；保留的有：reranker sidecar GPU 0.04 → 0.03、審核代理不思考（`REVIEW_THINK=0`，判決一致）。Spark 上 DSpark 的 +27–49% 在 Thor 沒有重現，
+原因待查（Thor 的 vLLM 同一 nightly，可能是 arm64 Blackwell 上 drafter 的 kernel 路徑）。
+
 計分修正（commit `8a051bc`）：Thor 原始計分 5/12 是因為修好之後的 continuation 讓模型呼叫 `self_heal`（空操作），舊計分把任何 self_heal 都當兜底。
 現在只有「在修好之前」的 self_heal 算兜底，修好之後的呼叫另列 after-green 欄；同時 `self_heal` 不再提供給 sandbox agent（旁門）。
 

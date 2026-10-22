@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-22 13:12",
+  "updated": "2026-10-22 13:20",
   "items": [
     {
       "k": "全目錄 regression（36 案，Spark）",
@@ -27,9 +27,9 @@
       "src": "regression summaries"
     },
     {
-      "k": "decode tok/s（Spark，DSpark 推測解碼）",
-      "v": "65 / 100 / 91（tool turn / report / long context）",
-      "src": "scripts/decode-bench.py"
+      "k": "decode tok/s（tool turn / report / long context）",
+      "v": "Thor 基本配方 51 / 70 / 44；Spark＋DSpark 65 / 100 / 91（DSpark 在 Thor 無增益，未採用）",
+      "src": "scripts/decode-bench.py（兩台實測）"
     },
     {
       "k": "prefix cache 命中",

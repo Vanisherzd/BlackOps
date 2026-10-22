@@ -122,12 +122,56 @@ def incident_state():
     return open_inc
 
 
+def dc_status(health, api_ms):
+    """Four data-centre views of the same stack, next to the two factory lights: containers, network, resources, SLA.
+    Each is cheap (docker ps, df, /proc/meminfo, the health probe already made) and degrades to '—' on any error."""
+    tiles = []
+    try:
+        r = subprocess.run(["docker", "ps", "-a", "--filter", "name=^edge-victim", "--format", "{{.Names}}\t{{.Status}}"],
+                           capture_output=True, text=True, timeout=5)
+        rows = [l.split("\t") for l in r.stdout.strip().splitlines() if l and not l.startswith("edge-victim-cache")]
+        up = [n for n, st in rows if st.startswith("Up") and "Paused" not in st]
+        bad = [f"{n} {st.split(' (')[0][:14]}" for n, st in rows if n not in up]
+        tiles.append(dict(k="containers", label="容器 / 服務", value=f"{len(up)}/2 Up" + (" · " + ", ".join(bad) if bad else ""),
+                          cls="ok" if len(up) == 2 and len(rows) == 2 else "bad"))
+    except Exception:
+        tiles.append(dict(k="containers", label="容器 / 服務", value="—", cls=""))
+    try:
+        r = subprocess.run(["docker", "network", "inspect", "edge-net", "--format", "{{range .Containers}}{{.Name}} {{end}}"],
+                           capture_output=True, text=True, timeout=5)
+        members = [m for m in r.stdout.split() if m.startswith("edge-victim") and m != "edge-victim-cache"]
+        wan = wan_status()
+        online = wan.startswith("online")
+        tiles.append(dict(k="network", label="網路 / DNS", value=f"edge-net {len(members)}/2 · WAN {'online' if online else 'offline' if wan.startswith('offline') else '?'}",
+                          cls="ok" if len(members) == 2 else "bad"))
+    except Exception:
+        tiles.append(dict(k="network", label="網路 / DNS", value="—", cls=""))
+    try:
+        st = os.statvfs("/")
+        disk = 100 - st.f_bavail * 100 // max(1, st.f_blocks)
+        mem = next((int(l.split()[1]) // 1024 // 1024 for l in open("/proc/meminfo") if l.startswith("MemAvailable:")), None)
+        tiles.append(dict(k="resources", label="資源（磁碟 / 記憶體）", value=f"root {disk}% 用" + (f" · 可用 {mem} GB" if mem is not None else ""),
+                          cls="ok" if disk < 85 and (mem is None or mem > 8) else "warn" if disk < 95 else "bad"))
+    except Exception:
+        tiles.append(dict(k="resources", label="資源（磁碟 / 記憶體）", value="—", cls=""))
+    codes = list(health.values())
+    api = codes[1] if len(codes) > 1 else None
+    tiles.append(dict(k="sla", label="回應時間 / SLA", value=(f"/api/ {api} · {api_ms} ms" if api_ms is not None else f"/api/ {api or '無回應'}"),
+                      cls="ok" if api == 200 and (api_ms or 0) < 800 else "warn" if api == 200 else "bad"))
+    return tiles
+
+
 def state():
     global _state, _state_t
     with _lock:
         if _state is not None and time.time() - _state_t < 1.0:
             return _state
-        health = {u: http_status(u) for u in HEALTH}
+        health, api_ms = {}, None
+        for i, u in enumerate(HEALTH):
+            t0 = time.time()
+            health[u] = http_status(u)
+            if i == 1:
+                api_ms = int((time.time() - t0) * 1000)
         pending = read_json(APPROVALS / "pending.json")
         if pending and (APPROVALS / f"{pending.get('id')}.decision.json").exists():
             pending = None
@@ -140,7 +184,8 @@ def state():
             ts=time.time(), health=health, healthy=all(c == 200 for c in health.values()),
             wan=wan_status(), tier=read_json(LOGS / "tier-state.json"), incident=incident_state(),
             approval=pending, approval_mode=os.environ.get("APPROVAL", "unset"),
-            drill_running=pgrep("nemoclaw-drill.sh"), watchdog=wd_alive, actions=ACTIONS, report=latest_report())
+            drill_running=pgrep("nemoclaw-drill.sh"), watchdog=wd_alive, actions=ACTIONS, report=latest_report(),
+            dc=dc_status(health, api_ms))
         _state_t = time.time()
         return _state
 

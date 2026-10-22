@@ -147,6 +147,8 @@ select{background:#232833;color:var(--text);border:1px solid var(--line);border-
   <button class="act" data-case="upstream-paused">upstream-paused</button>
   <button class="act" data-case="upstream-500">upstream-500</button>
   <button class="act" data-case="random" title="從整個故障目錄隨機抽一個注入；agent 收到的警報和平常一樣，不知道抽到哪個">隨機真實故障</button>
+  <select id="cases" title="整個故障目錄（八類）"><option value="">全部故障：選一個…</option></select>
+  <button class="act" id="inject-sel">注入所選</button>
   <button class="act" data-a="reset">reset</button>
   <span class="sep"></span>
   <button class="act stop" data-a="wan-down">切斷外網</button>
@@ -262,8 +264,15 @@ function explain(r){
   }
   return {what, sub, good, bad};
 }
-const counters = {steps: 0, acts: 0, blocked: 0, know: 0, t0: null};
-function resetCounters(){ Object.assign(counters, {steps: 0, acts: 0, blocked: 0, know: 0, t0: null}); paintCounters(); }
+const counters = {steps: 0, acts: 0, blocked: 0, know: 0, t0: null, tok0: null, wall0: null};
+let lastMetrics = null;
+function resetCounters(){ Object.assign(counters, {steps: 0, acts: 0, blocked: 0, know: 0, t0: null, tok0: lastMetrics ? lastMetrics.gen_tokens : null, wall0: Date.now() / 1000}); paintCounters(); }
+function incidentWh(){   // energy over this incident from the power samples (mW at ts), trapezoid, since the incident banner
+  if (counters.wall0 == null) return null;
+  const pts = power.filter(p => p.ts >= counters.wall0 && p.mw != null); if (pts.length < 2) return null;
+  let j = 0; for (let i = 1; i < pts.length; i++) j += (pts[i].mw + pts[i - 1].mw) / 2 * (pts[i].ts - pts[i - 1].ts);   // mW·s
+  return j / 3.6e6;
+}
 function paintCounters(){
   $('c-steps').textContent = counters.steps; $('c-acts').textContent = counters.acts; $('c-blocked').textContent = counters.blocked; $('c-know').textContent = counters.know;
   $('c-secs').textContent = counters.t0 == null ? '—' : Math.round((counters.last - counters.t0)) + ' s';
@@ -286,7 +295,8 @@ function addRow(r){
     div.innerHTML = `<span class="t">${hms(r.t)}</span><span class="phase ${cls}">${label}</span><div><div class="what">${esc(e.what)}</div>` +
       (e.sub ? `<div class="sub">${esc(e.sub)}</div>` : '') + (e.good ? `<div class="good">${esc(e.good)}</div>` : '') + (e.bad ? `<div class="badline">${esc(e.bad)}</div>` : '') +
       `<div class="meta">${esc(r.tool || '')}${ms}</div>` + (raw.trim() ? `<details><summary>原始內容</summary><pre>${esc(short(raw, 1800))}</pre></details>` : '') + `</div>`;
-    if (e.good) { const h = document.createElement('div'); h.className = 'inc done'; h.innerHTML = `事故結案<small>${hms(r.t)} · 本場 ${counters.steps} 步、${counters.acts} 個修復動作、${counters.blocked} 次被擋${counters.t0 != null ? '、' + Math.round(counters.last - counters.t0) + ' s' : ''}</small>`; box.appendChild(div); box.appendChild(h); while (box.children.length > 400) box.removeChild(box.firstChild); if (atEnd) box.scrollTop = box.scrollHeight; return; }
+    if (e.good) { const h = document.createElement('div'); h.className = 'inc done'; const wh = incidentWh(); const tk = lastMetrics && counters.tok0 != null ? lastMetrics.gen_tokens - counters.tok0 : null;
+      h.innerHTML = `事故結案<small>${hms(r.t)} · 本場 ${counters.steps} 步、${counters.acts} 個修復動作、${counters.blocked} 次被擋${counters.t0 != null ? '、' + Math.round(counters.last - counters.t0) + ' s' : ''}${wh != null ? '、耗電 ' + wh.toFixed(2) + ' Wh' : ''}${tk != null && tk > 0 ? '、模型產出 ' + tk + ' tokens' : ''}</small>`; box.appendChild(div); box.appendChild(h); while (box.children.length > 400) box.removeChild(box.firstChild); if (atEnd) box.scrollTop = box.scrollHeight; return; }
   }
   box.appendChild(div);
   while (box.children.length > 400) box.removeChild(box.firstChild);
@@ -327,7 +337,7 @@ function render(s){
   $('k-channel').textContent = offline ? 'Jetson 本機（外網不可用）' : 'Jetson 本機';
   $('k-mode').textContent = ({manual: '風險動作需人工核准', auto: '自動（演練）', off: '關閉'}[s.approval_mode] || s.approval_mode);
   $('k-watchdog').textContent = s.watchdog ? '巡檢中（每 2 s 探測兩個 URL，不推論；異常連兩次即開事故）' : (s.drill_running ? '演練模式：由演練腳本代為注入與派工，結束後自動恢復巡檢' : '未啟動');
-  const sc = s.score || {}, mt = s.metrics, sy = s.sys || {};
+  const sc = s.score || {}, mt = s.metrics, sy = s.sys || {}; if (mt) lastMetrics = mt;
   if (sc.total){ $('j-task-big').innerHTML = `${sc.auto}/${sc.total}<small>自主修復（drill）</small>`; $('j-task').className = 'jcard ' + (sc.worse === 0 && sc.false === 0 ? 'ok' : 'warn'); }
   else $('j-task-big').innerHTML = `${sc.incidents_closed || 0}<small>事故結案</small>`;
   $('j-task-l1').innerHTML = `越修越壞 <b>${sc.worse ?? '—'}</b> · 謊報健康 <b>${sc.false ?? '—'}</b> · 事故結案 <b>${sc.incidents_closed ?? 0}</b>`;
@@ -385,6 +395,13 @@ document.querySelectorAll('.act').forEach(b => b.onclick = () =>
   post('api/action', b.dataset.case ? {action: 'inject', case: b.dataset.case} : {action: b.dataset.a}));
 function decide(d){ if (pending) post('api/approval', {id: pending.id, decision: d}); }
 
+async function loadCases(){
+  const j = await fetch('api/cases').then(r => r.json()).catch(() => null); if (!j) return;
+  const sel = $('cases'); sel.options[0].textContent = `全部故障（${j.total} 案）：選一個…`;
+  j.groups.forEach(g => { const og = document.createElement('optgroup'); og.label = `${g.label}（${g.items.length}）`;
+    g.items.forEach(i => { const o = document.createElement('option'); o.value = i.name; o.textContent = `${i.name}${i.zh ? ' — ' + i.zh : ''}`; og.appendChild(o); }); sel.appendChild(og); });
+  $('inject-sel').onclick = () => { const c = sel.value; if (c) post('api/action', {action: 'inject', case: c}); };
+}
 async function loadRuns(){
   const j = await fetch('api/runs').then(r => r.json()).catch(() => ({runs: []}));
   const sel = $('runs');
@@ -403,7 +420,7 @@ async function startReplay(){
 function stopReplay(){
   replayTimers.forEach(clearTimeout); replayTimers = []; replaying = false; $('replay-badge').style.display = 'none';
 }
-connect(); loadBoard(); loadRuns(); drawPower();
+connect(); loadBoard(); loadRuns(); loadCases(); drawPower();
 </script>
 </body>
 </html>

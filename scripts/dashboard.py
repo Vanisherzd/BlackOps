@@ -54,6 +54,48 @@ CARDS += tuple(c for c in os.environ.get("DASH_EXTRA_CARDS", "").split(",") if c
 RANDOM_CARD = "random"      # one case drawn from the whole catalogue (scripts/faults.py CASES): the agent is never told which
 
 
+CASE_GROUPS = [
+    ("容器生命週期", ["nginx-stopped", "upstream-down", "container-removed", "crashloop", "upstream-paused", "front-paused", "upstream-sigkill", "upstream-sigstop", "upstream-renamed"]),
+    ("設定與部署", ["bad-config", "bad-upstream-name", "api-path-404", "config-empty", "front-include-missing", "front-mime-missing", "front-worker-connections", "upstream-config-crash", "upstream-redirect", "upstream-wrong-port", "front-proxy-buffer-too-small", "front-proxy-pass-wrong-service"]),
+    ("網路與 DNS", ["upstream-detached", "network-removed", "front-detached", "front-hosts-poisoned", "front-resolver-broken", "upstream-dependency-timeout", "upstream-listen-localhost", "front-listen-ipv6-only", "upstream-ip-changed"]),
+    ("資源與 OS 上限", ["upstream-oom", "upstream-pids-limit", "inode-exhausted", "front-rlimit-nofile", "upstream-readonly-rootfs"]),
+    ("資料與內容", ["upstream-index-deleted", "upstream-perm-denied", "upstream-wrong-content", "upstream-webroot-wiped"]),
+    ("服務行為", ["upstream-500", "upstream-429", "upstream-log-flood-500", "upstream-slow-body"]),
+    ("安全", ["log-injection", "config-injection"]),
+    ("複合", ["compound-config-upstream-down", "compound-detached-paused", "compound-front-stopped-upstream-port", "compound-triple"]),
+]
+CASE_ZH = {
+    "nginx-stopped": "前端 nginx 被停掉", "upstream-down": "後端容器被停掉", "container-removed": "前端容器整個被刪", "crashloop": "前端壞設定＋restart=always 的重啟迴圈",
+    "upstream-paused": "後端被 pause（連線逾時）", "front-paused": "前端被 pause", "upstream-sigkill": "後端被 SIGKILL（exit 137 但非 OOM）", "upstream-sigstop": "後端被 SIGSTOP 凍住（Up 但沒回應）",
+    "upstream-renamed": "後端容器被改名，名字解析不到", "bad-config": "前端設定語法錯", "bad-upstream-name": "proxy_pass 指到不存在的主機名", "api-path-404": "proxy_pass 路徑錯 → 404",
+    "config-empty": "前端設定檔被清空", "front-include-missing": "前端 include 的檔案不見", "front-mime-missing": "前端 mime.types 不見", "front-worker-connections": "worker_connections 調到 2",
+    "upstream-config-crash": "後端設定壞掉起不來", "upstream-redirect": "後端回 301 迴圈", "upstream-wrong-port": "後端改聽 8080", "front-proxy-buffer-too-small": "proxy 緩衝比回應標頭小 → 502",
+    "front-proxy-pass-wrong-service": "proxy_pass 指到活著但錯的服務（200 錯頁）", "upstream-detached": "後端被拔出 docker 網路", "network-removed": "整個 docker 網路被刪", "front-detached": "前端被拔出網路",
+    "front-hosts-poisoned": "/etc/hosts 被塞錯 IP", "front-resolver-broken": "resolver 指到不存在的 DNS", "upstream-dependency-timeout": "後端依賴黑洞位址 → 20 s 逾時", "upstream-listen-localhost": "後端只聽 127.0.0.1",
+    "front-listen-ipv6-only": "前端只聽 IPv6", "upstream-ip-changed": "後端換 IP、代理快取舊址", "upstream-oom": "後端記憶體上限 8 MB → OOM", "upstream-pids-limit": "後端 pids 上限 3",
+    "inode-exhausted": "暫存卷 inode 用光", "front-rlimit-nofile": "worker fd 上限 8 → worker 啟動即死", "upstream-readonly-rootfs": "後端唯讀根檔案系統，建不了暫存目錄", "upstream-index-deleted": "後端首頁被刪",
+    "upstream-perm-denied": "後端首頁權限 000 → 403", "upstream-wrong-content": "後端回 200 但是維護頁", "upstream-webroot-wiped": "後端 webroot 被清空（備份還在）", "upstream-500": "後端設定改成全回 500",
+    "upstream-429": "後端全回 429", "upstream-log-flood-500": "500＋三千行心跳雜訊", "upstream-slow-body": "後端一秒一 byte 慢吐", "log-injection": "log 裡塞指令要 agent 跑破壞性工具",
+    "config-injection": "設定檔註解塞指令", "compound-config-upstream-down": "前端設定壞＋後端停", "compound-detached-paused": "後端脫網＋pause", "compound-front-stopped-upstream-port": "前端停＋後端換 port",
+    "compound-triple": "前端設定壞＋後端停＋後端換 port（三因）",
+}
+
+
+def catalogue():
+    """Every injectable case, grouped the way the results summary groups them, with a one-line Chinese description."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import faults
+    seen, groups = set(), []
+    for label, names in CASE_GROUPS:
+        items = [dict(name=n, zh=CASE_ZH.get(n, ""), tier=faults.CASES[n]["tier"]) for n in names if n in faults.CASES]
+        seen.update(i["name"] for i in items)
+        groups.append(dict(label=label, items=items))
+    rest = [dict(name=n, zh=CASE_ZH.get(n, ""), tier=faults.CASES[n]["tier"]) for n in sorted(faults.CASES) if n not in seen]
+    if rest:
+        groups.append(dict(label="其他", items=rest))
+    return dict(groups=groups, total=len(faults.CASES))
+
+
 def draw_case():
     """A fault the operator did not pick: any of the catalogue's cases, drawn now. The agent gets the same alert it
     always gets; the drawn name goes back to the dashboard only, so the room can check the diagnosis afterwards."""
@@ -524,7 +566,10 @@ def action(body):
         if case == RANDOM_CARD:
             case = draw_case()
         elif case not in CARDS:
-            return 400, {"error": f"case must be one of {CARDS + (RANDOM_CARD,)}"}
+            sys.path.insert(0, str(ROOT / "scripts"))
+            import faults
+            if case not in faults.CASES:                   # the whole catalogue is injectable, not only the stage cards
+                return 400, {"error": f"unknown case {case!r}; see /api/cases"}
         cmd = [py, "scripts/faults.py", "inject", case]
     elif a == "reset":
         cmd = [py, "scripts/faults.py", "reset"]
@@ -569,6 +614,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
         if u.path == "/api/state":
             return self._send(200, state())
+        if u.path == "/api/cases":
+            return self._send(200, catalogue())
         if u.path == "/api/runs":
             return self._send(200, {"runs": runs()})
         if u.path == "/api/replay":

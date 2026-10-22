@@ -427,7 +427,8 @@ def state():
             wan=wan_status(), tier=read_json(LOGS / "tier-state.json"), incident=incident_state(),
             approval=pending, approval_mode=os.environ.get("APPROVAL", "unset"),
             drill_running=pgrep("nemoclaw-drill.sh"), watchdog=wd_alive, actions=ACTIONS, report=latest_report(),
-            dc=dc_status(health, api_ms), metrics=vllm_metrics(), sys=sys_stats(), score=scoreboard())
+            dc=dc_status(health, api_ms), metrics=vllm_metrics(), sys=sys_stats(), score=scoreboard(),
+            power_w=(lambda rows: round(rows[-1]["mw"] / 1000, 1) if rows and rows[-1].get("mw") is not None else None)(last_rows(LOGS / "power.jsonl", 1)))
         _state_t = time.time()
         return _state
 
@@ -608,6 +609,7 @@ class H(BaseHTTPRequestHandler):
     def _send(self, code, obj, ctype="application/json"):
         body = obj if isinstance(obj, bytes) else json.dumps(obj, ensure_ascii=False).encode()
         self.send_response(code)
+        self.send_header("Access-Control-Allow-Origin", "*")       # the victim's board page (:8880) reads /api/state
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")

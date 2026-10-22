@@ -327,7 +327,7 @@ function render(s){
   pill($('p-health'), s.healthy ? '服務正常' : '服務異常', s.healthy ? 'ok' : 'bad');
   if (s.dc){ $('dc').innerHTML = s.dc.map(t => `<div class="tile ${t.cls || ''}"><div class="lab">${esc(t.label)}</div><div class="val">${esc(t.value)}</div></div>`).join(''); }
   if (s.incident) pill($('p-incident'), `事故 ${s.incident.id}${s.incident.last ? ' · ' + s.incident.last : ''}`, 'bad');
-  else pill($('p-incident'), s.drill_running ? '演練進行中' : '無事故', s.drill_running ? 'warn' : 'ok');
+  else pill($('p-incident'), s.drill_running ? '隨機錯誤注入中' : '無事故', s.drill_running ? 'warn' : 'ok');
   if (s.tier) pill($('p-tier'), `Tier-${s.tier.tier}${s.tier.mode ? ' · ' + s.tier.mode : ''}`, s.tier.tier === 2 ? 'warn' : 'ok');
   else pill($('p-tier'), 'Tier —（無控制器）', '');
   const wan = String(s.wan || '');
@@ -337,7 +337,7 @@ function render(s){
   const m = wan.match(/sandbox_blocked=(\d+)/); $('k-blocked').textContent = m ? `${m[1]} 次被擋（成功 0）` : (online ? '—' : '?');
   $('k-channel').textContent = offline ? 'Jetson 本機（外網不可用）' : 'Jetson 本機';
   $('k-mode').textContent = ({manual: '風險動作需人工核准', auto: '自動（演練）', off: '關閉'}[s.approval_mode] || s.approval_mode);
-  $('k-watchdog').textContent = s.watchdog ? '巡檢中（每 2 s 探測兩個 URL，不推論；異常連兩次即開事故）' : (s.drill_running ? '演練模式：由演練腳本代為注入與派工，結束後自動恢復巡檢' : '未啟動');
+  $('k-watchdog').textContent = s.watchdog ? '巡檢中（每 2 s 探測兩個 URL，不推論；異常連兩次即開事故）' : (s.drill_running ? '隨機混合多重錯誤注入中：每一注入直接派工 agent，結束後恢復 2 s 巡檢' : '未啟動');
   const sc = s.score || {}, mt = s.metrics, sy = s.sys || {}; if (mt) lastMetrics = mt;
   const hd = sc.handled || {};
   if (hd.n){ $('j-task-big').innerHTML = `${hd.median_s} s<small>平均處理時間（中位，${hd.n} 場自主修復）</small>`; $('j-task').className = 'jcard ok';
@@ -353,7 +353,7 @@ function render(s){
   $('j-sys-l2').textContent = '無 swap；KV 預留由 GPU_MEMORY_UTILIZATION 控（0.20–0.25）';
   $('j-safe-big').innerHTML = `${sc.destructive ?? 0}<small>破壞性工具執行</small>`; $('j-safe').className = 'jcard ' + ((sc.destructive || 0) === 0 ? 'ok' : 'warn');
   $('j-safe-l1').innerHTML = `規則擋下 <b>${sc.blocked ?? 0}</b> · 審核否決 <b>${sc.rejected ?? 0}</b> · 人工審批 <b>${sc.approvals ?? 0}</b>`;
-  $('j-safe-l2').innerHTML = `巡檢 <b>${s.watchdog ? '開' : (s.drill_running ? '演練中暫停' : '關')}</b> · Guardrails <b>開</b> · 審批 <b>${s.approval_mode}</b>`;
+  $('j-safe-l2').innerHTML = `巡檢 <b>${s.watchdog ? '開' : (s.drill_running ? '錯誤注入中（直接派工）' : '關')}</b> · Guardrails <b>開</b> · 審批 <b>${s.approval_mode}</b>`;
   if (sc.tools){ const ph = sc.tools.phases || {}; $('j-tools').innerHTML = `共 <b>${sc.tools.total}</b> 次：觀察 <b>${ph.observe || 0}</b> · 知識 <b>${ph.knowledge || 0}</b> · 修復 <b>${ph.repair || 0}</b> · 破壞性 <b>${ph.destructive || 0}</b> · 被擋 <b>${sc.tools.blocked || 0}</b>`;
     $('j-tools-top').textContent = '最常用：' + (sc.tools.top || []).map(([n, c]) => `${n} ×${c}`).join('、'); }
   if (sc.benchmark && !$('j-bench').dataset.done){ $('j-bench').innerHTML = (sc.benchmark.items || []).map(i => `<div><span>${esc(i.k)}</span><span>${esc(i.v)}</span></div>`).join('') + `<div><span>更新</span><span>${esc(sc.benchmark.updated || '')}</span></div>`; $('j-bench').dataset.done = '1'; }
@@ -365,7 +365,7 @@ function render(s){
   pending = s.approval;
   $('approval').style.display = pending ? 'block' : 'none';
   if (pending){ $('a-action').textContent = (ZH[pending.action] || (() => pending.action))(pending.args || {}); $('a-reason').textContent = (pending.reason || '') + `　（${pending.action} ${JSON.stringify(pending.args || {})}）`; }
-  document.querySelectorAll('.act').forEach(b => b.disabled = !s.actions || s.drill_running);
+  document.querySelectorAll('.act').forEach(b => b.disabled = !s.actions || s.drill_running);   // one injection at a time
 }
 
 function connect(){

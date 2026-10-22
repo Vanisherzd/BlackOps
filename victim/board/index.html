@@ -129,7 +129,7 @@ async function pollRack(){   // the patrol host's dashboard on this host, port 8
   rackCard('r-node', sy.cpu != null ? `CPU ${sy.cpu}%` : '—', 'RAM 可用', (sy.ram_avail_gb != null ? `${sy.ram_avail_gb}/${sy.ram_total_gb} GB` : '—') + (sy.gpu != null ? ` · GPU ${sy.gpu}%` : ''), (sy.ram_avail_gb != null && sy.ram_avail_gb < 8) ? 'warn' : 'ok');
   const c = dc.containers || {}, n = dc.network || {}, l = dc.sla || {};
   rackCard('r-svc', c.value || '—', '網路', n.value || '—', (c.cls === 'ok' && n.cls === 'ok') ? 'ok' : 'bad');
-  rackCard('r-sla', l.value || '—', '巡檢', s.watchdog ? '每 2 s 探測中' : (s.drill_running ? '演練中' : '未啟動'), l.cls || '');
+  rackCard('r-sla', l.value || '—', '巡檢', s.watchdog ? '每 2 s 探測中' : (s.drill_running ? '隨機錯誤注入中' : '未啟動'), l.cls || '');
 }
 poll(); pollRack(); setInterval(poll, 2000); setInterval(pollRack, 2000); setInterval(render, 1000);
 </script>

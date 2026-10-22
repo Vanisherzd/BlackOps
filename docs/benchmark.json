@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-22 13:20",
+  "updated": "2026-10-22 13:40",
   "items": [
     {
       "k": "全目錄 regression（36 案，Spark）",
@@ -15,6 +15,16 @@
       "k": "修復優先於替換（Thor，3 案）",
       "v": "3/3 自主、0 次替換容器：cat 設定 → write_container_file 改回那一行（nginx -t 把關）",
       "src": "logs/regression-20261022-122354（Thor）"
+    },
+    {
+      "k": "最難的案例（worker fd 上限，兩台原 0/5）",
+      "v": "runbook＋log 指引＋修檔工具後 Thor 64 s、3 次呼叫修好",
+      "src": "logs/regression-20261022-123415（Thor）"
+    },
+    {
+      "k": "舞台巡檢全路徑（偵測→派工→修復→結案）",
+      "v": "三因複合 88 s、脫網＋pause 65 s；巡檢 4 s 開事故",
+      "src": "logs/incidents.jsonl（Thor 13:30）"
     },
     {
       "k": "偵測 → 派工",

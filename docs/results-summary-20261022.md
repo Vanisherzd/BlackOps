@@ -59,6 +59,14 @@ DSpark 推測解碼在 Thor 上 **50.3／69.4／55.0**——tool-turn 與 report
 → **Thor 維持基本配方（無 DSpark）**；保留的有：reranker sidecar GPU 0.04 → 0.03、審核代理不思考（`REVIEW_THINK=0`，判決一致）。Spark 上 DSpark 的 +27–49% 在 Thor 沒有重現，
 原因待查（Thor 的 vLLM 同一 nightly，可能是 arm64 Blackwell 上 drafter 的 kernel 路徑）。
 
+**Thor round 3（ops tier ×1，reranker 開，12:34–13:03，`logs/regression-20261022-123415`）**：4/5 自主、made-worse 0、謊報 0；
+**front-rlimit-nofile 64 s、3 次呼叫修好**（runbook「worker 啟動即死」＋`docker_logs` 指引＋`repair_image_file`，先前兩台 0/5）；proxy-buffer 46 s、ipv6-only 219 s、webroot-wiped 414 s；
+listen-localhost silent-fail 605 s（90 次呼叫）成為目前唯一未解案。社群推送 1/1 有參考、事故記憶命中 3/3、修檔工具 15 次。
+
+**Thor 全目錄（13:18 起，為錄影讓出靶機 13:29 暫停）**：前 5 案 nginx-stopped／bad-config／upstream-down／bad-upstream-name／container-removed 全部自主修復；其餘待錄影後續跑。
+
+**Thor 舞台 demo 迴圈（13:30 起，巡檢路徑：偵測→開事故→派工→修復→結案）**：compound-triple 88 s、compound-detached-paused 65 s（巡檢 4 s 開事故）。
+
 計分修正（commit `8a051bc`）：Thor 原始計分 5/12 是因為修好之後的 continuation 讓模型呼叫 `self_heal`（空操作），舊計分把任何 self_heal 都當兜底。
 現在只有「在修好之前」的 self_heal 算兜底，修好之後的呼叫另列 after-green 欄；同時 `self_heal` 不再提供給 sandbox agent（旁門）。
 

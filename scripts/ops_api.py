@@ -20,11 +20,14 @@ import agent  # noqa: E402  (reuses TOOLS and run_tool)
 
 LOG = pathlib.Path(__file__).resolve().parent.parent / "logs" / "ops-api.log"
 LOG.parent.mkdir(exist_ok=True)
-TOOLS = [t for t in agent.TOOLS if t["name"] != "finish"] + [{
+# self_heal is a scripted repair loop the harness can call on POST /call; it is no longer offered to the sandbox agent
+# (SELF_HEAL_TOOL=1 puts it back): a model that reaches for it has not diagnosed anything, and OpenClaw's "runtime event
+# continuation" made the Thor's agent call it on an already healthy stack in seven of twelve drills (2026-10-22).
+TOOLS = [t for t in agent.TOOLS if t["name"] != "finish"] + ([] if os.environ.get("SELF_HEAL_TOOL", "0") != "1" else [{
     "name": "self_heal",
     "description": "Run the full autonomous diagnose-and-repair loop on the host (same model, same tools, up to 8 steps) and return its verdict and step log. Use this when you cannot drive the individual tools yourself.",
     "parameters": {"type": "object", "properties": {"note": {"type": "string", "description": "optional context for the run"}}},
-}]
+}])
 
 
 def self_heal(args):

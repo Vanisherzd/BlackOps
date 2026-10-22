@@ -83,6 +83,10 @@ select{background:#232833;color:var(--text);border:1px solid var(--line);border-
     <h2>Agent 軌跡 — 它看到什麼、怎麼判斷、做了什麼、有沒有驗證</h2>
     <div class="legend"><span><i style="background:#7fb0ff"></i>觀察（唯讀）</span><span><i style="background:#c9a0ff"></i>知識（runbook／記憶／社群）</span><span><i style="background:#5fd39a"></i>修復動作</span><span><i style="background:#ffd166"></i>驗證</span><span><i style="background:#e0b3ff"></i>審核</span><span><i style="background:#ff9a9e"></i>被規則擋下</span><span><i style="background:#9aa3b2"></i>系統</span></div>
     <div id="counters"><span>步驟 <b id="c-steps">0</b></span><span>修復動作 <b id="c-acts">0</b></span><span>被擋 <b id="c-blocked">0</b></span><span>知識查詢 <b id="c-know">0</b></span><span>經過 <b id="c-secs">—</b></span></div>
+    <div id="report" style="display:none;margin:0 0 8px;padding:8px 10px;border:1px solid var(--ok);border-radius:6px;background:rgba(47,191,113,.08)">
+      <div style="font-size:12px;color:var(--dim);margin-bottom:4px">agent 的結案報告（它自己寫的三行）<span id="rp-when" style="margin-left:8px"></span></div>
+      <div class="kv" style="grid-template-columns:auto 1fr;gap:2px 10px"><b>根因</b><span id="rp-cause"></span><b>動作</b><span id="rp-actions"></span><b>最終健康</b><span id="rp-health"></span></div>
+    </div>
     <div id="trace"></div>
   </section>
   <section>
@@ -222,8 +226,9 @@ function explain(r){
     else if (r.tool === 'read_config' || r.tool === 'docker_exec' || r.tool === 'vm_exec') sub = short(txt.split('\n').filter(Boolean)[0] || '', 120);
     else if (ACT.has(r.tool)) sub = short(txt.split('\n').filter(l => l && !/^health now|^containers now|^still failing|^\s*edge-victim/.test(l))[0] || '', 120);
     else sub = short(txt.split('\n')[0] || '', 120);
-    if (/both URLs healthy/.test(txt)) good = '→ 修好了：兩個健康 URL 都 200，事故結案';
-    else if (/still failing/.test(txt)) bad = '→ 還沒好（動作後的健康檢查仍紅），繼續查';
+    const hl = (r.health || '') + txt;
+    if (/both URLs healthy/.test(hl)) good = '→ 修好了：兩個健康 URL 都 200，事故結案';
+    else if (/still failing/.test(hl)) bad = '→ 還沒好（動作後的健康檢查仍紅）：' + short((r.health || '').replace(/^health now:\s*/, '').split('\n')[0].replace(/"front":\s*/, '前端 ').replace(/"api":\s*/, 'API ').replace(/[{}"]/g, ''), 60) + '，繼續查';
     else if (r.tool === 'check_health' && /"front": 200, "api": 200/.test(txt)) good = '兩個 URL 都 200';
   }
   return {what, sub, good, bad};
@@ -292,6 +297,10 @@ function render(s){
   $('k-channel').textContent = offline ? 'Jetson 本機（外網不可用）' : 'Jetson 本機';
   $('k-mode').textContent = ({manual: '風險動作需人工核准', auto: '自動（演練）', off: '關閉'}[s.approval_mode] || s.approval_mode);
   $('k-watchdog').textContent = s.watchdog ? '巡檢中（每 2 s 探測兩個 URL，不推論；異常連兩次即開事故）' : (s.drill_running ? '演練模式：由演練腳本代為注入與派工，結束後自動恢復巡檢' : '未啟動');
+  const rp = s.report;
+  $('report').style.display = rp ? 'block' : 'none';
+  if (rp){ $('rp-cause').textContent = rp.root_cause || '—'; $('rp-actions').textContent = rp.actions || '—'; $('rp-health').textContent = rp.final_health || '—';
+    const age = Math.max(0, Math.round((s.ts || Date.now() / 1000) - rp.ts)); $('rp-when').textContent = (rp.source === 'drill' ? '演練' : '事故') + ' · ' + (age < 90 ? age + ' s 前' : Math.round(age / 60) + ' 分鐘前'); }
   pending = s.approval;
   $('approval').style.display = pending ? 'block' : 'none';
   if (pending){ $('a-action').textContent = (ZH[pending.action] || (() => pending.action))(pending.args || {}); $('a-reason').textContent = (pending.reason || '') + `　（${pending.action} ${JSON.stringify(pending.args || {})}）`; }

@@ -140,7 +140,7 @@ def state():
             ts=time.time(), health=health, healthy=all(c == 200 for c in health.values()),
             wan=wan_status(), tier=read_json(LOGS / "tier-state.json"), incident=incident_state(),
             approval=pending, approval_mode=os.environ.get("APPROVAL", "unset"),
-            drill_running=pgrep("nemoclaw-drill.sh"), watchdog=wd_alive, actions=ACTIONS)
+            drill_running=pgrep("nemoclaw-drill.sh"), watchdog=wd_alive, actions=ACTIONS, report=latest_report())
         _state_t = time.time()
         return _state
 
@@ -155,8 +155,32 @@ def classify(result):
 
 
 def call_row(d):
-    return dict(src="call", t=d.get("ts"), tool=d.get("tool"), args=d.get("args"), cls=classify(d.get("result")),
-                text=str(d.get("result", ""))[:600], error=bool(d.get("is_error")), ms=d.get("ms"), origin=d.get("from"))
+    result = str(d.get("result", ""))
+    at = result.find("health now:")          # the health check appended to an action may sit past the 600-char cut
+    return dict(src="call", t=d.get("ts"), tool=d.get("tool"), args=d.get("args"), cls=classify(result),
+                text=result[:600], health=(result[at:at + 300] if at >= 0 else ""), error=bool(d.get("is_error")),
+                ms=d.get("ms"), origin=d.get("from"))
+
+
+REPORT_KEYS = ("Root cause", "Actions", "Final health")
+
+
+def latest_report():
+    """The agent's own closing report (three lines) from the newest drill or stage incident, for the panel."""
+    cands = [LOGS / "drill-agent.out", *LOGS.glob("incidents/*.txt"), *LOGS.glob("incidents/*/agent.txt")]
+    cands = [p for p in cands if p.exists()]
+    if not cands:
+        return None
+    p = max(cands, key=lambda q: q.stat().st_mtime)
+    text = p.read_text(errors="replace")[-6000:]
+    lines = {}
+    for line in text.splitlines():
+        for k in REPORT_KEYS:
+            if line.strip().lower().startswith(k.lower()) and ":" in line:
+                lines[k] = line.split(":", 1)[1].strip()[:300]
+    if not lines:
+        return None
+    return dict(ts=p.stat().st_mtime, source="drill" if p.name == "drill-agent.out" else "incident", **{k.lower().replace(" ", "_"): v for k, v in lines.items()})
 
 
 def review_row(d):

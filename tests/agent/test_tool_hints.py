@@ -78,3 +78,23 @@ class RepairImageFileTest(unittest.TestCase):
             out = agent._run_tool("recreate_stack", {"name": "edge-victim-app", "replace": True}, False)
         self.assertTrue(out.startswith("denied:"), out)
         self.assertIn("repair_image_file", out)
+
+
+class WorkerDiesHintTest(unittest.TestCase):
+    def test_docker_logs_names_nginx_conf_when_workers_die_at_start(self):
+        from unittest import mock
+        log = "\n".join(["2026/10/22 00:14:05 [emerg] 39#39: epoll_create() failed (24: Too many open files)"] +
+                        ["2026/10/22 00:14:05 [alert] 1#1: worker process %d exited with fatal code 2 and cannot be respawned" % n for n in range(40, 60)])
+        calls = {}
+
+        def fake_sh(cmd, **kw):
+            if "docker logs" in cmd:
+                return log
+            if "inspect" in cmd:
+                return "2026-10-22T00:14:00.000000000Z"
+            return ""
+        with mock.patch.object(agent, "sh", side_effect=fake_sh), mock.patch.object(agent, "layer_note", return_value=""), \
+             mock.patch.object(agent, "attach_runbook", side_effect=lambda out, q, container=None: out), mock.patch.object(agent, "guard", create=True):
+            out = agent._run_tool("docker_logs", {"name": "edge-victim", "tail": 30}, False)
+        self.assertIn("repair_image_file", out)
+        self.assertIn("/etc/nginx/nginx.conf", out)

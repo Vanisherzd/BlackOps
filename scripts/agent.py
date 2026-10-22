@@ -1078,6 +1078,12 @@ def _run_tool(name, args, dry_run):
         earlier = earlier_errors(args["name"], out)
         if earlier:
             out += "\n\nearlier distinct error lines since this container last started (not in the tail above):\n" + "\n".join(earlier)
+        if re.search(r"exited with fatal code|Too many open files|worker_connections are not enough", out):
+            # front-rlimit-nofile 0/5 (2026-10-22): the agent rewrote the site config five times; the limit lives in the
+            # image's nginx.conf, which only repair_image_file / write_container_file reach
+            out += (f"\n\nnote: workers dying at start are a limit in the image's /etc/nginx/nginx.conf (worker_rlimit_nofile, "
+                    f"worker_connections), not the site config: docker_exec cat /etc/nginx/nginx.conf, then "
+                    f'repair_image_file {{"name": "{args["name"]}", "path": "/etc/nginx/nginx.conf"}}.')
         out = layer_note(args["name"]) + out
         if "read-only file system" in out:
             out += ("\n\nnote: the entrypoint's 'can not modify /etc/nginx/conf.d/default.conf (read-only file "

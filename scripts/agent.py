@@ -58,7 +58,7 @@ UNIT_RE = re.compile(r"^[A-Za-z0-9@._:-]{1,64}$")          # systemd unit / jour
 # retrieval whenever it believed it already knew the answer, and one bad-config run wandered for six minutes because
 # of it. So the rule lives in the tool layer. Evidence tools push the matching runbook into the answer, and an action
 # refuses once until a runbook has been seen for this incident. An incident ends when health comes back green.
-MUTATING = {"repair_image_file", "vm_service", "vm_write_config", "vm_restore_config",
+MUTATING = {"repair_image_file", "write_container_file", "vm_service", "vm_write_config", "vm_restore_config",
             "docker_start", "docker_restart", "write_config", "recreate_stack", "network_repair", "cleanup_disk",
             "clear_scratch_volume", "restore_config",
             "kill_process"}
@@ -289,6 +289,38 @@ def pristine_copy(path):
     return dst
 
 
+def write_container_file(name, path, content):
+    """The corrected file goes in over the container's copy; nginx -t inside decides; a rejected file is put back
+    (the previous content is kept in victim/known-good/container-previous/); then reload, or start a stopped one."""
+    import tempfile
+    prev_dir = ROOT / "victim" / "known-good" / "container-previous" / name
+    prev_dir.mkdir(parents=True, exist_ok=True)
+    prev = prev_dir / path.strip("/").replace("/", "__")
+    subprocess.run(["docker", "cp", f"{name}:{path}", str(prev)], capture_output=True, text=True, timeout=60)   # may not exist: fine
+    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".conf") as f:
+        f.write(content if content.endswith("\n") else content + "\n")
+        tmp = f.name
+    try:
+        r = subprocess.run(["docker", "cp", tmp, f"{name}:{path}"], capture_output=True, text=True, timeout=60)
+    finally:
+        os.unlink(tmp)
+    if r.returncode:
+        return f"error: docker cp failed: {(r.stderr or r.stdout).strip()[:200]}"
+    running = sh(f"docker inspect -f '{{{{.State.Running}}}}' {name}").strip() == "true"
+    if not running:
+        sh(f"docker start {name}")
+        settle()
+        return f"wrote {path} in {name} and started the container"
+    test = sh(f"docker exec {name} nginx -t 2>&1")
+    if "syntax is ok" not in test and "test is successful" not in test:
+        if prev.exists():
+            subprocess.run(["docker", "cp", str(prev), f"{name}:{path}"], capture_output=True, text=True, timeout=60)
+        return f"rejected by nginx -t inside {name}, previous file put back: {test.strip()[-300:]}"
+    sh(f"docker exec {name} nginx -s reload")
+    settle()
+    return f"wrote {path} in {name}; nginx -t ok; reloaded (previous content kept)"
+
+
 def repair_image_file(name, path):
     """docker cp the pristine file over the container's copy (mode comes with it, so a chmod 000 is undone too), then
     nginx -t and reload inside; a container that is not running gets the file and a start."""
@@ -516,6 +548,7 @@ TOOLS = [
     {"name": "port_check", "description": "Whether a TCP port accepts connections", "parameters": {"type": "object", "properties": {"host": {"type": "string", "default": "127.0.0.1"}, "port": {"type": "integer"}}, "required": ["port"]}},
     {"name": "http_check", "description": "GET an http(s) URL on this host or the private network and return the status code and the first bytes of the body", "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
     {"name": "top_processes", "description": "Top host processes by CPU with memory usage", "parameters": {"type": "object", "properties": {}}},
+    {"name": "write_container_file", "description": "Fix a file inside a container in place: write the complete corrected file (e.g. the upstream's /etc/nginx/conf.d/default.conf after you read it with docker_exec cat and found the wrong directive), nginx -t decides, a rejected file is put back, then nginx reloads. The container is kept. Same whitelist as repair_image_file", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "path": {"type": "string"}, "content": {"type": "string"}}, "required": ["name", "path", "content"]}},
     {"name": "repair_image_file", "description": "Put back one file of a container's image in place (the pristine copy from the image, same mode) and reload nginx there, without rebuilding the container: the upstream's own config (/etc/nginx/conf.d/default.conf), its nginx.conf, its pages under /usr/share/nginx/html/. For a file the container changed, deleted or chmodded inside its own layer; the front end's site config is a host file (write_config / restore_config instead)", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "path": {"type": "string"}}, "required": ["name", "path"]}},
     {"name": "recreate_stack", "description": "Recreate a container of this stack from its definition: one that no longer exists at all, or with replace=true one whose own state is corrupt and survives a restart AND cannot be repaired in place (repair_image_file first for a changed image file; replace is for resource limits, a read-only root, a container that will not start). Start/restart first if it merely exited", "parameters": {"type": "object", "properties": {"name": {"type": "string"}, "replace": {"type": "boolean", "default": False}}}},
     {"name": "network_repair", "description": "Make sure the stack network exists and both containers are attached to it; use when the front end cannot resolve or reach the upstream", "parameters": {"type": "object", "properties": {}}},
@@ -1248,13 +1281,15 @@ def _run_tool(name, args, dry_run):
             # Replacing a container is the heavy hand: when what changed in its layer is a file the image has, that
             # file is put back in place first (repair_image_file); the rebuild is for what a file repair cannot undo.
             repairable = [p for p, _ in faults.layer_changes(args["name"]) if repairable_path(args["name"], p)]
-            tried = {_trace_arg(t, "path") for t in _incident["trace"] if t["tool"] == "repair_image_file"
+            tried = {_trace_arg(t, "path") for t in _incident["trace"] if t["tool"] in ("repair_image_file", "write_container_file")
                      and reviewer.named(t, args["name"]) and not t["result"].startswith(("refused:", "denied:", "error:", "DRY-RUN"))}
             untried = [p for p in repairable if p not in tried]
             if untried and os.environ.get("REPAIR_FIRST", "1") == "1":
-                return (f"denied: {args['name']}'s own layer changed these image files: {', '.join(untried[:4])}. Put them back in "
-                        f"place first, that keeps the container: repair_image_file {{\"name\": \"{args['name']}\", \"path\": \"{untried[0]}\"}} "
-                        "(one call per file). Replace the container only if the service is still failing after that.")
+                return (f"denied: {args['name']}'s own layer changed these image files: {', '.join(untried[:4])}. Fix them in place "
+                        f"first, that keeps the container: read the file (docker_exec cat {untried[0]}), correct the wrong line and "
+                        f"write_container_file {{\"name\": \"{args['name']}\", \"path\": \"{untried[0]}\", \"content\": \"<the whole corrected file>\"}}; "
+                        f"a destroyed or deleted file goes back from the image with repair_image_file. Replace the container only if the "
+                        "service is still failing after that.")
             refusal = reviewed(name, {"name": args["name"], "replace": True})
             if refusal:
                 return refusal
@@ -1263,6 +1298,19 @@ def _run_tool(name, args, dry_run):
         out = [faults.ensure(t) for t in targets]
         settle()
         return with_health("\n".join(out) + "\n" + docker_ps())
+    if name == "write_container_file":
+        denied = guard(args["name"])
+        if denied:
+            return denied
+        path, content = str(args.get("path") or ""), args.get("content")
+        if not repairable_path(args["name"], path):
+            return (f"denied: {path!r} is not a file this tool writes on {args['name']}. Allowed: files under /etc/nginx/ (not the "
+                    "front end's mounted conf.d: write_config) and /usr/share/nginx/html/.")
+        if not isinstance(content, str) or not content.strip():
+            return "error: write_container_file needs args.content (the complete corrected file)"
+        if dry_run:
+            return f"DRY-RUN: would write {path} in {args['name']} and reload nginx"
+        return with_health(write_container_file(args["name"], path, content))
     if name == "repair_image_file":
         import faults
         denied = guard(args["name"])

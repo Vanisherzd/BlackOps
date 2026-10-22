@@ -25,7 +25,10 @@ scripts/stage-up.sh
 
 | 項目 | 預設 | 關掉 | commit |
 |---|---|---|---|
-| 故障目錄 45 案、八類（新 `ops` tier 5 案） | — | — | `1ac26df` `23a0505` |
+| 故障目錄 49 案、八類（`ops` tier 9 案） | — | — | `1ac26df` `23a0505` `1703e50` |
+| 修復優先於替換：`write_container_file`／`repair_image_file`，replace 要等修檔失敗 | `REPAIR_FIRST=1` | `REPAIR_FIRST=0` 回舊行為 | `828c049` `b1f83d8` |
+| `self_heal` 不再提供給 agent | 隱藏 | `SELF_HEAL_TOOL=1` | `8a051bc` |
+| dashboard 軌跡白話化、結案報告卡、全深色 | — | — | `753ceee` `20dec1c` `d6a9808` |
 | dashboard「隨機真實故障」按鈕（整個目錄抽一個） | 要 `DASH_ACTIONS=1` | — | `cc43e2d` |
 | 社群知識層由工具層推送（未被 runbook 涵蓋的症狀才推） | `COMMUNITY_PUSH=1` | `COMMUNITY_PUSH=0` | `1ac26df` `b7933b5` `7d309ff` |
 | 知識工具預設：159k 語料 FTS5 → rerank → 判官 | `COMMUNITY_JUDGE=1` | `COMMUNITY_JUDGE=0`、`KB_COMMUNITY_V1=1` | `996fe23` |

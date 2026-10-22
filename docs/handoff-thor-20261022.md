@@ -8,7 +8,11 @@ git remote set-url origin https://github.com/Vanisherzd/BlackoutOps.git
 git pull --ff-only origin main               # 目前 main = dfa2f1b 之後
 ```
 
-## 2. 起舞台（兩種配方，先試第一種）
+## 2. 起舞台 — 一鍵：`scripts/thor-start.sh`（加 `--demo` 連 demo 迴圈一起起；`--check` 只看不動）
+
+它會依序：修 `~/.local` 權限、清掉卡名字的舊容器、起 reranker sidecar、`stage-up`（vLLM／shim／guard／ops_api／watchdog／dashboard／power）、確認 NemoClaw sandbox（停了就 start，Error 就印出重建三步）、preflight、印出儀表板網址。下面是手動版。
+
+### 手動版（兩種配方）
 
 ```bash
 # Thor 定案（13:07 量過：DSpark 在 Thor 無增益，不用）：基本配方 + reranker sidecar + 審核不思考

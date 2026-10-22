@@ -1,70 +1,55 @@
 {
-  "updated": "2026-10-22 14:50",
+  "updated": "2026-10-22 14:55（Thor only）",
   "items": [
     {
-      "k": "全目錄 regression（36 案，Spark）",
-      "v": "自主 94% · 越修越壞 0 · 謊報 0",
-      "src": "logs/regression-20261022-045052"
-    },
-    {
-      "k": "Thor 本機 drill（15 種故障、27 場）",
+      "k": "本機 drill（15 種故障、27 場）",
       "v": "自主 85% · 越修越壞 0 · 謊報 0 · 中位 141 s · 最快 14 s",
       "src": "logs/regression-20261022-*（Thor）"
     },
     {
-      "k": "盲測（寫完故障不改 agent）",
-      "v": "18/18",
-      "src": "results-summary §1"
+      "k": "修復優先於替換",
+      "v": "3/3，替換容器 0 次",
+      "src": "logs/regression-20261022-122354（Thor）"
     },
     {
-      "k": "修復優先於替換（Thor）",
-      "v": "3/3，替換容器 0 次",
-      "src": "logs/regression-20261022-122354"
+      "k": "最難案：worker fd 上限",
+      "v": "64 s、3 次呼叫修好",
+      "src": "logs/regression-20261022-123415（Thor）"
     },
     {
       "k": "巡檢偵測 → 派工",
-      "v": "4.0–4.9 s",
-      "src": "dashboard 實測"
-    },
-    {
-      "k": "舞台事故結案（巡檢全路徑）",
-      "v": "連環 33–85 s · 後端 500 32–42 s · log 注入 33–49 s",
+      "v": "≈4 s（巡檢 2 s）",
       "src": "logs/incidents.jsonl（Thor）"
     },
     {
-      "k": "vLLM serving benchmark（Thor，2k 入／256 出）",
-      "v": "49.6 tok/s · TTFT 0.53 s · TPOT 17.7 ms（併發 1）",
-      "src": "logs/bench-after-loop.out"
+      "k": "舞台事故結案（巡檢全路徑）",
+      "v": "壞部署連環 33–85 s · 後端 500 32–42 s · log 注入 33–49 s",
+      "src": "logs/incidents.jsonl（Thor）"
     },
     {
-      "k": "decode tok/s（tool turn／report／long）",
-      "v": "Thor 51／70／44 · Spark＋DSpark 65／100／91",
-      "src": "scripts/decode-bench.py"
+      "k": "log 注入（假指令要 agent 跑破壞性工具）",
+      "v": "3/3 擋下 · 破壞性工具 0 次",
+      "src": "demo loop（Thor）"
+    },
+    {
+      "k": "vLLM serving benchmark（2k 入／256 出）",
+      "v": "49.6 tok/s · TTFT 0.53 s · TPOT 17.7 ms（併發 1）",
+      "src": "logs/bench-after-loop.out（Thor）"
+    },
+    {
+      "k": "decode tok/s（tool turn／report／long context）",
+      "v": "51／70／44",
+      "src": "scripts/decode-bench.py（Thor）"
     },
     {
       "k": "prefix cache 命中",
-      "v": "Thor 77% · Spark 31.9%",
-      "src": "vLLM /metrics"
-    },
-    {
-      "k": "審核代理（兩把鑰匙）",
-      "v": "1.0–1.5 s／次（原 15.3 s），判決一致 5/5",
-      "src": "REVIEW_THINK=0 drills"
-    },
-    {
-      "k": "注入指令（log／設定檔）",
-      "v": "2/2 擋下 · 破壞性工具 0 次",
-      "src": "injection drills"
+      "v": "77%",
+      "src": "vLLM /metrics（Thor）"
     },
     {
       "k": "整套記憶體",
-      "v": "≈45 GB（權重 17.8 GiB）· 索引 2.5 GiB → 幾 MB",
-      "src": "scripts/mem-profile.sh"
-    },
-    {
-      "k": "社群知識層（158,881 筆，離線）",
-      "v": "機房症狀前 1 對題 45% · 前 5 71%（rerank＋判官）",
-      "src": "docs/kb-community-20261022.md"
+      "v": "≈46 GB／123 GB 在用（模型 17.8 GiB＋KV＋知識層＋sandbox＋靶機）",
+      "src": "記憶體卡即時（Thor）"
     },
     {
       "k": "故障目錄",

@@ -55,7 +55,7 @@ kill <pids>; nemoclaw edge-agent gateway restart; .venv/bin/python scripts/fault
 - VM 靶機：`scripts/vm-victim.sh`＋`VM_VICTIM=1` 工具組＋`scripts/vm-drill.sh`（需 Thor 裝 `qemu-system-arm qemu-utils`）。
 - 修復優先於替換已驗：upstream-500／wrong-content／index-deleted 3/3，0 次替換容器（Thor 12:24）。dashboard 可注入全部 49 案（分八類下拉）＋隨機；結案橫幅顯示本場耗電 Wh 與模型 tokens。
 - `front-rlimit-nofile`（worker fd 上限）：兩台原 0/5，加 runbook＋log 指引＋修檔工具後 Thor 64 s 修好（round 3）。目前唯一未解：`upstream-listen-localhost`（Thor round 3 silent-fail 605 s；Spark A/B 3/4）。
-- Demo 迴圈：`logs/demo-loop.sh`（compound-triple ↔ compound-detached-paused，經 dashboard API 注入、巡檢派工；`touch logs/demo-loop.stop` 停）。
+- Demo 迴圈：`logs/demo-loop2.sh`，`CASES="compound-bad-deploy-cascade upstream-500 log-injection"`（壞部署連環 → 修檔不換服務 → log 注入被擋；經 dashboard API 注入、巡檢派工；`touch logs/demo-loop.stop` 停）。前兩組（重啟類）已棄用。
 - RAG A/B：推送開 7/10 對關 8/10、兩臂 made-worse 0；10 場只推 4 次、0 次被用上 → **RAG 對 drill 的幫助還沒證實**，閘門已修、全目錄重測中（`docs/kb-community-20261022.md` Phase 4b）。
 - 所有數字與定義：`docs/results-summary-20261022.md`；決策紀錄：`docs/optimizations-20261022.md`。
 

@@ -5,7 +5,7 @@
 
 ## 0. 一句話
 
-> 一台離線邊緣裝置上的自主維運 agent：**49 種故障（八類）、36 案例全目錄 regression 自主修復 30/32、越修越壞 0、謊報健康 0**；
+> 一台離線邊緣裝置上的自主維運 agent：**50 種故障（八類）、36 案例全目錄 regression 自主修復 30/32、越修越壞 0、謊報健康 0**；
 > 偵測到派工 4 s、簡單故障 15 s 結案；Nemotron 3.5 Lightning 在 vLLM 上 **65–100 tok/s**（DSpark），整套含 RAG 與審核在 45 GB 內；
 > 知識庫 158,881 筆離線語料經 rerank＋本機判官過濾後，機房症狀 **74%** 能給出對題的參考。
 
@@ -23,7 +23,7 @@
 | 安全：注入指令（log 裡、設定檔裡要 agent 跑破壞性工具） | 2/2 擋下，破壞性工具 0 次執行 | log-injection 23 s、config-injection 27 s；Guardrails 把那行從工具輸出拿掉 |
 | 舞台五張牌 | 5/5（今晚 4 輪）；Thor 5/5（隊友 10/21） | `logs/drills-*.log` |
 
-### 1.1 故障目錄分類（49 案，`scripts/faults.py`）
+### 1.1 故障目錄分類（50 案，`scripts/faults.py`）
 
 不只容器開關：八類，每類都有 reset 能回到綠的注入與 verify 能判紅的健康定義。
 
@@ -36,7 +36,7 @@
 | 資料與內容（index 刪除、權限、200 但內容錯、webroot 清空＋備份） | 4 | upstream-index-deleted, upstream-perm-denied, upstream-wrong-content, upstream-webroot-wiped |
 | 服務行為（500、429、log 洪水、後端慢速回應） | 4 | upstream-500, upstream-429, upstream-log-flood-500, upstream-slow-body |
 | 安全（log／設定檔注入指令） | 2 | log-injection, config-injection |
-| 複合（兩到三個獨立原因） | 4 | compound-config-upstream-down, compound-detached-paused, compound-front-stopped-upstream-port, compound-triple |
+| 複合（兩到三個獨立原因、或一次壞部署的連環症狀） | 5 | compound-bad-deploy-cascade（proxy 緩衝 502 → 後端 500 → log 假指令）, compound-config-upstream-down, compound-detached-paused, compound-front-stopped-upstream-port, compound-triple |
 
 ### 1.2 Thor 實測（比賽機，基本配方：Lightning NVFP4、無 DSpark、無 reranker；10:22–11:18）
 

@@ -17,7 +17,7 @@
 #   scripts/serve-vllm.sh                      start, then wait for /health and the edge-agent model (up to 15 min)
 #   scripts/serve-vllm.sh stop                 remove the container (either profile)
 #   scripts/serve-vllm.sh status               container, health, served models
-# Examples (docs/thor-bringup.md):
+# Examples (README.md):
 #   VLLM_PROFILE=generic IMAGE=nvcr.io/nvidia/vllm:26.01-py3 MODEL_ID=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4 \
 #     REASONING_PARSER=nano_v3 EXTRA_ARGS="--kv-cache-dtype fp8" \
 #     VLLM_ENV="VLLM_USE_FLASHINFER_MOE_FP4=1 VLLM_FLASHINFER_MOE_BACKEND=throughput" scripts/serve-vllm.sh
@@ -57,14 +57,14 @@ fi
 # SPEC=dspark: the model card's DGX Spark recipe for Lightning, DSpark speculative decoding (draft nvidia/...-DSpark,
 # 1.35 GB, must be in the HF cache) with the FlashInfer Mamba backend. Applies to the lightning alias and to a generic
 # start of the same model (stage-up uses generic). Opt-in, measured on the Spark 2026-10-22: +27-49 % decode tokens/s,
-# 8/8 drills (docs/optimizations-20261022.md). The Thor keeps the plain recipe unless SPEC is set there.
+# 8/8 drills (README.md). The Thor keeps the plain recipe unless SPEC is set there.
 if [ "${SPEC:-}" = dspark ]; then
   EXTRA_ARGS="${EXTRA_ARGS:-} --speculative_config.model ${DSPARK_MODEL_ID:-nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DSpark}"
   EXTRA_ARGS="$EXTRA_ARGS --speculative_config.num_speculative_tokens ${SPEC_TOKENS:-2} --mamba-backend ${MAMBA_BACKEND:-flashinfer}"
   export EXTRA_ARGS
 elif [ "${SPEC:-}" = mtp ]; then
   # SPEC=mtp: Lightning's built-in multi-token-prediction heads (no draft weights). Measured on the Spark 2026-10-22: it
-  # keeps prefix caching (21.6 % hits where DSpark had 0); speed vs DSpark in docs/optimizations-20261022.md.
+  # keeps prefix caching (21.6 % hits where DSpark had 0); speed vs DSpark in README.md.
   EXTRA_ARGS="${EXTRA_ARGS:-} --speculative_config.method mtp --speculative_config.num_speculative_tokens ${SPEC_TOKENS:-2} --mamba-backend ${MAMBA_BACKEND:-flashinfer}"
   export EXTRA_ARGS
 fi

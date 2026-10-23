@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rerank sidecar: nvidia/llama-nemotron-rerank-1b-v2 on vLLM (the model card's serving route), separate container,
 # own port, a sliver of GPU memory. Never part of stage-up: an experiment behind RERANK_URL (scripts/kb-rerank-eval.py)
-# until docs/kb-community-20261022.md says it earns a place. No restart policy, like every other container here.
+# until README.md says it earns a place. No restart policy, like every other container here.
 #
 #   scripts/serve-rerank.sh            start (idempotent: reuses a healthy container) and wait for /health
 #   scripts/serve-rerank.sh stop       remove the container

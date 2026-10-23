@@ -269,7 +269,7 @@ def vllm_metrics():
                 gen_tokens=int(gen or 0))
 
 
-BENCH = ROOT / "docs" / "benchmark.json"
+BENCH = ROOT / "artifacts" / "benchmark.json"
 TOOL_PHASE = {
     "observe": {"check_health", "docker_ps", "docker_logs", "docker_exec", "read_config", "port_check", "http_check", "disk_usage",
                 "service_status", "journal_tail", "top_processes", "evidence_bundle", "parallel_diagnosis", "vm_exec", "vm_logs"},

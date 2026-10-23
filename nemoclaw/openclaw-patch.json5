@@ -1,6 +1,6 @@
 // Tool surface for a small local model (Nemotron-3-Nano-30B-A3B, 3B active).
 // Apply inside the sandbox:  openclaw config patch --stdin < nemoclaw/openclaw-patch.json5
-// Why each key: docs/agent-design.md "Tool surface tuning".
+// Why each key: README.md "Tool surface tuning".
 {
   tools: {
     // Default was "coding" + tool search: 24 tools hidden behind tool_search/tool_describe/tool_call.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot setup of the edge-agent stack on a fresh DGX Spark (hackathon "day-of" script).
 # Stages are idempotent; rerun the whole thing or one stage: `scripts/bootstrap-spark.sh` | `scripts/bootstrap-spark.sh model`
-# Needs: DGX OS with docker (user in docker group), network for the pulls (or a bundle, see docs/hackathon-runbook.md).
+# Needs: DGX OS with docker (user in docker group), network for the pulls (or a bundle, see README.md).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -11,7 +11,7 @@ BUNDLE="${BUNDLE:-}"                 # optional dir with trtllm-image.tar and hf
 stage() { echo; echo "=== [$1] $(date +%T)"; }
 
 check() { stage check
-  [ -f /etc/nv_tegra_release ] && { echo "JETSON detected: $(head -1 /etc/nv_tegra_release)"; echo "  -> see docs/hackathon-runbook.md (Jetson section): Thor keeps the model, Orin needs a smaller one; run stages by hand"; }
+  [ -f /etc/nv_tegra_release ] && { echo "JETSON detected: $(head -1 /etc/nv_tegra_release)"; echo "  -> see README.md (Jetson section): Thor keeps the model, Orin needs a smaller one; run stages by hand"; }
   nvidia-smi --query-gpu=name,driver_version --format=csv,noheader
   docker info --format 'docker {{.ServerVersion}}' ; command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh -s -- -q
   df -h / | awk 'NR==2{print "disk free:", $4}'
@@ -48,7 +48,7 @@ nemoclaw_stage() { stage nemoclaw
   nemoclaw list 2>/dev/null | grep -q edge-agent || NEMOCLAW_PROVIDER=custom NEMOCLAW_ENDPOINT_URL=http://127.0.0.1:8001/v1 NEMOCLAW_MODEL=edge-agent \
     NEMOCLAW_PROVIDER_KEY=none NEMOCLAW_REASONING=true NEMOCLAW_SANDBOX_NAME=edge-agent NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     nemoclaw onboard --non-interactive --fresh --yes-i-accept-third-party-software || true
-  # the three fixes that made the sandbox actually reach the model and the ops API (see docs/plan-trtllm-nemoclaw.md)
+  # the three fixes that made the sandbox actually reach the model and the ops API (see README.md)
   nemoclaw edge-agent policy add local-inference --yes || true
   openshell provider update compatible-endpoint --config OPENAI_BASE_URL=http://host.openshell.internal:8001/v1
   openshell policy update edge-agent --add-endpoint host.openshell.internal:8790:read-write:rest \

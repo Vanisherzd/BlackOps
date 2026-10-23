@@ -152,7 +152,7 @@ def build_v2_corpus(database: str | Path, out: str | Path, observed: dict[str, s
 
 # --- retrieve -------------------------------------------------------------------------------------------------------
 
-# The configuration the agent uses, every value chosen on the dev split (docs/kb-retrieval-v2.md): cases by their own
+# The configuration the agent uses, every value chosen on the dev split (README.md): cases by their own
 # telemetry with a text fallback; a card only when one of its symptom phrases is in the query whole and specific
 # (bar 8: the lowest with no wrong match on dev; "No space left on device" scores 16, "connection refused" 7).
 AGENT_DEFAULTS = {"index": "observed", "coverage": "phrase", "phrase_bar": 8.0}

@@ -360,7 +360,7 @@ def _oplog(tool, args, result, t0):
 
 
 def community_push(query):
-    """Community references (docs/kb-community-20261022.md) pushed next to the runbook. Only for a symptom no runbook owns
+    """Community references (README.md) pushed next to the runbook. Only for a symptom no runbook owns
     (community_knowledge.owned_symptom: the access-log status prefix is dropped first, a 502 is the runbook's), once per
     symptom per incident, within COMMUNITY_PUSH_TIMEOUT seconds, never raising. The judge gate inside references() keeps
     only what the local model accepts as on-topic, so a covered-by-nothing symptom usually comes back empty."""
@@ -424,7 +424,7 @@ def community_push(query):
 CLEANUP_GLOBS = (str(ROOT / "logs" / "*.out"), str(ROOT / "logs" / "trt-serve.log"), "/tmp/edge-agent-*")
 CLEANUP_MIN_AGE_S = 600        # never delete a file something is probably still writing
 # Evidence is not a log to rotate. On 2026-10-14 an inode-exhaustion drill ran cleanup_disk (the host's / really is at
-# 94 %, so it looked justified) and deleted every earlier drills-*.log, the raw record behind docs/scorecard.md.
+# 94 %, so it looked justified) and deleted every earlier drills-*.log, the raw record behind README.md.
 EVIDENCE_GLOBS = (str(ROOT / "logs" / "drills-*.log"), str(ROOT / "logs" / "ab-*.log"), str(ROOT / "logs" / "oai-shim.log"),
                   str(ROOT / "logs" / "ops-api.log"), str(ROOT / "logs" / "reviews.jsonl"))   # belt and braces
 
@@ -749,7 +749,7 @@ def search_runbooks(query):
 
 
 KB_DB = ROOT / "kb" / "artifacts" / "blackout_ops_kb.sqlite"
-# v3 (2026-10-13, docs/kb-retrieval-v2.md): cases indexed by their own incident's telemetry, word-boundary IDF
+# v3 (2026-10-13, README.md): cases indexed by their own incident's telemetry, word-boundary IDF
 # scoring, no substring `matched`. On the held-out benchmark it turned retrieval from harmful (50 answers broken, 16
 # fixed) to helpful (16 broken, 53 fixed). KB_RETRIEVAL=v1 restores the pack as shipped.
 KB_V3 = ROOT / "kb" / "artifacts" / "corpus_v3.jsonl"
@@ -874,7 +874,7 @@ def search_incident_knowledge(query, scenario=None):
         weak = ", ".join(f"{s['id']} ({s['match_coverage']:.2f})" for s in bundle["weak_solution_candidates"][:3]) or "none"
         lines.append(f"no remediation card covers this symptom; weak candidates ({weak}) are not a basis for repair. "
                      "Use search_runbooks for this stack's own procedures, gather more read-only evidence, or escalate.")
-        # Community reference layer (docs/kb-community-20261022.md): Server Fault / Unix & Linux accepted answers for
+        # Community reference layer (README.md): Server Fault / Unix & Linux accepted answers for
         # symptoms outside this stack, a separate index that no card or runbook ranking shares. Excerpts with links,
         # labelled as unverified here; the tool contracts and the reviewer are unchanged. KB_COMMUNITY=0 turns it off.
         try:
@@ -1215,7 +1215,7 @@ def _run_tool(name, args, dry_run):
         # The scratch volume comes first: the incident trace keeps 300 characters of a result, and the reviewer's
         # precondition for clearing it is read from there.
         import faults
-        # OPS_INODES=on-request (the knowledge A/B, docs/kb-retrieval-v2.md): inode figures only when asked for, so
+        # OPS_INODES=on-request (the knowledge A/B, README.md): inode figures only when asked for, so
         # whether the agent thinks of inodes is part of what is measured. Default: always shown.
         inodes = os.environ.get("OPS_INODES", "always") != "on-request" or bool(args.get("inodes"))
         vol = sh(f"docker exec {faults.CACHE} sh -c 'df -h /cache | tail -1; df -i /cache | tail -1'")

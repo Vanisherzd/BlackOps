@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# (Re)start the demo services around the inference servers, in the docs/demo.md 6.1 order and with the settings checked
+# (Re)start the demo services around the inference servers, in the README.md 6.1 order and with the settings checked
 # on the Thor on 2026-10-21, then run the preflight. With nothing on :8000 it first starts the Tier-2 the Thor uses
 # (Nemotron-3.5-Lightning-30B-A3B-NVFP4, see scripts/serve-vllm.sh; T2_START=0 to refuse instead). A Tier-1 server is
 # started separately: scripts/serve-tier1.sh on :8010.

@@ -1,3 +1,0 @@
-﻿compression_ratio,cases,diagnostic_accuracy,scenario_accuracy,avg_input_tokens,avg_latency_ms,avg_energy_wh
-8.0,63,0.063492,0.285714,14423.571,12049.063,0.183754
-32.0,63,0.031746,0.222222,8750.905,10164.333,0.165917

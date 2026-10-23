@@ -13,7 +13,7 @@ Tier-1 when health is green again.
   .venv/bin/python scripts/tier.py set 2 "manual test"
 
 State: logs/tier-state.json {"tier", "mode", "reason", "ts", "nvpmodel"}; each change appended to logs/tier.jsonl.
-The shim reads the state on every request (see docs/demo-pending-edits.md for the two-line hook); the reviewer stays
+The shim reads the state on every request (see README.md for the two-line hook); the reviewer stays
 on Tier-2 because review is the hard judgement.
 """
 import json

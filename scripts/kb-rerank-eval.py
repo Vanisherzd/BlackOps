@@ -1,4 +1,4 @@
-"""Offline reranking experiment (docs/rag-rerank-plan-20261021.md, Gates A and B) on the knowledge layers.
+"""Offline reranking experiment (README.md, Gates A and B) on the knowledge layers.
 
   .venv/bin/python scripts/kb-rerank-eval.py --dry-run     Gate A only: BM25 candidate recall, no model, writes nothing large
   .venv/bin/python scripts/kb-rerank-eval.py               Gate B: BM25 top-N -> nvidia/llama-nemotron-rerank-1b-v2 -> top-1
@@ -7,7 +7,7 @@ Two questions, both answered on data the ranker never saw:
   1. Community layer: on the held-out half B of datasets/derived/stackexchange_ops_qa_20261022/holdout.jsonl (the same
      split rule as the floor experiment: shuffle with seed 1, second half) and on the 38 probe sentences, does
      reranking the BM25 top-20 raise category@1 above BM25's 0.70, and does the reranker's score separate right from
-     wrong well enough to say "no reference" (BM25's lexical coverage could not: docs/kb-community-20261022.md)?
+     wrong well enough to say "no reference" (BM25's lexical coverage could not: README.md)?
   2. Runbooks: for the in-domain symptoms in scripts/rag.py EVAL versus the 38 out-of-domain probes, do reranker scores
      separate, so that docker_logs could say "no runbook fits" instead of attaching the nearest one?
 Thresholds are reported as a table (tuned on half A, read off on half B), never chosen by the script.

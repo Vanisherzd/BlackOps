@@ -2,7 +2,7 @@
 
   uv run --no-sync scripts/kb-eval.py prepare            # raw telemetry -> compressed, label-free inputs per ratio
   uv run --no-sync scripts/kb-eval.py run [--think 1]    # Nemotron diagnoses every input, with and without the KB
-  uv run --no-sync scripts/kb-eval.py report             # curves, breakdowns, retrieval metrics -> docs/kb-eval.md
+  uv run --no-sync scripts/kb-eval.py report             # curves, breakdowns, retrieval metrics -> logs/kb-eval.md
   uv run --no-sync scripts/kb-eval.py all                # the three in a row (detach it: setsid nohup ... &)
 
 What is measured. The teammate's knowledge pack (kb/) ships 182 held-out cases whose answers never entered the
@@ -14,11 +14,11 @@ Predictions are scored with the pack's own scorer against its ground truth, so t
 teammate's smoke run. Alongside: prompt tokens from the server, wall latency, GPU energy from nvidia-smi sampled at
 1 Hz with the idle draw subtracted and shared among in-flight calls, and how often retrieval matched at all.
 
-Outputs live in logs/kb-eval/ (inputs, predictions, power trace); the report and curve CSVs go to docs/kb-eval*.
+Outputs live in logs/kb-eval/ (inputs, predictions, power trace); the report and curve CSVs go to logs/kb-eval*.
 
 Opt-in switches (unset = the behaviour above, unchanged), for comparing retrieval versions without overwriting a run:
   KB_EVAL_OUT=logs/kb-eval-v3   predictions, power trace and cases.json go here (inputs still come from logs/kb-eval)
-  KB_EVAL_TAG=-v3               report -> docs/kb-eval-v3.md, curves -> docs/kb-eval/curve-<arm>-v3.csv
+  KB_EVAL_TAG=-v3               report -> logs/kb-eval-v3.md, curves -> logs/kb-eval/curve-<arm>-v3.csv
   KB_RETRIEVAL=v3               the agent tool reads the v3 corpus (kb/src/blackout_ops_kb/retrieval_v2.py, cases
                                 indexed by their own telemetry); KB_VOTE=N turns on card-by-case-vote
   KB_QUERY=incident             the retrieval query is extracted from the telemetry (retrieval_v2.incident_query)
@@ -51,7 +51,7 @@ RETRIEVAL = os.environ.get("KB_RETRIEVAL", "v1")
 KB_VOTE = int(os.environ.get("KB_VOTE", "0"))
 KB_QUERY = os.environ.get("KB_QUERY", "one-liner")
 KB_EXCLUDE = os.environ.get("KB_EXCLUDE", "")
-DOCS = ROOT / "docs" / "kb-eval"
+DOCS = ROOT / "logs" / "kb-eval"
 GT = ROOT / "kb" / "artifacts" / "eval_ground_truth.jsonl"
 TRAIN = ROOT / "kb" / "artifacts" / "cases_train.jsonl"
 RAW = ROOT / "datasets" / "raw"
@@ -605,8 +605,8 @@ def report(args):
     errs = {arm: sum(1 for x in recs if x.get("error")) for arm, recs in arms.items()}
     capped = {arm: sum(1 for x in recs if x.get("capped")) for arm, recs in arms.items()}
     lines += ["", f"Errors: {errs}. Prompts truncated to the window: {capped}. Predictions and the power trace: `{OUT.relative_to(ROOT)}/` on the Spark; "
-              f"curves: `docs/kb-eval/curve-*.csv`."]
-    (ROOT / "docs" / f"kb-eval{TAG}{suffix}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+              f"curves: `logs/kb-eval/curve-*.csv`."]
+    (ROOT / "logs" / f"kb-eval{TAG}{suffix}.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (DOCS / f"summary{TAG}{suffix}.json").write_text(json.dumps({"curves": curves, "errors": errs, "capped": capped, "idle_w": idle}, indent=1))
     print("\n".join(lines))
 

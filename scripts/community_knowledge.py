@@ -3,7 +3,7 @@ covers. A separate BM25 index (same tokenizer and parameters as the pack's Knowl
 these documents), so loading it changes no score of any existing document. Shown only by search_incident_knowledge,
 only when no card matched and no runbook of this stack names the symptom; knowledge_note never consults it.
 KB_COMMUNITY=0 disables it; a missing corpus file disables it silently. Design, review and measurements:
-docs/kb-community-20261022.md."""
+README.md."""
 import json
 import math
 import os
@@ -20,7 +20,7 @@ MIN_SHARED = 2          # a reference needs at least this many distinct query to
 K1, B = 1.2, 0.75       # KnowledgeBaseV2's defaults
 # This stack's own matters: its entities, and the symptoms its runbooks already describe (runbooks/*.md titles). A
 # query containing one of these gets no community reference. Word-overlap with runbook titles was tried first and
-# suppressed hardware/boot probes on words like "device" or "up" (docs/kb-community-20261022.md, Phase 4), so the list
+# suppressed hardware/boot probes on words like "device" or "up" (README.md, Phase 4), so the list
 # is explicit.
 STACK_PHRASES = ("edge-victim", "8880", "/api/", "/board/", "default.conf", "upstream", "nginx stopped", "exited (0)",
                  "exited 0", "web service down", "connection refused", "bad gateway", "gateway timeout", "gateway time-out",
@@ -40,7 +40,7 @@ SITE_HOST = {"serverfault": "serverfault.com", "unix": "unix.stackexchange.com"}
 def _tokens():
     """The pack's tokenizer (drops digits and stop words). COMMUNITY_TOKENS=digits adds numeric tokens of 2-5 digits
     (exit codes, ports, Xid numbers) to index and query alike: a retrieval experiment knob, measured before any default
-    changes (docs/kb-community-20261022.md)."""
+    changes (README.md)."""
     import sys
     sys.path.insert(0, str(ROOT / "kb" / "src"))
     from blackout_ops_kb.retrieval_v2 import tokens
@@ -81,7 +81,7 @@ class CommunityIndex:
             return cls([])
         if path is None:
             # v2 (158,881 documents, 7 sites) is opt-in only: with the reranker it scored category@1 0.756 (FTS5 first
-            # stage) against v1 + rerank 0.775, and 2.5 GB of RAM in the Python index (docs/kb-community-20261022.md,
+            # stage) against v1 + rerank 0.775, and 2.5 GB of RAM in the Python index (README.md,
             # Gate 1). KB_COMMUNITY_V2=1 selects it (with COMMUNITY_BACKEND=fts5 for the small footprint); default v1.
             shards = sorted(CORPUS_V2.glob("*.jsonl.gz")) if CORPUS_V2.is_dir() else []
             want_v2 = os.environ.get("KB_COMMUNITY_V2") == "1"
@@ -117,17 +117,17 @@ class CommunityIndex:
         return out[:k]
 
 
-# Optional cross-encoder reranking (docs/kb-community-20261022.md Gate B): RERANK_URL names a vLLM rerank sidecar
+# Optional cross-encoder reranking (README.md Gate B): RERANK_URL names a vLLM rerank sidecar
 # (scripts/serve-rerank.sh, nvidia/llama-nemotron-rerank-1b-v2). BM25 keeps the first stage (top RERANK_TOP_N), the
 # reranker orders them and its score decides "no reference" below RERANK_MIN_SCORE. Unset, or any failure, means the
 # BM25 order as before: the sidecar can never take the tool down.
 RERANK_URL = os.environ.get("RERANK_URL", "")
 # 50 candidates and the reranker reading question + answer: chosen on held-out half A (0.789 vs 0.777 for 20/answer),
-# read on half B (0.788 vs 0.775); recall@50 0.998. Costs about 2.5x the rerank time of top-20 (docs/kb-community-20261022.md).
+# read on half B (0.788 vs 0.775); recall@50 0.998. Costs about 2.5x the rerank time of top-20 (README.md).
 RERANK_TOP_N = int(os.environ.get("RERANK_TOP_N", "50"))
 # 0 = order only, no abstention: on the held-out halves every floor from 0.05 up turned more right answers into "none"
 # than wrong ones (0.05: right 0.78 -> 0.38, wrong 0.22 -> 0.07); the reranker's value here is the order (wrong@1
-# 0.29 -> 0.22), not the absolute score (docs/kb-community-20261022.md, Gate B).
+# 0.29 -> 0.22), not the absolute score (README.md, Gate B).
 RERANK_MIN_SCORE = float(os.environ.get("RERANK_MIN_SCORE", "0"))
 RERANK_TIMEOUT = float(os.environ.get("RERANK_TIMEOUT", "5"))
 

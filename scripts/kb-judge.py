@@ -2,7 +2,7 @@
 
   RERANK_URL=http://127.0.0.1:8020/rerank .venv/bin/python scripts/kb-judge.py [--n 240] [--seed 7] [--concurrency 2]
 
-Why. Every community-layer number so far (docs/kb-community-20261022.md) used the question's category as the label: a
+Why. Every community-layer number so far (README.md) used the question's category as the label: a
 cheap proxy that calls an adjacent-category but correct answer "wrong" and a same-category but useless one "right".
 This script asks the local model (no thinking, temperature 0, one word) whether a reference addresses the symptom, for
 the BM25 top-1 and the reranked top-5 of a fixed sample of the held-out questions, and reports:

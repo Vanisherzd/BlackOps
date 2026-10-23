@@ -1,5 +1,5 @@
 """Community reference layer for the knowledge pack: fetch, build, evaluate. Plan, predictions and pass criteria were
-written before any data was fetched: docs/kb-community-20261022.md.
+written before any data was fetched: README.md.
 
   .venv/bin/python scripts/kb-community.py fetch            Stack Exchange API -> datasets/derived/stackexchange_ops_qa_20261022/qa.jsonl
   .venv/bin/python scripts/kb-community.py build            qa.jsonl -> kb/artifacts/community_v1.jsonl (index) + holdout.jsonl (15%, never indexed)
@@ -96,7 +96,7 @@ SYMPTOM_RE = re.compile(r"error|fail|denied|refused|time(d)? ?out|cannot|can't|u
                         r"|down\b|lost|exceeded|too many|full\b|read-only|not synchron|expired|oom|out of memory|blocked"
                         r"|reset|dropping|not running|not responding|not working|broken", re.I)
 
-# Q_gap and Q_stage, verbatim from the plan (docs/kb-community-20261022.md).
+# Q_gap and Q_stage, verbatim from the plan (README.md).
 Q_GAP = [
     ("disk_fs", "EXT4-fs error (device nvme0n1p2): ext4_journal_check_start: Detected aborted journal; remounting filesystem read-only"),
     ("disk_fs", "df shows / 100% used but du -sh /* adds up to half of that; a deleted log file is still held open by a process"),
@@ -137,7 +137,7 @@ Q_GAP = [
     ("boot_packages", "boot drops to emergency mode: Timed out waiting for device dev-disk-by-uuid; fstab entry for an unplugged disk"),
     ("app", "java: GC overhead limit exceeded; long stop-the-world pauses, requests time out while the heap is near max"),
 ]
-# How the agent itself queries (scripts/agent.py symptom_query, docs/kb-repair-cards.md): bare codes and its own 5xx
+# How the agent itself queries (scripts/agent.py symptom_query, README.md): bare codes and its own 5xx
 # phrasings. Expected: no community reference (bare codes tokenise to nothing; the phrasings are runbook matters).
 Q_AGENT = ["504", "502", "429", "the service itself answers HTTP 504 Gateway Timeout",
            "HTTP 500 Internal Server Error from upstream edge-victim-app", "upstream prematurely closed connection while reading response header"]

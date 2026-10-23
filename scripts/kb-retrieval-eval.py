@@ -4,7 +4,7 @@
   uv run --no-sync scripts/kb-retrieval-eval.py prep-dev   # dev split -> ratio-8 inputs (same pipeline as kb-eval prepare)
   uv run --no-sync scripts/kb-retrieval-eval.py prep-train # step 2: each train case's own telemetry -> observed text
   uv run --no-sync scripts/kb-retrieval-eval.py build-v3   # v2 corpus + observed texts -> corpus_v3*.jsonl
-  uv run --no-sync scripts/kb-retrieval-eval.py run        # every system x query x split -> docs/kb-retrieval-eval.md
+  uv run --no-sync scripts/kb-retrieval-eval.py run        # every system x query x split -> logs/kb-retrieval-eval.md
 
 Why. The end-to-end evaluation (scripts/kb-eval.py) takes 50 minutes and mixes two questions: does retrieval bring
 back the right knowledge, and does the model use it. This answers the first one alone, so a retrieval change can be
@@ -47,7 +47,7 @@ CORPUS_V3 = OUT / "corpus_v3.jsonl"
 CORPUS_V3_NOENT = OUT / "corpus_v3_noent.jsonl"
 EVAL_INPUTS = ROOT / "logs" / "kb-eval" / "inputs" / "ratio_8.jsonl"
 ONELINERS = ROOT / "logs" / "kb-eval" / "predictions-rag.jsonl"
-REPORT = ROOT / "docs" / "kb-retrieval-eval.md"
+REPORT = ROOT / "logs" / "kb-retrieval-eval.md"
 TARGET = {"disk_full", "crashloop", "dns"}
 
 

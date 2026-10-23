@@ -59,33 +59,10 @@ Every number below was measured by us. **Thor** is the competition machine (Jets
 
 ### 2.1 Architecture
 
-```mermaid
-flowchart TB
-  subgraph box["Jetson AGX Thor — everything local, no internet"]
-    direction TB
-    watchdog["watchdog.py<br/>2 s patrol · triage · dispatch"] --> sandbox
-    dash["dashboard :8097<br/>board · trace · power · approvals · injection"] --- watchdog
-    sandbox["NemoClaw / OpenShell sandbox<br/>OpenClaw agent (incident commander)"] -- "inference.local" --> shim["oai_shim.py :8001<br/>compatibility layer · tool-call salvage"]
-    shim --> vllm["vLLM :8000<br/>Nemotron-3.5-Lightning-30B-A3B-NVFP4"]
-    sandbox -- "MCP" --> ops["ops_api.py :8790<br/>allow-listed tools (HTTP + MCP)"]
-    ops --> agent["agent.py tool layer<br/>runbook gate · health check after every action"]
-    agent <--> guard["guard_api.py :8792<br/>NeMo Guardrails"]
-    agent --> reviewer["reviewer.py<br/>two keys: code key + model"]
-    reviewer -. "risky actions" .-> approval["human approval (dashboard)"]
-    agent --> victim["victim containers<br/>nginx front + API backend"]
-    watchdog --> victim
-    subgraph kb["Knowledge layers (pushed by the tool layer)"]
-      direction LR
-      mem["incident memory<br/>locally verified fixes"] --> rb["runbooks<br/>dense retrieval"]
-      rb --> cards["repair cards<br/>phrase gate"]
-      cards --> comm["community layer 158,881 records<br/>SQLite FTS5"]
-      comm --> rr["rerank 1B :8020"]
-      rr --> judge["local judge gate"]
-    end
-    agent -- "references attached to evidence" --> kb
-    kb -. "verified on close → written back" .-> mem
-  end
-```
+![Blackout Ops architecture: watchdog, agent runtime, safety gates, monitored service and knowledge layers on one Jetson AGX Thor](assets/architecture.drawio.svg)
+
+The diagram is an editable draw.io file: open `assets/architecture.drawio.svg` in draw.io (diagrams.net) to change it.
+
 
 | Component | Role |
 |---|---|
@@ -581,6 +558,7 @@ kb/                       offline knowledge-base package, corpora, repair cards,
 datasets/                 repair-card sources (hard_repairs) and the community layer's held-out evaluation set
 victim/board/             production board page served by the target's front end
 artifacts/benchmark.json  data for the dashboard's benchmark table
+assets/                   architecture diagram, editable in draw.io (architecture.drawio.svg)
 deploy/vllm/ + Makefile   vLLM container for the Bolt-74B comparison path (serve-vllm.sh bolt profile)
 trt/nano.yaml             TensorRT-LLM baseline config (serve-trt.sh)
 tests/                    unit tests for the tool layer, scorer, fault injection, dashboard and more

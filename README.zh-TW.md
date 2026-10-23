@@ -59,33 +59,10 @@
 
 ### 2.1 架構
 
-```mermaid
-flowchart TB
-  subgraph box["Jetson AGX Thor — 全部本地，不需外網"]
-    direction TB
-    watchdog["watchdog.py<br/>2 s 巡檢・triage・派工"] --> sandbox
-    dash["dashboard :8097<br/>看板・軌跡・功耗・審批・注入"] --- watchdog
-    sandbox["NemoClaw / OpenShell sandbox<br/>OpenClaw agent（Incident Commander）"] -- "inference.local" --> shim["oai_shim.py :8001<br/>相容層・tool call 救援"]
-    shim --> vllm["vLLM :8000<br/>Nemotron-3.5-Lightning-30B-A3B-NVFP4"]
-    sandbox -- "MCP" --> ops["ops_api.py :8790<br/>白名單工具（HTTP + MCP）"]
-    ops --> agent["agent.py 工具層<br/>runbook gate・每個動作後健康檢查"]
-    agent <--> guard["guard_api.py :8792<br/>NeMo Guardrails"]
-    agent --> reviewer["reviewer.py<br/>兩把鑰匙：code key + 模型"]
-    reviewer -. "風險動作" .-> approval["人工審批（儀表板）"]
-    agent --> victim["victim 容器<br/>nginx 前端 + API 後端"]
-    watchdog --> victim
-    subgraph kb["知識層（工具層主動附上）"]
-      direction LR
-      mem["事故記憶<br/>本機驗證過的修復"] --> rb["runbooks<br/>dense 檢索"]
-      rb --> cards["修復卡<br/>phrase gate"]
-      cards --> comm["社群層 158,881 筆<br/>SQLite FTS5"]
-      comm --> rr["rerank 1B :8020"]
-      rr --> judge["本機判官閘門"]
-    end
-    agent -- "取證結果後附上參考" --> kb
-    kb -. "結案驗證通過 → 寫回記憶" .-> mem
-  end
-```
+![Blackout Ops 架構圖：巡檢、Agent 執行環境、安全閘門、被監控服務與知識層，全部在一台 Jetson AGX Thor 上](assets/architecture.drawio.svg)
+
+這張圖是可編輯的 draw.io 檔：用 draw.io（diagrams.net）開啟 `assets/architecture.drawio.svg` 即可修改。
+
 
 | 元件 | 角色 |
 |---|---|
@@ -582,6 +559,7 @@ kb/                       離線知識庫套件、語料、修復卡、社群層
 datasets/                 修復卡來源（hard_repairs）與社群層 held-out 評測集
 victim/board/             靶機前端的產線看板頁
 artifacts/benchmark.json  儀表板 Benchmark 表的資料
+assets/                   架構圖，可用 draw.io 編輯（architecture.drawio.svg）
 deploy/vllm/ + Makefile   Bolt-74B 比較路徑的 vLLM 容器（serve-vllm.sh 的 bolt profile）
 trt/nano.yaml             TRT-LLM 基準設定（serve-trt.sh）
 tests/                    工具層、計分器、故障注入、儀表板等單元測試

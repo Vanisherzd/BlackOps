@@ -603,5 +603,6 @@ Tests: `uv run --no-project --with pytest python -m pytest tests -q`. On a machi
 | ITBench-Lite | CrashLoopBackOff case reference | Apache-2.0 |
 | Kubernetes and systemd documentation | checks and safety limits in repair cards | their own licenses |
 | NVIDIA Nemotron models, NemoClaw, NeMo Guardrails | inference, agent runtime, guardrails | per NVIDIA's licenses |
+| Lucide icons, Simple Icons | icons in the architecture diagram; product logos are trademarks of their owners | ISC; CC0 |
 
 Raw public datasets, model weights and full logs are not committed; evaluation answers never enter the RAG index.

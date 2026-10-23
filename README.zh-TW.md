@@ -604,5 +604,6 @@ tests/                    工具層、計分器、故障注入、儀表板等單
 | ITBench-Lite | CrashLoopBackOff 案例參考 | Apache-2.0 |
 | Kubernetes、systemd 官方文件 | 修復卡的檢查與安全邊界 | 各自授權 |
 | NVIDIA Nemotron 模型、NemoClaw、NeMo Guardrails | 推論、Agent 執行環境、護欄 | 依 NVIDIA 各自授權 |
+| Lucide 圖示、Simple Icons | 架構圖中的圖示；產品 logo 屬於各自的商標持有者 | ISC；CC0 |
 
 原始公開資料集、模型權重、完整日誌不入版控；評測答案不進 RAG 索引。

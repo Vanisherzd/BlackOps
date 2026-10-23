@@ -59,9 +59,9 @@
 
 ### 2.1 架構
 
-![Blackout Ops 架構圖：巡檢、Agent 執行環境、安全閘門、被監控服務與知識層，全部在一台 Jetson AGX Thor 上](assets/architecture.drawio.svg)
+![Blackout Ops 架構圖：Jetson AGX Thor 修復設備（巡檢、Agent 執行環境、安全閘門、知識層）對獨立的被監控系統執行動作](assets/architecture.drawio.svg)
 
-這張圖是可編輯的 draw.io 檔：用 draw.io（diagrams.net）開啟 `assets/architecture.drawio.svg` 即可修改。
+實際部署時，修復設備與被監控的伺服器是分開的硬體，透過區域網路操作；決賽測試時，Docker 靶機容器和 Agent 跑在同一台 Thor 上。這張圖是可編輯的 draw.io 檔：用 draw.io（diagrams.net）開啟 `assets/architecture.drawio.svg` 即可修改。
 
 
 | 元件 | 角色 |

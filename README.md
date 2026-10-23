@@ -59,9 +59,9 @@ Every number below was measured by us. **Thor** is the competition machine (Jets
 
 ### 2.1 Architecture
 
-![Blackout Ops architecture: watchdog, agent runtime, safety gates, monitored service and knowledge layers on one Jetson AGX Thor](assets/architecture.drawio.svg)
+![Blackout Ops architecture: the Jetson AGX Thor recovery appliance (watchdog, agent runtime, safety gates, knowledge layers) acting on a separate monitored system](assets/architecture.drawio.svg)
 
-The diagram is an editable draw.io file: open `assets/architecture.drawio.svg` in draw.io (diagrams.net) to change it.
+In deployment the appliance sits apart from the monitored servers and reaches them over the LAN; in the finals benchmark the Docker test containers ran on the Thor itself. The diagram is an editable draw.io file: open `assets/architecture.drawio.svg` in draw.io (diagrams.net) to change it.
 
 
 | Component | Role |
